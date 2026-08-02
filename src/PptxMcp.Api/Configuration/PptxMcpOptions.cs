@@ -1,0 +1,66 @@
+namespace PptxMcp.Configuration;
+
+public sealed class PptxMcpOptions
+{
+    public const string SectionName = "PptxMcp";
+
+    public string SharedSecret { get; init; } = string.Empty;
+
+    public string SigningKey { get; init; } = string.Empty;
+
+    public string PublicBaseUrl { get; init; } = "http://localhost:8080";
+
+    public string StorageRoot { get; init; } = "/data/pptx-mcp";
+
+    public string LibreChatUploadsRoot { get; init; } = "/data/librechat-uploads";
+
+    public long MaxFileBytes { get; init; } = 30L * 1024 * 1024;
+
+    public int MaxSlides { get; init; } = 50;
+
+    public int MaxConcurrentJobs { get; init; } = 3;
+
+    public int MaxQueueDepth { get; init; } = 12;
+
+    public int JobTimeoutMinutes { get; init; } = 10;
+
+    public int RetentionDays { get; init; } = 7;
+
+    public int RetentionHoursAfterDownload { get; init; } = 24;
+
+    public int ArtifactUrlMinutes { get; init; } = 15;
+
+    public int MaxZipEntries { get; init; } = 5_000;
+
+    public long MaxUncompressedBytes { get; init; } = 300L * 1024 * 1024;
+
+    public int MaxCompressionRatio { get; init; } = 250;
+
+    public void Validate(bool requireSecrets)
+    {
+        if (requireSecrets && SharedSecret.Length < 24)
+        {
+            throw new InvalidOperationException("PptxMcp:SharedSecret must contain at least 24 characters.");
+        }
+
+        if (requireSecrets && SigningKey.Length < 32)
+        {
+            throw new InvalidOperationException("PptxMcp:SigningKey must contain at least 32 characters.");
+        }
+
+        if (!Uri.TryCreate(PublicBaseUrl, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException("PptxMcp:PublicBaseUrl must be an absolute URL.");
+        }
+
+        if (MaxFileBytes <= 0 || MaxSlides is <= 0 or > 50 || MaxConcurrentJobs is <= 0 or > 3)
+        {
+            throw new InvalidOperationException("Configured resource limits are outside the supported bounds.");
+        }
+
+        if (JobTimeoutMinutes is <= 0 or > 10)
+        {
+            throw new InvalidOperationException("PptxMcp:JobTimeoutMinutes must be between 1 and 10.");
+        }
+    }
+}

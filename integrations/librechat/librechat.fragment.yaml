@@ -1,0 +1,14 @@
+mcpSettings:
+  allowedAddresses:
+    - "pptx-mcp:8080"
+
+mcpServers:
+  powerpoint:
+    type: streamable-http
+    url: http://pptx-mcp:8080/mcp
+    timeout: 60000
+    headers:
+      Authorization: "Bearer ${PPTX_MCP_SHARED_SECRET}"
+      X-LibreChat-User-ID: "{{LIBRECHAT_USER_ID}}"
+      X-LibreChat-Conversation-ID: "{{LIBRECHAT_BODY_CONVERSATIONID}}"
+      X-LibreChat-Message-ID: "{{LIBRECHAT_BODY_MESSAGEID}}"

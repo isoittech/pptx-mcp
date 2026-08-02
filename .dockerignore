@@ -1,0 +1,9 @@
+.git
+.github
+.env
+**/bin
+**/obj
+TestResults
+artifacts
+data
+tmp

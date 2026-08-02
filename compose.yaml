@@ -1,0 +1,43 @@
+services:
+  pptx-mcp:
+    build:
+      context: .
+      target: runtime
+    environment:
+      PptxMcp__SharedSecret: ${PPTX_MCP_SHARED_SECRET:?set PPTX_MCP_SHARED_SECRET}
+      PptxMcp__SigningKey: ${PPTX_MCP_SIGNING_KEY:?set PPTX_MCP_SIGNING_KEY}
+      PptxMcp__PublicBaseUrl: ${PPTX_MCP_PUBLIC_BASE_URL:-http://localhost:18080}
+      PptxMcp__StorageRoot: /data/pptx-mcp
+      PptxMcp__LibreChatUploadsRoot: /data/librechat-uploads
+    ports:
+      - "127.0.0.1:18080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    volumes:
+      - pptx-data:/data/pptx-mcp
+      - ${LIBRECHAT_UPLOADS_PATH:?set LIBRECHAT_UPLOADS_PATH}:/data/librechat-uploads:ro
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - pptx-internal
+
+  test:
+    build:
+      context: .
+      target: test
+    profiles: ["test"]
+
+volumes:
+  pptx-data:
+
+networks:
+  pptx-internal:
+    internal: true
