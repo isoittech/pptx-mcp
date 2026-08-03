@@ -52,7 +52,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 
 - LibreChatとのMCP通信は共有秘密で認証し、ユーザーID・会話IDはLibreChatが挿入するヘッダーだけを信頼します。
 - ツール引数でローカルパス、ユーザーID、出力URLを指定できません。
-- `file_id` は該当ユーザーのアップロードディレクトリ内だけで解決し、作業領域へコピーします。
+- `file_id` は該当ユーザーのアップロードディレクトリ内だけで解決し、作業領域へコピーします。Bedrock経由で`file_id`がモデルに提示されない場合、`sourceFileId`省略時に同じユーザー境界内の最新PPTXを選択します。
 - マクロ、ActiveX、外部リレーション、暗号化PPTX、ZIP bombを拒否します。
 - 成果物URLはファイル名と期限をHMAC署名した capability URL です。
 - MCP用内部ネットワークは `internal: true` とし、成果物配信だけを認証付きリバースプロキシ経由で公開します。

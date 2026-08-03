@@ -16,6 +16,10 @@
 /app/uploads/<user-id>/<file-id>__<original-name>.pptx
 ```
 
+BedrockはPPTX自体をモデル入力へ渡さないため、Claudeからアップロードの`file_id`が見えない場合があります。入力系ツールの`sourceFileId`を省略すると、信頼済みユーザーヘッダーで限定したディレクトリ内の最新PPTXを選択します。`file_id`を明示した場合はそのファイルを優先します。複数のPPTXから特定ファイルを選ぶ必要がある運用では、アップロード直後に処理するか、`file_id`を明示してください。
+
+LibreChat側にも個別ファイル30MBの上限を設定し、リバースプロキシのリクエストボディ上限はmultipartのオーバーヘッドを含めて32MB以上にします。
+
 S3等へ移行する場合は `InputFileResolver` を、LibreChatの認証済み内部ファイル取得APIを呼ぶ実装へ交換します。MCPツールから任意URLを取得する方式にはしません。
 
 ## 成果物公開
@@ -33,6 +37,7 @@ GET /artifacts/{job_id}/{file_name}?token=...
 ## Claudeへの運用指示
 
 - 資料編集前に `pptx_analyze` を実行する。
+- 会話に`file_id`が提示されていなければ`sourceFileId`を省略し、最新アップロードを使う。
 - 新規資料では解析結果の `layout_id` とプレースホルダー `shape_id` を使って `pptx_create_deck` を実行する。
 - 編集対象が一意でなければ候補を列挙し、利用者の選択まで更新しない。
 - ジョブ完了後は全スライドのプレビューを提示する。

@@ -108,7 +108,7 @@ public sealed class JobService(
             State = JobState.Queued,
             UserScope = caller.UserScope,
             ConversationScope = caller.ConversationScope,
-            SourceFileId = sourceFileId,
+            SourceFileId = input.FileId,
             CreatedAt = now,
             ExpiresAt = now.AddDays(options.RetentionDays),
             ProgressPercent = 0,

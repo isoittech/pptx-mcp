@@ -16,7 +16,7 @@ public sealed class PowerPointTools
         workflow = new[]
         {
             "LibreChatへPPTXをアップロードする",
-            "pptx_analyzeでスライドと編集候補を取得する",
+            "pptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileIdを省略して最新アップロードを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
             "pptx_create_deck、pptx_replace_text、pptx_populate_templateのいずれかを実行する",
             "pptx_get_jobで完了を確認し、全ページのプレビューとPPTXを提示する",
@@ -47,13 +47,13 @@ public sealed class PowerPointTools
     };
 
     [McpServerTool(Name = "pptx_analyze", ReadOnly = true, Idempotent = true),
-     Description("LibreChatにアップロード済みのPPTXを安全に検査し、編集候補を非同期で解析します。ローカルパスではなくfile_idを指定してください。")]
+     Description("LibreChatにアップロード済みのPPTXを安全に検査し、編集候補を非同期で解析します。file_idが不明ならsourceFileIdを省略し、そのユーザーの最新PPTXを使ってください。")]
     public static Task<JobReceipt> AnalyzeAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。ファイル名やパスではありません。")]
-        string sourceFileId,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description("LibreChatのアップロード済みPPTXのfile_id。会話にfile_idが提示されていなければ省略して最新アップロードを使います。ファイル名やパスは指定しません。")]
+        string sourceFileId = "latest") =>
         jobs.SubmitAnalyzeAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
 
     [McpServerTool(Name = "pptx_render_preview", ReadOnly = true, Idempotent = true),
@@ -61,9 +61,9 @@ public sealed class PowerPointTools
     public static Task<JobReceipt> RenderPreviewAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。")]
-        string sourceFileId,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description("LibreChatのアップロード済みPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        string sourceFileId = "latest") =>
         jobs.SubmitRenderAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
 
     [McpServerTool(Name = "pptx_replace_text", Destructive = true),
@@ -71,11 +71,11 @@ public sealed class PowerPointTools
     public static Task<JobReceipt> ReplaceTextAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。")]
-        string sourceFileId,
         [Description("検索文字、置換文字、任意の1始まりスライド番号、任意のshapeNameとshapeIdからなる置換指示。名前が重複する場合はshapeIdも指定します。")]
         IReadOnlyList<TextReplacement> replacements,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description("LibreChatのアップロード済みPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        string sourceFileId = "latest") =>
         jobs.SubmitReplaceTextAsync(callerContext.GetRequired(), sourceFileId, replacements, cancellationToken);
 
     [McpServerTool(Name = "pptx_populate_template", Destructive = true),
@@ -83,11 +83,11 @@ public sealed class PowerPointTools
     public static Task<JobReceipt> PopulateTemplateAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("LibreChatへアップロード済みのテンプレートPPTXのfile_id。")]
-        string sourceFileId,
         [Description("1始まりのスライド番号、設定文字列、解析で得たshapeNameまたはshapeIdからなるフィールド一覧。名前が重複する場合はshapeIdを指定します。")]
         IReadOnlyList<TemplateField> fields,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description("LibreChatへアップロード済みのテンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        string sourceFileId = "latest") =>
         jobs.SubmitPopulateTemplateAsync(callerContext.GetRequired(), sourceFileId, fields, cancellationToken);
 
     [McpServerTool(Name = "pptx_create_deck", Destructive = true),
@@ -95,11 +95,11 @@ public sealed class PowerPointTools
     public static Task<JobReceipt> CreateDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("LibreChatへアップロード済みの企業テンプレートPPTXのfile_id。")]
-        string sourceFileId,
         [Description("layoutIdとfieldsからなるスライド一覧。fieldsはtextと解析結果のshapeId、任意でshapeNameまたはplaceholderIndexを指定します。")]
         IReadOnlyList<DeckSlideSpec> slides,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        [Description("LibreChatへアップロード済みの企業テンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        string sourceFileId = "latest") =>
         jobs.SubmitCreateDeckAsync(callerContext.GetRequired(), sourceFileId, slides, cancellationToken);
 
     [McpServerTool(Name = "pptx_get_job", ReadOnly = true, Idempotent = true),

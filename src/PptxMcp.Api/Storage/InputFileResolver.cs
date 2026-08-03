@@ -16,7 +16,7 @@ public sealed partial class InputFileResolver(
         string fileId,
         CancellationToken cancellationToken)
     {
-        if (!SafeIdentifier().IsMatch(fileId) || !SafeIdentifier().IsMatch(caller.UserId))
+        if (!SafeIdentifier().IsMatch(caller.UserId))
         {
             throw new PptxValidationException("invalid_file_id", "The source file identifier is invalid.");
         }
@@ -33,27 +33,58 @@ public sealed partial class InputFileResolver(
             throw new PptxValidationException("file_not_found", "The uploaded PowerPoint file was not found.");
         }
 
-        var candidates = Directory
-            .EnumerateFiles(userDirectory, $"{fileId}__*", SearchOption.TopDirectoryOnly)
-            .Where(path => string.Equals(Path.GetExtension(path), ".pptx", StringComparison.OrdinalIgnoreCase))
-            .Take(2)
-            .ToArray();
+        var useLatestUpload = string.Equals(fileId, "latest", StringComparison.OrdinalIgnoreCase);
+        if (!useLatestUpload && !SafeIdentifier().IsMatch(fileId))
+        {
+            throw new PptxValidationException("invalid_file_id", "The source file identifier is invalid.");
+        }
 
-        if (candidates.Length != 1 || new FileInfo(candidates[0]).LinkTarget is not null)
+        var candidates = useLatestUpload
+            ? FindLatestUpload(userDirectory)
+            : Directory
+                .EnumerateFiles(userDirectory, $"{fileId}__*", SearchOption.TopDirectoryOnly)
+                .Where(IsRegularPptxUpload)
+                .Take(2)
+                .ToArray();
+
+        if (candidates.Length != 1)
         {
             throw new PptxValidationException(
                 candidates.Length == 0 ? "file_not_found" : "ambiguous_file_id",
                 "Exactly one regular PPTX upload must match the file identifier.");
         }
 
-        return await packageGuard.ValidateAsync(candidates[0], cancellationToken).ConfigureAwait(false);
+        var resolvedFileId = Path.GetFileName(candidates[0]).Split("__", 2, StringSplitOptions.None)[0];
+        var input = await packageGuard.ValidateAsync(candidates[0], cancellationToken).ConfigureAwait(false);
+        return input with { FileId = resolvedFileId };
+    }
+
+    private static string[] FindLatestUpload(string userDirectory) => Directory
+        .EnumerateFiles(userDirectory, "*.pptx", SearchOption.TopDirectoryOnly)
+        .Where(IsRegularPptxUpload)
+        .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc)
+        .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
+        .Take(1)
+        .ToArray();
+
+    private static bool IsRegularPptxUpload(string path)
+    {
+        if (!string.Equals(Path.GetExtension(path), ".pptx", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var file = new FileInfo(path);
+        var delimiter = file.Name.IndexOf("__", StringComparison.Ordinal);
+        return file.Exists && file.LinkTarget is null && delimiter > 0 &&
+            SafeIdentifier().IsMatch(file.Name[..delimiter]);
     }
 
     [GeneratedRegex("\\A[A-Za-z0-9_-]{1,128}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex SafeIdentifier();
 }
 
-public sealed record ValidatedInput(string Path, long Bytes, int SlideCount);
+public sealed record ValidatedInput(string Path, long Bytes, int SlideCount, string FileId = "");
 
 public sealed class PptxValidationException(string code, string message) : Exception(message)
 {
