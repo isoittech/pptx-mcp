@@ -2,7 +2,9 @@
 
 ## MCP接続
 
-`integrations/librechat/librechat.fragment.yaml` を既存 `librechat.yaml` へマージします。LibreChat v0.8系では本番MCPに Streamable HTTP を使用し、`allowedAddresses` へコンテナ内の正確なホスト名とポートを追加します。
+`integrations/librechat/librechat.fragment.yaml` を既存 `librechat.yaml` へマージします。LibreChat v0.8系では本番MCPに Streamable HTTP を使用し、`mcpSettings.allowedDomains` へコンテナ内のホスト名を追加します。
+
+共有秘密は `apiKey.source: admin` と `authorization_type: bearer` で設定します。LibreChatの起動時インスペクターは管理者提供キーならOAuth検出を省略し、実接続時にだけAuthorizationヘッダーを構成します。`headers.Authorization` を手動設定すると、起動時の未認証プローブをOAuth必須と誤判定するため使用しません。
 
 ユーザーIDと会話IDはLibreChatのヘッダープレースホルダーから渡します。これらをツール引数へ公開しないでください。共有秘密はLibreChatとpptx-mcpの環境変数に同じ値を設定します。
 
@@ -25,6 +27,8 @@ GET /artifacts/{job_id}/{file_name}?token=...
 ```
 
 `/mcp` はLibreChat内部ネットワークからだけ到達可能にします。署名付きURLをアクセスログへ残さない設定を推奨します。
+
+`integrations/librechat/nginx.conf` をLibreChat側へ配置し、`compose.fragment.yaml` の成果物専用プロキシから読み込みます。このプロキシは `/artifacts/{job_id}/...` のGET/HEADと readiness のみを許可し、`/mcp` を404にします。Dockerの内部ネットワークだけに接続したサービスへはホストポートを公開できないため、MCP本体ではなくこのプロキシだけを通常ネットワークにも接続します。
 
 ## Claudeへの運用指示
 
