@@ -3,6 +3,7 @@
 .env
 **/bin
 **/obj
+**/node_modules
 TestResults
 artifacts
 data

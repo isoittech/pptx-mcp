@@ -8,5 +8,6 @@ TestResults/
 artifacts/
 data/
 tmp/
+visual-renderer/node_modules/
 *.user
 *.suo

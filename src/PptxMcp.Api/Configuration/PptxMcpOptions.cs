@@ -14,6 +14,8 @@ public sealed class PptxMcpOptions
 
     public string LibreChatUploadsRoot { get; init; } = "/data/librechat-uploads";
 
+    public string VisualRendererPath { get; init; } = "/app/visual-renderer/index.mjs";
+
     public long MaxFileBytes { get; init; } = 30L * 1024 * 1024;
 
     public int MaxSlides { get; init; } = 50;
@@ -61,6 +63,11 @@ public sealed class PptxMcpOptions
         if (JobTimeoutMinutes is <= 0 or > 10)
         {
             throw new InvalidOperationException("PptxMcp:JobTimeoutMinutes must be between 1 and 10.");
+        }
+
+        if (!Path.IsPathFullyQualified(VisualRendererPath))
+        {
+            throw new InvalidOperationException("PptxMcp:VisualRendererPath must be an absolute path.");
         }
     }
 }

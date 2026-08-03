@@ -15,25 +15,53 @@ LibreChat / Claude
 pptx-mcp ──受付──▶ 永続ジョブキュー（最大3並列、最大10分）
   │                         │
   │ read-only               ├─ Open XML SDK: 検査・精密編集
-  ▼                         ├─ LibreOffice: PDF化
+  ▼                         ├─ 固定PptxGenJS: 宣言型の白紙生成
 LibreChat uploads            └─ Poppler: PNG化
                               │
+                              ├─ LibreOffice: PDF化
                               ▼
                        期限付き成果物ストレージ
-                              │ 署名付きHTTPS URL
-                              ▼
-                           利用者
+                         ┌────┴───────────────┐
+                         │                    │
+                  MCP画像ブロック       署名付きHTTPS URL
+                         │                    │
+                         ▼                    ▼
+                    Claude視覚評価          利用者
+                         │ 問題時は仕様修正
+                         └────最大2回再生成
 ```
 
 ## 処理モデル
 
-MCP の HTTP 応答には30MBのPPTXや最大50枚の画像を埋め込みません。更新系ツールは `job_id` を返し、`pptx_get_job` が状態、解析JSON、短時間有効な成果物URLを返します。サービス再起動時は実行中ジョブを待機状態へ戻して再処理します。
+MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込みません。更新系ツールは `job_id` を返し、`pptx_get_job` が状態、解析JSON、短時間有効な成果物URLを返します。視覚評価時だけ `pptx_get_preview_images` が指定された1〜4枚をMCP画像ブロックとして返します。サービス再起動時は実行中ジョブを待機状態へ戻して再処理します。
 
 ## テンプレート戦略
 
 企業テンプレートはテーマ、マスター、レイアウト、フォント、余白を正本とします。既存スライドは `slide_number + shape_id` で一意指定して更新できます。新規生成では解析で得た `layout_id` とプレースホルダーの `shape_id` を使い、選択された定義済みレイアウトから1〜50枚のスライドを構成します。
 
 AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから受けるのはJSON Schemaで制約したスライド仕様・編集命令だけです。
+
+## 白紙からの視覚的な生成
+
+テンプレートがない場合は `pptx_create_visual_deck` を使います。Claudeはスライドの意味に応じて次の固定レイアウトを選びます。
+
+- title、agenda、section、bullets
+- metrics、comparison、process、timeline
+- chart、quote、closing
+
+テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal` の5種です。色とフォントは検証済みの範囲で上書きできます。固定PptxGenJSレンダラーはテキスト、図形、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。入力にファイルパス、URL、画像、JavaScript、任意座標を持たせないため、表現力を上げてもコード実行境界は広げません。
+
+## 自動視覚リフレクション
+
+MCPサーバー指示とツール説明に次のエージェントループを定義します。
+
+1. 生成・編集ジョブを完了させる。
+2. 全スライドを1〜4枚ずつMCP画像ブロックとして取得する。
+3. Claudeが文字切れ、はみ出し、重なり、文字サイズ、余白、整列、コントラスト、情報階層、密度、バランス、全体一貫性を確認する。
+4. 問題があれば宣言型仕様を修正してデッキ全体を再生成する。
+5. 最大2回で収束させ、視覚確認後にダウンロードリンクを提示する。
+
+これはMCPサーバーが別のモデルAPIを直接呼ぶループではなく、LibreChat上のClaudeがツール呼び出しを継続するエージェント駆動方式です。モデル認証情報をMCPへ持ち込まず、会話文脈を保ったまま評価できます。
 
 ## 編集エンジン
 
@@ -81,6 +109,7 @@ min(created_at + 7日, first_downloaded_at + 24時間)
 - [LibreChat MCP configuration](https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/mcp_servers)
 - [Model Context Protocol C# SDK](https://github.com/modelcontextprotocol/csharp-sdk)
 - [Open XML SDK](https://github.com/dotnet/Open-XML-SDK)
+- [PptxGenJS](https://github.com/gitbrent/PptxGenJS)
 - [PresentationML document structure](https://learn.microsoft.com/en-us/office/open-xml/presentation/structure-of-a-presentationml-document)
 - [LibreOffice command-line parameters](https://help.libreoffice.org/latest/en-GB/text/shared/guide/start_parameters.html)
 - [参考記事: Claude Opus 4.6 の PowerPoint 生成手法](https://zenn.dev/microsoft/articles/how-the-claude-opus46-generate-pptx)

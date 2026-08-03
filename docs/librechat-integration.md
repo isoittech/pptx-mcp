@@ -38,8 +38,16 @@ GET /artifacts/{job_id}/{file_name}?token=...
 
 - 資料編集前に `pptx_analyze` を実行する。
 - 会話に`file_id`が提示されていなければ`sourceFileId`を省略し、最新アップロードを使う。
-- 新規資料では解析結果の `layout_id` とプレースホルダー `shape_id` を使って `pptx_create_deck` を実行する。
+- 企業テンプレートを使う新規資料では、解析結果の `layout_id` とプレースホルダー `shape_id` を使って `pptx_create_deck` を実行する。
+- 白紙からの新規資料では、内容ごとに意味ベースのレイアウトを選び `pptx_create_visual_deck` を実行する。
 - 編集対象が一意でなければ候補を列挙し、利用者の選択まで更新しない。
-- ジョブ完了後は全スライドのプレビューを提示する。
-- 自動視覚評価は行わず、利用者の指示を受けて会話的に再編集する。
+- ジョブ完了後は `pptx_get_preview_images` で全スライドを1〜4枚ずつ取得し、文字切れ、重なり、可読性、余白、整列、コントラスト、情報階層、密度、バランス、一貫性を評価する。
+- 問題があれば宣言型仕様を修正し、最大2回まで自律的に再生成する。画像を取得していない場合は視覚確認済みと述べない。
+- 視覚評価の完了後にPPTXダウンロードリンクを提示する。
 - MCPに情報収集を依頼しない。外部情報はLibreChat側で収集し、構造化した内容だけを渡す。
+
+## BedrockでのMCP画像引き渡し
+
+LibreChat v0.8.3-rc1の `@librechat/agents` 3.1.51は、MCP画像を画面用artifactには保存しますが、Bedrockの次回モデル呼び出しには既定で渡しません。本リポジトリの `config/patch-agents-bedrock-artifacts.mjs` は、Anthropic以外の画像対応プロバイダーと同じ `HumanMessage` 変換をBedrockにも適用します。Bedrock変換層は `image_url` のdata URLをConverse APIの画像ブロックへ変換します。
+
+このパッチは通常Dockerfileと `Dockerfile.multi` の双方で `npm ci` 後に適用します。対象依存のコード形状が変わった場合はビルドを失敗させるため、`@librechat/agents` 更新時は上流実装を確認してパッチを削除または更新してください。

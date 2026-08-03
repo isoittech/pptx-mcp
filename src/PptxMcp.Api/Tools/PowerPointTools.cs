@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using PptxMcp.Domain;
 using PptxMcp.Jobs;
@@ -19,7 +21,10 @@ public sealed class PowerPointTools
             "pptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileIdを省略して最新アップロードを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
             "pptx_create_deck、pptx_replace_text、pptx_populate_templateのいずれかを実行する",
-            "pptx_get_jobで完了を確認し、全ページのプレビューとPPTXを提示する",
+            "白紙から作る場合はpptx_create_visual_deckで意味ベースのレイアウトを指定する",
+            "pptx_get_jobで完了を確認する",
+            "pptx_get_preview_imagesで全ページを実際に見て、違和感があれば最大2回まで仕様を修正して再生成する",
+            "視覚確認後にのみPPTXのダウンロードリンクを提示する",
         },
         limits = new
         {
@@ -34,7 +39,9 @@ public sealed class PowerPointTools
             "通常シェイプとSmartArt内部テキストの置換",
             "名前付きシェイプを持つ企業テンプレートへのテキスト流し込み",
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
+            "白紙からタイトル・アジェンダ・KPI・比較・工程・タイムライン・編集可能グラフ等の視覚的なデッキを構成",
             "LibreOfficeによる全スライドPNGプレビュー",
+            "プレビュー画像をClaudeへ返す自動視覚リフレクション",
             "署名付きURLによる成果物ダウンロード",
         },
         planned_after_template_spike = new[]
@@ -102,6 +109,16 @@ public sealed class PowerPointTools
         string sourceFileId = "latest") =>
         jobs.SubmitCreateDeckAsync(callerContext.GetRequired(), sourceFileId, slides, cancellationToken);
 
+    [McpServerTool(Name = "pptx_create_visual_deck", Destructive = true),
+     Description("アップロード済みテンプレートを使わず、検証済みの宣言型レイアウトから華やかで編集可能な16:9 PPTXを作ります。title/agenda/section/bullets/metrics/comparison/process/timeline/chart/quote/closingを内容に応じて使い分けてください。生成後はpptx_get_jobを待ち、必ずpptx_get_preview_imagesで全スライドを視覚確認し、問題があればdeckを修正して最大2回まで再生成してください。")]
+    public static Task<JobReceipt> CreateVisualDeckAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        [Description("資料タイトル、任意のテーマ、1〜50枚のスライドからなる宣言型仕様。各スライドは意味に合うkindを選び、1枚1メッセージに絞ります。theme.presetはmidnight/aurora/sunset/forest/minimal。任意のテーマ色はRRGGBBまたは#RRGGBB形式です。chartはPowerPoint上で編集可能です。")]
+        VisualDeckSpec deck,
+        CancellationToken cancellationToken) =>
+        jobs.SubmitVisualDeckAsync(callerContext.GetRequired(), deck, cancellationToken);
+
     [McpServerTool(Name = "pptx_get_job", ReadOnly = true, Idempotent = true),
      Description("PowerPointジョブの状態、解析結果、短時間有効なプレビューURLとダウンロードURLを取得します。完了までpoll_after_secondsを目安に再実行してください。")]
     public static Task<JobView> GetJobAsync(
@@ -111,6 +128,44 @@ public sealed class PowerPointTools
         string jobId,
         CancellationToken cancellationToken) =>
         jobs.GetAsync(callerContext.GetRequired(), jobId, cancellationToken);
+
+    [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
+     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・はみ出し・重なり・小さすぎる文字・余白・整列・コントラスト・情報階層・密度・バランス・資料全体の一貫性を確認してください。問題があれば元の宣言型仕様を修正して再生成し、最大2回で収束させます。このツールを呼ばずに視覚確認済みと述べてはいけません。")]
+    public static async Task<CallToolResult> GetPreviewImagesAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        [Description("PowerPoint MCPが返した成功済みjob_id。")]
+        string jobId,
+        [Description("今回確認する1始まりのスライド番号。重複なしで1〜4件。全ページを複数回に分けて指定します。")]
+        IReadOnlyList<int> slideNumbers,
+        CancellationToken cancellationToken)
+    {
+        var images = await jobs.GetPreviewImagesAsync(
+            callerContext.GetRequired(),
+            jobId,
+            slideNumbers,
+            cancellationToken).ConfigureAwait(false);
+        var content = new List<ContentBlock>(images.Count * 2 + 1);
+        foreach (var image in images)
+        {
+            content.Add(new TextContentBlock { Text = $"Slide {image.SlideNumber} visual review image:" });
+            content.Add(ImageContentBlock.FromBytes(image.Bytes, image.MediaType));
+        }
+
+        content.Add(new TextContentBlock
+        {
+            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, and consistency. Regenerate from a corrected declarative specification when necessary.",
+        });
+        return new CallToolResult
+        {
+            Content = content,
+            StructuredContent = JsonSerializer.SerializeToElement(new
+            {
+                job_id = jobId,
+                reviewed_slide_numbers = images.Select(image => image.SlideNumber).ToArray(),
+            }),
+        };
+    }
 
     [McpServerTool(Name = "pptx_cancel_job", Destructive = true),
      Description("待機中または実行中のPowerPointジョブをキャンセルします。")]

@@ -11,6 +11,7 @@ public sealed class JobWorker(
     JobChannel queue,
     FileJobRepository repository,
     IPresentationEngine presentationEngine,
+    IVisualPresentationEngine visualPresentationEngine,
     LibreOfficeRenderer renderer,
     PptxPackageGuard packageGuard,
     JobCancellationRegistry cancellationRegistry,
@@ -191,6 +192,21 @@ public sealed class JobWorker(
                         ?? throw new PptxValidationException("invalid_job_payload", "Deck slide specifications are missing.");
                     var outputPath = Path.Combine(directory, "presentation.pptx");
                     var creation = await presentationEngine.CreateDeckAsync(sourcePath, outputPath, slides, cancellationToken)
+                        .ConfigureAwait(false);
+                    await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
+                    var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
+                    return (
+                        JsonSerializer.SerializeToElement(creation, SerializerOptions),
+                        CreateOutputArtifacts(outputPath, images, directory));
+                }
+
+            case JobKind.CreateVisualDeck:
+                {
+                    var deck = job.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
+                        ?? throw new PptxValidationException("invalid_job_payload", "Visual deck specification is missing.");
+                    VisualDeckValidator.Validate(deck, options.MaxSlides);
+                    var outputPath = Path.Combine(directory, "presentation.pptx");
+                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
                     var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);

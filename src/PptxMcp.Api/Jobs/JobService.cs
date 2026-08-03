@@ -53,6 +53,15 @@ public sealed class JobService(
         CancellationToken cancellationToken) =>
         SubmitAsync(caller, sourceFileId, JobKind.CreateDeck, slides, cancellationToken);
 
+    public Task<JobReceipt> SubmitVisualDeckAsync(
+        CallerContext caller,
+        VisualDeckSpec deck,
+        CancellationToken cancellationToken)
+    {
+        VisualDeckValidator.Validate(deck, options.MaxSlides);
+        return SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken);
+    }
+
     public async Task<JobView> GetAsync(CallerContext caller, string jobId, CancellationToken cancellationToken)
     {
         var job = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
@@ -92,6 +101,84 @@ public sealed class JobService(
         return true;
     }
 
+    public async Task<IReadOnlyList<PreviewImageData>> GetPreviewImagesAsync(
+        CallerContext caller,
+        string jobId,
+        IReadOnlyList<int> slideNumbers,
+        CancellationToken cancellationToken)
+    {
+        if (slideNumbers is null || slideNumbers.Count is < 1 or > 4 || slideNumbers.Distinct().Count() != slideNumbers.Count)
+        {
+            throw new PptxValidationException(
+                "preview_selection_invalid",
+                "Select between 1 and 4 distinct slide numbers per visual review call.");
+        }
+
+        var job = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (job.State != JobState.Succeeded)
+        {
+            throw new PptxValidationException(
+                "job_not_ready",
+                "The job must succeed before preview images can be reviewed.");
+        }
+
+        var jobDirectory = repository.GetJobDirectory(job.Id);
+        var images = new List<PreviewImageData>(slideNumbers.Count);
+        foreach (var slideNumber in slideNumbers)
+        {
+            if (slideNumber is < 1 or > 50)
+            {
+                throw new PptxValidationException("preview_slide_invalid", "Slide numbers must be between 1 and 50.");
+            }
+
+            var artifact = job.Artifacts.SingleOrDefault(candidate =>
+                string.Equals(candidate.MediaType, "image/png", StringComparison.Ordinal)
+                && TryGetPreviewSlideNumber(candidate.FileName) == slideNumber);
+            if (artifact is null)
+            {
+                throw new PptxValidationException(
+                    "preview_slide_not_found",
+                    $"Preview image for slide {slideNumber} was not found in this job.");
+            }
+
+            if (artifact.Bytes > 8L * 1024 * 1024)
+            {
+                throw new PptxValidationException(
+                    "preview_image_too_large",
+                    $"Preview image for slide {slideNumber} exceeds the visual review limit.");
+            }
+
+            var path = Path.GetFullPath(Path.Combine(jobDirectory, artifact.FileName));
+            var root = Path.GetFullPath(jobDirectory) + Path.DirectorySeparatorChar;
+            if (!path.StartsWith(root, StringComparison.Ordinal) || !File.Exists(path))
+            {
+                throw new PptxValidationException("preview_slide_not_found", "The preview image is no longer available.");
+            }
+
+            images.Add(new PreviewImageData(
+                slideNumber,
+                artifact.MediaType,
+                await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false)));
+        }
+
+        return images;
+    }
+
+    internal static int? TryGetPreviewSlideNumber(string fileName)
+    {
+        if (!fileName.StartsWith("preview/slide-", StringComparison.Ordinal)
+            || !fileName.EndsWith(".png", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var numberStart = "preview/slide-".Length;
+        var number = fileName[numberStart..^".png".Length];
+        return int.TryParse(number, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
     private async Task<JobReceipt> SubmitAsync<TPayload>(
         CallerContext caller,
         string sourceFileId,
@@ -121,6 +208,44 @@ public sealed class JobService(
             var sourceCopy = Path.Combine(repository.GetJobDirectory(job.Id), "source.pptx");
             await CopyFileAsync(input.Path, sourceCopy, options.MaxFileBytes, cancellationToken).ConfigureAwait(false);
             await packageGuard.ValidateAsync(sourceCopy, cancellationToken).ConfigureAwait(false);
+            if (!queue.TryEnqueue(job.Id))
+            {
+                throw new PptxValidationException("queue_full", "The PowerPoint job queue is full. Retry later.");
+            }
+        }
+        catch
+        {
+            repository.DeleteFiles(job.Id);
+            throw;
+        }
+
+        return new JobReceipt(job.Id, "queued", 2);
+    }
+
+    private async Task<JobReceipt> SubmitGeneratedAsync<TPayload>(
+        CallerContext caller,
+        JobKind kind,
+        TPayload payload,
+        CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        var job = new JobRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Kind = kind,
+            State = JobState.Queued,
+            UserScope = caller.UserScope,
+            ConversationScope = caller.ConversationScope,
+            SourceFileId = "generated",
+            CreatedAt = now,
+            ExpiresAt = now.AddDays(options.RetentionDays),
+            ProgressPercent = 0,
+            Payload = JsonSerializer.SerializeToElement(payload, SerializerOptions),
+        };
+
+        try
+        {
+            await repository.CreateAsync(job, cancellationToken).ConfigureAwait(false);
             if (!queue.TryEnqueue(job.Id))
             {
                 throw new PptxValidationException("queue_full", "The PowerPoint job queue is full. Retry later.");

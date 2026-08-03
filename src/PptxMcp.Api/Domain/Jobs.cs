@@ -11,6 +11,7 @@ public enum JobKind
     ReplaceText,
     PopulateTemplate,
     CreateDeck,
+    CreateVisualDeck,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]
@@ -88,6 +89,11 @@ public sealed record ArtifactRecord(
     string MediaType,
     long Bytes,
     bool StartsDownloadRetention);
+
+public sealed record PreviewImageData(
+    int SlideNumber,
+    string MediaType,
+    byte[] Bytes);
 
 public sealed record JobReceipt(
     [property: JsonPropertyName("job_id")] string JobId,

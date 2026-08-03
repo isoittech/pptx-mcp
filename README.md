@@ -12,7 +12,10 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 通常シェイプと SmartArt 内テキストの置換
 - 名前付きシェイプを持つ企業テンプレートへのテキスト流し込み
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
+- 白紙から意味ベースの11レイアウトと5テーマを使って視覚的な16:9デッキを生成
+- PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
 - LibreOffice と Poppler による全ページ PNG プレビュー
+- プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
 - 15分有効の署名付き成果物URL
 - 生成から7日、または最初のPPTXダウンロードから24時間の早い方で削除
 
@@ -35,10 +38,14 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 - `pptx_replace_text`
 - `pptx_populate_template`
 - `pptx_create_deck`
+- `pptx_create_visual_deck`
 - `pptx_get_job`
+- `pptx_get_preview_images`
 - `pptx_cancel_job`
 
-処理ツールはすぐに `job_id` を返します。Claude は `pptx_get_job` をポーリングし、完了後にプレビューとPPTXのリンクをユーザーへ提示します。
+処理ツールはすぐに `job_id` を返します。Claude は `pptx_get_job` をポーリングし、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
+
+白紙生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `title`、`metrics`、`comparison`、`process`、`timeline`、`chart` などの意味ベースのレイアウトと制限付きコンテンツをJSONで指定し、固定レンダラーが配置します。
 
 ## テスト
 
@@ -47,4 +54,11 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 ```bash
 docker compose build test
 docker compose run --rm test
+```
+
+ビジュアルレンダラーの依存監査は次で実行します。
+
+```bash
+cd visual-renderer
+npm audit --omit=dev
 ```
