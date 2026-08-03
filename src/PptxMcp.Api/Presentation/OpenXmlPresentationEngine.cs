@@ -465,7 +465,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                         item.Placeholder!.Ancestors<P.Shape>().First()
                             .NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value ?? 0,
                         item.Name,
-                        item.Placeholder.GetAttribute("type", string.Empty).Value is { Length: > 0 } rawType ? rawType : "body",
+                        item.Placeholder.Type?.InnerText is { Length: > 0 } rawType ? rawType : "body",
                         item.Placeholder.Index?.Value))
                     .ToArray();
                 layouts.Add(new LayoutSummary(

@@ -1,4 +1,5 @@
 using A = DocumentFormat.OpenXml.Drawing;
+using P = DocumentFormat.OpenXml.Presentation;
 using DocumentFormat.OpenXml.Packaging;
 using System.IO.Compression;
 using PptxMcp.Domain;
@@ -88,6 +89,32 @@ public sealed class OpenXmlPresentationEngineTests
             var shape = Assert.Single(Assert.Single(summary.Slides).Shapes);
             Assert.Equal("TitleBox", shape.ShapeName);
             Assert.Equal("候補", shape.Text);
+        }
+        finally
+        {
+            File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public async Task AnalyzeTreatsMissingPlaceholderTypeAsBody()
+    {
+        var source = TestPresentationFactory.Create("候補");
+        try
+        {
+            using (var document = PresentationDocument.Open(source, true))
+            {
+                var layout = document.PresentationPart!.SlideMasterParts.Single().SlideLayoutParts.Single();
+                var placeholder = layout.SlideLayout!.Descendants<P.PlaceholderShape>().Single();
+                placeholder.Type = null;
+                layout.SlideLayout.Save();
+            }
+
+            var summary = await new OpenXmlPresentationEngine()
+                .AnalyzeAsync(source, CancellationToken.None);
+
+            var analyzedPlaceholder = Assert.Single(Assert.Single(summary.Layouts).Placeholders);
+            Assert.Equal("body", analyzedPlaceholder.PlaceholderType);
         }
         finally
         {

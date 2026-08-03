@@ -34,3 +34,7 @@
 - 入力検証、認可境界、保持期限、PPTX パッケージ差分を優先してテストする。
 - 編集前後で Open XML 検証と LibreOffice レンダリング確認を行う。
 - SmartArt、グラフ、埋め込み Excel は各要素を含む代表ファイルを用意し、ゴールデンファイルテストを追加する。現在の提供テンプレートにはこれらの要素が含まれない。
+
+## 注意点・落とし穴
+
+- `p:ph` の `type` 属性は省略可能である。`PlaceholderShape.Type?.InnerText` を読み、省略時は `body` として扱う。存在しない型付き属性を `GetAttribute` で読むと Open XML SDK が例外を返す。
