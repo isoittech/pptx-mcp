@@ -22,7 +22,13 @@
 - PPTX 操作は `IPresentationEngine` の背後に置き、Open XML 実装と将来の商用エンジンを交換可能にする。
 - LibreOffice は表示確認用レンダリングに限定し、編集には使用しない。
 - 白紙生成は `VisualDeckSpec` を固定PptxGenJSレンダラーへ渡す。任意JavaScript、任意座標、URL、ローカルパスをツール入力へ追加しない。
+- `VisualDeckSpec` は17種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
+- `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。
+- テンプレートのリストは `DeckField.paragraphs` / `TemplateField.paragraphs` を使い、1項目1段落で `Plain`、`Bullet`、`Numbered` と0〜4の `level` を指定する。本文へ `■`、`・`、`1.` 等を手入力しない。
+- `pptx_analyze` の `theme` はaccent1〜3、light1、dark1、日本語優先の見出し・本文フォントを返す。白紙生成へ企業スタイルを移す場合はこの値を `VisualDeckSpec.theme` に使う。
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。
+- 白紙資料の視覚修正は `pptx_refine_visual_deck` へ問題ページだけを渡す。元資料全体を再送しない。
+- Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。
 
 ## セキュリティと制約
 

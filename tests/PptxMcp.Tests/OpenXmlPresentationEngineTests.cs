@@ -214,4 +214,78 @@ public sealed class OpenXmlPresentationEngineTests
             File.Delete(destination);
         }
     }
+
+    [Fact]
+    public async Task CreatesEditableBulletAndNumberedParagraphsFromTemplateLayout()
+    {
+        var source = TestPresentationFactory.Create("guide");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            var engine = new OpenXmlPresentationEngine();
+            var layout = Assert.Single((await engine.AnalyzeAsync(source, CancellationToken.None)).Layouts);
+            await engine.CreateDeckAsync(
+                source,
+                destination,
+                [
+                    new DeckSlideSpec(
+                        layout.LayoutId,
+                        [
+                            new DeckField(
+                                ShapeId: 2U,
+                                Paragraphs:
+                                [
+                                    new DeckParagraph("優先事項", DeckParagraphKind.Bullet),
+                                    new DeckParagraph("詳細項目", DeckParagraphKind.Bullet, Level: 1),
+                                    new DeckParagraph("準備", DeckParagraphKind.Numbered, StartAt: 3),
+                                    new DeckParagraph("実行", DeckParagraphKind.Numbered),
+                                ]),
+                        ]),
+                ],
+                CancellationToken.None);
+
+            using var document = PresentationDocument.Open(destination, false);
+            var paragraphs = document.PresentationPart!.SlideParts.Single().Slide!
+                .Descendants<A.Paragraph>()
+                .ToArray();
+
+            Assert.Equal(4, paragraphs.Length);
+            Assert.NotNull(paragraphs[0].ParagraphProperties?.GetFirstChild<A.CharacterBullet>());
+            Assert.Equal(1, paragraphs[1].ParagraphProperties?.Level?.Value);
+            var firstNumber = paragraphs[2].ParagraphProperties?.GetFirstChild<A.AutoNumberedBullet>();
+            var continuedNumber = paragraphs[3].ParagraphProperties?.GetFirstChild<A.AutoNumberedBullet>();
+            Assert.Equal(3, firstNumber?.StartAt?.Value);
+            Assert.Null(continuedNumber?.StartAt);
+            Assert.Equal(
+                ["優先事項", "詳細項目", "準備", "実行"],
+                paragraphs.Select(static paragraph => paragraph.Descendants<A.Text>().Single().Text).ToArray());
+        }
+        finally
+        {
+            File.Delete(source);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
+    public async Task RejectsAmbiguousPlainTextAndParagraphContent()
+    {
+        var error = await Assert.ThrowsAsync<PptxValidationException>(() =>
+            new OpenXmlPresentationEngine().CreateDeckAsync(
+                "not-opened.pptx",
+                "not-created.pptx",
+                [
+                    new DeckSlideSpec(
+                        "layout",
+                        [
+                            new DeckField(
+                                "plain",
+                                ShapeId: 2U,
+                                Paragraphs: [new DeckParagraph("bullet", DeckParagraphKind.Bullet)]),
+                        ]),
+                ],
+                CancellationToken.None));
+
+        Assert.Equal("invalid_deck_spec", error.Code);
+    }
 }

@@ -39,17 +39,22 @@ MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込
 
 企業テンプレートはテーマ、マスター、レイアウト、フォント、余白を正本とします。既存スライドは `slide_number + shape_id` で一意指定して更新できます。新規生成では解析で得た `layout_id` とプレースホルダーの `shape_id` を使い、選択された定義済みレイアウトから1〜50枚のスライドを構成します。
 
-AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから受けるのはJSON Schemaで制約したスライド仕様・編集命令だけです。
+`pptx_analyze` はテーマのaccent色、背景色、文字色、見出し・本文フォントも返します。Opusはこの値を `VisualDeckSpec.theme` へコピーし、企業テンプレートのブランド感を保ったまま白紙インフォグラフィックを生成できます。
+
+AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから受けるのはJSON Schemaで制約したスライド仕様・編集命令だけです。通常文は `text`、箇条書き・番号付き手順は項目単位の `paragraphs` として受け取り、DrawingMLの実段落、箇条書き、自動採番へ変換します。
 
 ## 白紙からの視覚的な生成
 
 テンプレートがない場合は `pptx_create_visual_deck` を使います。Claudeはスライドの意味に応じて次の固定レイアウトを選びます。
 
-- title、agenda、section、bullets
-- metrics、comparison、process、timeline
-- chart、quote、closing
+- title、agenda、section、statement、bullets
+- cards、metrics、comparison、process、timeline
+- matrix、funnel、roadmap、chart、dashboard
+- quote、closing
 
-テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal` の5種です。色とフォントは検証済みの範囲で上書きできます。固定PptxGenJSレンダラーはテキスト、図形、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。入力にファイルパス、URL、画像、JavaScript、任意座標を持たせないため、表現力を上げてもコード実行境界は広げません。
+テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。入力にファイルパス、URL、画像、JavaScript、任意座標を持たせないため、表現力を上げてもコード実行境界は広げません。
+
+固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合は `design_warnings` を返します。
 
 ## 自動視覚リフレクション
 
@@ -58,7 +63,7 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 1. 生成・編集ジョブを完了させる。
 2. 全スライドを1〜4枚ずつMCP画像ブロックとして取得する。
 3. Claudeが文字切れ、はみ出し、重なり、文字サイズ、余白、整列、コントラスト、情報階層、密度、バランス、全体一貫性を確認する。
-4. 問題があれば宣言型仕様を修正してデッキ全体を再生成する。
+4. 問題があればテンプレート資料は `pptx_refine_deck`、白紙資料は `pptx_refine_visual_deck` へ問題ページだけを渡して再生成する。
 5. 最大2回で収束させ、視覚確認後にダウンロードリンクを提示する。
 
 これはMCPサーバーが別のモデルAPIを直接呼ぶループではなく、LibreChat上のClaudeがツール呼び出しを継続するエージェント駆動方式です。モデル認証情報をMCPへ持ち込まず、会話文脈を保ったまま評価できます。

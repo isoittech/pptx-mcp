@@ -83,6 +83,26 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void DeckInputSerializesStructuredParagraphSemantics()
+    {
+        var field = new DeckField(
+            ShapeId: 5,
+            Paragraphs:
+            [
+                new DeckParagraph("論点", DeckParagraphKind.Bullet),
+                new DeckParagraph("実行", DeckParagraphKind.Numbered, Level: 1, StartAt: 2),
+            ]);
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(field, SerializerOptions));
+        var paragraphs = document.RootElement.GetProperty("paragraphs");
+
+        Assert.Equal("Bullet", paragraphs[0].GetProperty("kind").GetString());
+        Assert.Equal("Numbered", paragraphs[1].GetProperty("kind").GetString());
+        Assert.Equal(1, paragraphs[1].GetProperty("level").GetInt32());
+        Assert.Equal(2, paragraphs[1].GetProperty("start_at").GetInt32());
+    }
+
+    [Fact]
     public void EditingInputsUseAnalysisCompatibleSnakeCaseKeys()
     {
         var replacement = new TextReplacement("Before", "After", 3, "Body", 12);
@@ -180,5 +200,36 @@ public sealed class ToolInputContractTests
         Assert.Equal("input_required", inputRequest.Status);
         Assert.Equal("pptx_refine_deck", inputRequest.Tool);
         Assert.Equal(["jobId", "revisions"], inputRequest.RequiredArguments);
+    }
+
+    [Fact]
+    public async Task RefineVisualDeckReturnsActionableInputRequestForEmptyBedrockCall()
+    {
+        var result = await PowerPointTools.RefineVisualDeckAsync(
+            null!,
+            null!,
+            CancellationToken.None);
+
+        var inputRequest = Assert.IsType<ToolInputRequest>(result);
+        Assert.Equal("input_required", inputRequest.Status);
+        Assert.Equal("pptx_refine_visual_deck", inputRequest.Tool);
+        Assert.Equal(["jobId", "revisions"], inputRequest.RequiredArguments);
+    }
+
+    [Fact]
+    public void VisualValidationErrorsExposeTheExactFieldFailureToTheModel()
+    {
+        var error = new ToolValidationError(
+            "invalid_input",
+            "pptx_refine_visual_deck",
+            "visual_content_missing",
+            "slides[9].body is required for a statement slide.",
+            "Correct the field and retry.");
+
+        var json = JsonSerializer.Serialize(error, SerializerOptions);
+
+        Assert.Contains("\"status\":\"invalid_input\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"code\":\"visual_content_missing\"", json, StringComparison.Ordinal);
+        Assert.Contains("slides[9].body", json, StringComparison.Ordinal);
     }
 }

@@ -27,6 +27,20 @@ public sealed record LayoutSummary(
     [property: JsonPropertyName("master_number")] int MasterNumber,
     [property: JsonPropertyName("placeholders")] IReadOnlyList<PlaceholderSummary> Placeholders);
 
+public sealed record ThemeColorSummary(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("rgb")] string Rgb);
+
+public sealed record PresentationThemeSummary(
+    [property: JsonPropertyName("primary_color")] string? PrimaryColor,
+    [property: JsonPropertyName("secondary_color")] string? SecondaryColor,
+    [property: JsonPropertyName("accent_color")] string? AccentColor,
+    [property: JsonPropertyName("background_color")] string? BackgroundColor,
+    [property: JsonPropertyName("text_color")] string? TextColor,
+    [property: JsonPropertyName("heading_font")] string? HeadingFont,
+    [property: JsonPropertyName("body_font")] string? BodyFont,
+    [property: JsonPropertyName("colors")] IReadOnlyList<ThemeColorSummary> Colors);
+
 public sealed record PresentationSummary(
     [property: JsonPropertyName("slide_count")] int SlideCount,
     [property: JsonPropertyName("has_smart_art")] bool HasSmartArt,
@@ -35,6 +49,7 @@ public sealed record PresentationSummary(
     [property: JsonPropertyName("analysis_truncated")] bool AnalysisTruncated,
     [property: JsonPropertyName("slides")] IReadOnlyList<SlideSummary> Slides,
     [property: JsonPropertyName("layouts")] IReadOnlyList<LayoutSummary> Layouts,
+    [property: JsonPropertyName("theme")] PresentationThemeSummary? Theme,
     [property: JsonPropertyName("validation_errors")] IReadOnlyList<string> ValidationErrors);
 
 public sealed record EditResult(

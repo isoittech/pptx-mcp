@@ -97,4 +97,149 @@ public sealed class VisualDeckValidatorTests
 
         VisualDeckValidator.Validate(deck, 50);
     }
+
+    [Fact]
+    public void AcceptsInfographicLayoutsCreativeDirectionAndVariants()
+    {
+        var deck = new VisualDeckSpec(
+            "サイバー危機対応",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Cards,
+                    "経営判断の論点",
+                    Cards:
+                    [
+                        new VisualCardSpec("事業継続", "停止許容時間を決める", "4時間", Icon: "clock"),
+                        new VisualCardSpec("封じ込め", "影響範囲を限定する", Icon: "shield"),
+                        new VisualCardSpec("対外説明", "一貫した情報を発信する", Icon: "people"),
+                    ],
+                    Variant: "spotlight"),
+                new VisualSlideSpec(
+                    VisualSlideKind.Matrix,
+                    "対応優先度",
+                    Matrix: new VisualMatrixSpec(
+                        "実行難易度",
+                        "事業インパクト",
+                        [
+                            new VisualPanelSpec("最優先", ["認証情報の失効"]),
+                            new VisualPanelSpec("計画実行", ["代替環境への切替"]),
+                            new VisualPanelSpec("監視", ["ログの保全"]),
+                            new VisualPanelSpec("後続対応", ["恒久対策"]),
+                        ])),
+                new VisualSlideSpec(
+                    VisualSlideKind.Dashboard,
+                    "復旧状況",
+                    Metrics:
+                    [
+                        new VisualMetricSpec("82%", "重要業務の復旧率"),
+                        new VisualMetricSpec("14", "残課題", Tone: "warning"),
+                    ],
+                    Chart: new VisualChartSpec(
+                        VisualChartKind.Line,
+                        ["0h", "12h", "24h", "48h"],
+                        [new VisualChartSeriesSpec("復旧率", [0, 25, 58, 82])])),
+            ],
+            new VisualThemeSpec("cyber"),
+            Design: new VisualDesignSpec("technical", "balanced", "nodes"));
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void AcceptsExpressiveSemanticTonesCustomColorsAndBusinessIcons()
+    {
+        var deck = new VisualDeckSpec(
+            "危機対応",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Dashboard,
+                    "経営ダッシュボード",
+                    Metrics:
+                    [
+                        new VisualMetricSpec("3", "重大リスク", Tone: "negative"),
+                        new VisualMetricSpec("82%", "復旧率", Tone: "success"),
+                        new VisualMetricSpec("12h", "残り時間", Tone: "#7C3AED"),
+                    ],
+                    Chart: new VisualChartSpec(
+                        VisualChartKind.Line,
+                        ["0h", "12h"],
+                        [new VisualChartSeriesSpec("復旧率", [0, 82])])),
+                new VisualSlideSpec(
+                    VisualSlideKind.Cards,
+                    "判断材料",
+                    Cards:
+                    [
+                        new VisualCardSpec("調査", Icon: "search"),
+                        new VisualCardSpec("法令", Tone: "critical", Icon: "compliance"),
+                        new VisualCardSpec("意思決定", Icon: "decision"),
+                    ]),
+            ]);
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void RejectsAnUnknownToneThatCannotBeRenderedIntentionally()
+    {
+        var deck = new VisualDeckSpec(
+            "危機対応",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Metrics,
+                    "指標",
+                    Metrics:
+                    [
+                        new VisualMetricSpec("1", "項目A", Tone: "ultraviolet"),
+                        new VisualMetricSpec("2", "項目B"),
+                    ]),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_metric_tone_invalid", error.Code);
+    }
+
+    [Fact]
+    public void RejectsMatrixWithoutFourQuadrants()
+    {
+        var deck = new VisualDeckSpec(
+            "優先度",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Matrix,
+                    "対応優先度",
+                    Matrix: new VisualMatrixSpec(
+                        "難易度",
+                        "効果",
+                        [
+                            new VisualPanelSpec("A", ["項目"]),
+                            new VisualPanelSpec("B", ["項目"]),
+                            new VisualPanelSpec("C", ["項目"]),
+                        ])),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_matrix_invalid", error.Code);
+    }
+
+    [Fact]
+    public void ReportsLayoutMonotonyWithoutBlockingGeneration()
+    {
+        var deck = new VisualDeckSpec(
+            "説明資料",
+            Enumerable.Range(1, 6)
+                .Select(index => new VisualSlideSpec(
+                    VisualSlideKind.Bullets,
+                    $"論点{index}",
+                    Bullets: ["項目A", "項目B"]))
+                .ToArray());
+
+        VisualDeckValidator.Validate(deck, 50);
+        var warnings = VisualDeckValidator.GetDesignWarnings(deck);
+
+        Assert.Contains(warnings, warning => warning.Contains("four different layout", StringComparison.Ordinal));
+        Assert.Contains(warnings, warning => warning.Contains("text-led", StringComparison.Ordinal));
+        Assert.Contains(warnings, warning => warning.Contains("repeat the same layout", StringComparison.Ordinal));
+    }
 }

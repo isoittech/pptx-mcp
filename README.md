@@ -8,11 +8,12 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 30MB・50スライドまでの PPTX 入力検証
 - ZIP bomb、パストラバーサル、マクロ、ActiveX、外部参照の拒否
 - 最大3並列・10分タイムアウトの永続化された非同期ジョブ
-- スライド、シェイプ、SmartArt、グラフ、埋め込みExcel有無の解析
+- スライド、シェイプ、テーマ色、日本語フォント、SmartArt、グラフ、埋め込みExcel有無の解析
 - 通常シェイプと SmartArt 内テキストの置換
 - 名前付きシェイプを持つ企業テンプレートへのテキスト流し込み
+- 企業テンプレート内で編集可能な実箇条書き・自動採番・0〜4段階のインデントを生成
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
-- 白紙から意味ベースの11レイアウトと5テーマを使って視覚的な16:9デッキを生成
+- 白紙から意味ベースの17レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
 - PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
 - LibreOffice と Poppler による全ページ PNG プレビュー
 - プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
@@ -38,14 +39,22 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 - `pptx_replace_text`
 - `pptx_populate_template`
 - `pptx_create_deck`
+- `pptx_refine_deck`
 - `pptx_create_visual_deck`
+- `pptx_refine_visual_deck`
 - `pptx_get_job`
 - `pptx_get_preview_images`
 - `pptx_cancel_job`
 
 処理ツールはすぐに `job_id` を返します。Claude は `pptx_get_job` をポーリングし、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
 
-白紙生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `title`、`metrics`、`comparison`、`process`、`timeline`、`chart` などの意味ベースのレイアウトと制限付きコンテンツをJSONで指定し、固定レンダラーが配置します。
+白紙生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。
+
+メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等を含む編集可能な組み込みアイコンを利用できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
+
+Visual Deckの入力検証エラーは `status=invalid_input`、エラーコード、対象フィールドを構造化して返します。モデルは推測で同じ呼び出しを繰り返さず、指摘されたフィールドだけを直せます。Closingの提言はPowerPointネイティブの箇条書きとして描画されます。
+
+6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。視覚確認後は `pptx_refine_visual_deck` へ問題ページだけを渡し、資料全体を再送せずに構図ごと差し替えます。
 
 ## テスト
 

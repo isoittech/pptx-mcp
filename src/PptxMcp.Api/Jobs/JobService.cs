@@ -94,6 +94,31 @@ public sealed class JobService(
         return SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken);
     }
 
+    public async Task<JobReceipt> SubmitRefineVisualDeckAsync(
+        CallerContext caller,
+        string jobId,
+        IReadOnlyList<VisualSlideRevision> revisions,
+        CancellationToken cancellationToken)
+    {
+        var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (sourceJob.Kind != JobKind.CreateVisualDeck || sourceJob.State != JobState.Succeeded)
+        {
+            throw new PptxValidationException(
+                "visual_deck_job_not_refinable",
+                "Only a successful pptx_create_visual_deck job can be refined.");
+        }
+
+        var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
+            ?? throw new PptxValidationException("invalid_job_payload", "The source visual deck specification is missing.");
+        var refinedDeck = ApplyVisualDeckRevisions(originalDeck, revisions, options.MaxSlides);
+        VisualDeckValidator.Validate(refinedDeck, options.MaxSlides);
+        return await SubmitGeneratedAsync(
+            caller,
+            JobKind.CreateVisualDeck,
+            refinedDeck,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<JobView> GetAsync(CallerContext caller, string jobId, CancellationToken cancellationToken)
     {
         var job = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
@@ -237,6 +262,36 @@ public sealed class JobService(
                 ? new DeckSlideSpec(slide.LayoutId, revision.Fields)
                 : slide)
             .ToArray();
+    }
+
+    internal static VisualDeckSpec ApplyVisualDeckRevisions(
+        VisualDeckSpec originalDeck,
+        IReadOnlyList<VisualSlideRevision> revisions,
+        int maximumSlides)
+    {
+        if (originalDeck is null
+            || originalDeck.Slides is null
+            || originalDeck.Slides.Count is < 1
+            || originalDeck.Slides.Count > maximumSlides
+            || revisions is null
+            || revisions.Count is < 1
+            || revisions.Count > originalDeck.Slides.Count
+            || revisions.Any(static revision => revision is null || revision.Slide is null)
+            || revisions.Select(static revision => revision.SlideNumber).Distinct().Count() != revisions.Count
+            || revisions.Any(revision => revision.SlideNumber < 1 || revision.SlideNumber > originalDeck.Slides.Count))
+        {
+            throw new PptxValidationException(
+                "visual_deck_revision_invalid",
+                "Provide 1 or more distinct visual slide revisions within the source deck slide range.");
+        }
+
+        var revisionsBySlide = revisions.ToDictionary(static revision => revision.SlideNumber);
+        var slides = originalDeck.Slides
+            .Select((slide, index) => revisionsBySlide.TryGetValue(index + 1, out var revision)
+                ? revision.Slide
+                : slide)
+            .ToArray();
+        return originalDeck with { Slides = slides };
     }
 
     private async Task<JobReceipt> SubmitAsync<TPayload>(

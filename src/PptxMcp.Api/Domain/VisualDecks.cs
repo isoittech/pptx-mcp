@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using PptxMcp.Storage;
@@ -16,6 +17,12 @@ public enum VisualSlideKind
     Process,
     Timeline,
     Chart,
+    Statement,
+    Cards,
+    Matrix,
+    Funnel,
+    Roadmap,
+    Dashboard,
     Quote,
     Closing,
 }
@@ -34,7 +41,13 @@ public sealed record VisualDeckSpec(
     IReadOnlyList<VisualSlideSpec> Slides,
     VisualThemeSpec? Theme = null,
     string? Subject = null,
-    string Language = "ja-JP");
+    string Language = "ja-JP",
+    VisualDesignSpec? Design = null);
+
+public sealed record VisualDesignSpec(
+    string Style = "executive",
+    string Density = "balanced",
+    string Motif = "geometric");
 
 public sealed record VisualThemeSpec(
     string Preset = "midnight",
@@ -57,12 +70,16 @@ public sealed record VisualSlideSpec(
     IReadOnlyList<VisualStepSpec>? Steps = null,
     VisualChartSpec? Chart = null,
     string? Attribution = null,
-    string? Takeaway = null);
+    string? Takeaway = null,
+    IReadOnlyList<VisualCardSpec>? Cards = null,
+    VisualMatrixSpec? Matrix = null,
+    string Variant = "auto");
 
 public sealed record VisualMetricSpec(
     string Value,
     string Label,
     string? Detail = null,
+    [property: Description("Semantic tone such as accent, positive/success, warning, critical/danger/negative, neutral/muted, info, or a custom #RRGGBB color.")]
     string Tone = "accent");
 
 public sealed record VisualPanelSpec(
@@ -74,6 +91,20 @@ public sealed record VisualStepSpec(
     string Title,
     string? Description = null,
     string? Label = null);
+
+public sealed record VisualCardSpec(
+    string Title,
+    string? Description = null,
+    string? Value = null,
+    [property: Description("Semantic tone such as accent, positive/success, warning, critical/danger/negative, neutral/muted, info, or a custom #RRGGBB color.")]
+    string Tone = "accent",
+    [property: Description("Editable native icon: insight, target, growth, people, shield, clock, cloud, settings, data, warning, check, idea, search, compliance, decision, lock, network, document, communication, recovery, backup, legal, monitor, or automation.")]
+    string Icon = "insight");
+
+public sealed record VisualMatrixSpec(
+    string HorizontalAxis,
+    string VerticalAxis,
+    IReadOnlyList<VisualPanelSpec> Quadrants);
 
 public sealed record VisualChartSpec(
     VisualChartKind Kind,
@@ -89,7 +120,12 @@ public sealed record VisualChartSeriesSpec(
 public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
     [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
-    [property: JsonPropertyName("renderer")] string Renderer);
+    [property: JsonPropertyName("renderer")] string Renderer,
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+
+public sealed record VisualSlideRevision(
+    [property: JsonPropertyName("slide_number")] int SlideNumber,
+    [property: JsonPropertyName("slide")] VisualSlideSpec Slide);
 
 public static partial class VisualDeckValidator
 {
@@ -100,14 +136,90 @@ public static partial class VisualDeckValidator
         "sunset",
         "forest",
         "minimal",
+        "ocean",
+        "berry",
+        "clay",
+        "cyber",
     };
 
-    private static readonly HashSet<string> MetricTones = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> SemanticTones = new(StringComparer.OrdinalIgnoreCase)
     {
         "accent",
+        "primary",
+        "secondary",
+        "info",
         "positive",
+        "success",
         "warning",
+        "critical",
+        "danger",
+        "negative",
+        "risk",
         "neutral",
+        "muted",
+    };
+
+    private static readonly HashSet<string> DesignStyles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "executive",
+        "editorial",
+        "bold",
+        "technical",
+        "playful",
+    };
+
+    private static readonly HashSet<string> DesignDensities = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "airy",
+        "balanced",
+        "detailed",
+    };
+
+    private static readonly HashSet<string> DesignMotifs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "geometric",
+        "orbit",
+        "nodes",
+        "ribbon",
+        "none",
+    };
+
+    private static readonly HashSet<string> CardIcons = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "insight",
+        "target",
+        "growth",
+        "people",
+        "shield",
+        "clock",
+        "cloud",
+        "settings",
+        "data",
+        "warning",
+        "check",
+        "idea",
+        "search",
+        "compliance",
+        "decision",
+        "lock",
+        "network",
+        "document",
+        "communication",
+        "recovery",
+        "backup",
+        "legal",
+        "monitor",
+        "automation",
+    };
+
+    private static readonly HashSet<string> SlideVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto",
+        "grid",
+        "spotlight",
+        "split",
+        "cascade",
+        "editorial",
     };
 
     public static void Validate(VisualDeckSpec deck, int maximumSlides)
@@ -125,9 +237,58 @@ public static partial class VisualDeckValidator
         }
 
         ValidateTheme(deck.Theme);
+        ValidateDesign(deck.Design);
         for (var index = 0; index < deck.Slides.Count; index++)
         {
             ValidateSlide(deck.Slides[index], index + 1);
+        }
+    }
+
+    public static IReadOnlyList<string> GetDesignWarnings(VisualDeckSpec deck)
+    {
+        var warnings = new List<string>();
+        if (deck.Slides.Count >= 6)
+        {
+            var distinctKinds = deck.Slides.Select(static slide => slide.Kind).Distinct().Count();
+            if (distinctKinds < 4)
+            {
+                warnings.Add("Use at least four different layout kinds in decks of six or more slides.");
+            }
+
+            var textLedSlides = deck.Slides.Count(static slide =>
+                slide.Kind is VisualSlideKind.Bullets or VisualSlideKind.Quote or VisualSlideKind.Statement);
+            if (textLedSlides * 2 > deck.Slides.Count)
+            {
+                warnings.Add("More than half of the deck is text-led; replace some slides with cards, data, process, matrix, or roadmap visuals.");
+            }
+        }
+
+        for (var index = 2; index < deck.Slides.Count; index++)
+        {
+            if (deck.Slides[index].Kind == deck.Slides[index - 1].Kind
+                && deck.Slides[index].Kind == deck.Slides[index - 2].Kind)
+            {
+                warnings.Add($"Slides {index - 1}-{index + 1} repeat the same layout kind; vary the visual rhythm.");
+            }
+        }
+
+        return warnings;
+    }
+
+    private static void ValidateDesign(VisualDesignSpec? design)
+    {
+        if (design is null)
+        {
+            return;
+        }
+
+        if (!DesignStyles.Contains(design.Style)
+            || !DesignDensities.Contains(design.Density)
+            || !DesignMotifs.Contains(design.Motif))
+        {
+            throw new PptxValidationException(
+                "visual_design_invalid",
+                "design must use a supported style, density, and motif.");
         }
     }
 
@@ -142,7 +303,7 @@ public static partial class VisualDeckValidator
         {
             throw new PptxValidationException(
                 "visual_theme_invalid",
-                "theme.preset must be one of midnight, aurora, sunset, forest, or minimal.");
+                "theme.preset must be one of midnight, aurora, sunset, forest, minimal, ocean, berry, clay, or cyber.");
         }
 
         ValidateColor(theme.PrimaryColor, "theme.primaryColor");
@@ -167,6 +328,13 @@ public static partial class VisualDeckValidator
         ValidateOptionalText(slide.Body, $"{prefix}.body", 700);
         ValidateOptionalText(slide.Attribution, $"{prefix}.attribution", 120);
         ValidateOptionalText(slide.Takeaway, $"{prefix}.takeaway", 280);
+        if (!SlideVariants.Contains(slide.Variant))
+        {
+            throw new PptxValidationException(
+                "visual_slide_variant_invalid",
+                $"{prefix}.variant must be auto, grid, spotlight, split, cascade, or editorial.");
+        }
+
         ValidateList(slide.Bullets, $"{prefix}.bullets", 8, 180);
 
         if (slide.Metrics is not null)
@@ -181,11 +349,11 @@ public static partial class VisualDeckValidator
                 ValidateText(metric.Value, $"{prefix}.metrics.value", 1, 32);
                 ValidateText(metric.Label, $"{prefix}.metrics.label", 1, 80);
                 ValidateOptionalText(metric.Detail, $"{prefix}.metrics.detail", 140);
-                if (!MetricTones.Contains(metric.Tone))
+                if (!IsSupportedTone(metric.Tone))
                 {
                     throw new PptxValidationException(
                         "visual_metric_tone_invalid",
-                        $"{prefix}.metrics.tone must be accent, positive, warning, or neutral.");
+                        $"{prefix}.metrics.tone must be a supported semantic tone or a #RRGGBB color.");
                 }
             }
         }
@@ -220,6 +388,36 @@ public static partial class VisualDeckValidator
             }
         }
 
+        if (slide.Cards is not null)
+        {
+            if (slide.Cards.Count > 6)
+            {
+                ThrowDensity(prefix, "cards", 6);
+            }
+
+            foreach (var card in slide.Cards)
+            {
+                ValidateText(card.Title, $"{prefix}.cards.title", 1, 72);
+                ValidateOptionalText(card.Description, $"{prefix}.cards.description", 150);
+                ValidateOptionalText(card.Value, $"{prefix}.cards.value", 32);
+                if (!IsSupportedTone(card.Tone))
+                {
+                    throw new PptxValidationException(
+                        "visual_card_tone_invalid",
+                        $"{prefix}.cards.tone must be a supported semantic tone or a #RRGGBB color.");
+                }
+
+                if (!CardIcons.Contains(card.Icon))
+                {
+                    throw new PptxValidationException(
+                        "visual_card_icon_invalid",
+                        $"{prefix}.cards.icon is not supported.");
+                }
+            }
+        }
+
+        ValidateMatrix(slide.Matrix, prefix);
+
         ValidateChart(slide.Chart, prefix);
         switch (slide.Kind)
         {
@@ -237,13 +435,60 @@ public static partial class VisualDeckValidator
                 break;
             case VisualSlideKind.Process:
             case VisualSlideKind.Timeline:
+            case VisualSlideKind.Funnel:
+            case VisualSlideKind.Roadmap:
                 RequireCount(slide.Steps, prefix, "steps", 3, 6);
                 break;
             case VisualSlideKind.Chart when slide.Chart is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.chart is required for a chart slide.");
+            case VisualSlideKind.Statement when string.IsNullOrWhiteSpace(slide.Body):
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.body is required for a statement slide.");
+            case VisualSlideKind.Cards:
+                RequireCount(slide.Cards, prefix, "cards", 3, 6);
+                break;
+            case VisualSlideKind.Matrix when slide.Matrix is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.matrix is required for a matrix slide.");
+            case VisualSlideKind.Dashboard:
+                RequireCount(slide.Metrics, prefix, "metrics", 2, 4);
+                if (slide.Chart is null)
+                {
+                    throw new PptxValidationException("visual_content_missing", $"{prefix}.chart is required for a dashboard slide.");
+                }
+
+                break;
             case VisualSlideKind.Quote when string.IsNullOrWhiteSpace(slide.Body):
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.body is required for a quote slide.");
         }
+    }
+
+    private static void ValidateMatrix(VisualMatrixSpec? matrix, string prefix)
+    {
+        if (matrix is null)
+        {
+            return;
+        }
+
+        ValidateText(matrix.HorizontalAxis, $"{prefix}.matrix.horizontalAxis", 1, 48);
+        ValidateText(matrix.VerticalAxis, $"{prefix}.matrix.verticalAxis", 1, 48);
+        if (matrix.Quadrants is null || matrix.Quadrants.Count != 4)
+        {
+            throw new PptxValidationException(
+                "visual_matrix_invalid",
+                $"{prefix}.matrix.quadrants must contain exactly four panels in top-left, top-right, bottom-left, bottom-right order.");
+        }
+
+        foreach (var quadrant in matrix.Quadrants)
+        {
+            ValidateText(quadrant.Title, $"{prefix}.matrix.quadrants.title", 1, 64);
+            ValidateList(quadrant.Bullets, $"{prefix}.matrix.quadrants.bullets", 3, 80, minimumCount: 1);
+            ValidateOptionalText(quadrant.Highlight, $"{prefix}.matrix.quadrants.highlight", 32);
+        }
+    }
+
+    private static bool IsSupportedTone(string tone)
+    {
+        return !string.IsNullOrWhiteSpace(tone)
+            && (SemanticTones.Contains(tone) || HexColorRegex().IsMatch(tone));
     }
 
     private static void ValidateChart(VisualChartSpec? chart, string prefix)

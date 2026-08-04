@@ -88,6 +88,7 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
         return new VisualDeckCreationResult(
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
-            "PptxGenJS 4.0.1 declarative renderer");
+            "PptxGenJS 4.0.1 declarative renderer v2",
+            VisualDeckValidator.GetDesignWarnings(deck));
     }
 }

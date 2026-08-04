@@ -108,6 +108,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         }
 
         var layouts = ReadLayouts(presentationPart);
+        var theme = ReadTheme(presentationPart);
         var validationErrors = Validate(document);
         return Task.FromResult(new PresentationSummary(
             slides.Count,
@@ -117,6 +118,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             analysisTruncated,
             slides,
             layouts,
+            theme,
             validationErrors));
     }
 
@@ -226,8 +228,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         var invalidField = fields.Any(static field =>
                 field is null
                 || field.SlideNumber is <= 0 or > 50
-                || field.Text is null
-                || field.Text.Length > MaxInstructionTextCharacters
+                || HasInvalidContent(field.Text, field.Paragraphs)
                 || field.ShapeId == 0
                 || field.ShapeName is { Length: > MaxSelectorCharacters }
                 || (string.IsNullOrWhiteSpace(field.ShapeName) && field.ShapeId is null));
@@ -236,7 +237,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             : fields.GroupBy(static field => (field.SlideNumber, field.ShapeName, field.ShapeId)).FirstOrDefault(group => group.Count() > 1);
         if (invalidField
             || duplicate is not null
-            || ExceedsTotalText(fields.Select(static field => field.Text)))
+            || ExceedsTotalText(fields.SelectMany(static field => GetContentText(field.Text, field.Paragraphs))))
         {
             throw new PptxValidationException("invalid_template_fields", "Template targets must be unique and valid.");
         }
@@ -283,7 +284,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                         $"More than one shape matched on slide {field.SlideNumber}; specify shape_id.");
                 }
 
-                SetText(matchingShapes[0], field.Text);
+                SetContent(matchingShapes[0], field.Text, field.Paragraphs);
                 slide.Save();
                 changedParts.Add(slidePart.Uri.ToString());
                 updated++;
@@ -310,12 +311,13 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             || slides.Sum(static slide => slide.Fields.Count) > 1_000
             || slides.SelectMany(static slide => slide.Fields).Any(static field =>
                 field is null
-                || field.Text is null
-                || field.Text.Length > MaxInstructionTextCharacters
+                || HasInvalidContent(field.Text, field.Paragraphs)
                 || field.ShapeId == 0
                 || field.ShapeName is { Length: > MaxSelectorCharacters }
                 || (field.ShapeName is not null && string.IsNullOrWhiteSpace(field.ShapeName)))
-            || ExceedsTotalText(slides.SelectMany(static slide => slide.Fields).Select(static field => field.Text)))
+            || ExceedsTotalText(slides
+                .SelectMany(static slide => slide.Fields)
+                .SelectMany(static field => GetContentText(field.Text, field.Paragraphs))))
         {
             throw new PptxValidationException("invalid_deck_spec", "Specify 1 to 50 valid slides and at most 1,000 fields.");
         }
@@ -396,7 +398,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                         throw new PptxValidationException("ambiguous_placeholder", $"More than one placeholder matched in layout '{slideSpec.LayoutId}'; specify shape_id.");
                     }
 
-                    SetText(matches[0], field.Text);
+                    SetContent(matches[0], field.Text, field.Paragraphs);
                     populatedFieldCount++;
                 }
 
@@ -479,6 +481,69 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         return layouts.OrderBy(static layout => layout.MasterNumber).ThenBy(static layout => layout.LayoutId, StringComparer.Ordinal).ToArray();
     }
 
+    private static PresentationThemeSummary? ReadTheme(PresentationPart presentationPart)
+    {
+        var theme = presentationPart.SlideMasterParts
+            .Select(static master => master.ThemePart?.Theme)
+            .FirstOrDefault(static candidate => candidate is not null);
+        var themeElements = theme?.ThemeElements;
+        var colorScheme = themeElements?.ColorScheme;
+        if (colorScheme is null)
+        {
+            return null;
+        }
+
+        var colors = colorScheme.ChildElements
+            .Select(static element => new ThemeColorSummary(element.LocalName, ReadThemeColor(element) ?? string.Empty))
+            .Where(static color => color.Rgb.Length == 6)
+            .ToArray();
+        var colorsByName = colors.ToDictionary(static color => color.Name, static color => color.Rgb, StringComparer.OrdinalIgnoreCase);
+        var fontScheme = themeElements?.FontScheme;
+        var majorFont = fontScheme?.ChildElements.FirstOrDefault(static element => element.LocalName == "majorFont");
+        var minorFont = fontScheme?.ChildElements.FirstOrDefault(static element => element.LocalName == "minorFont");
+        return new PresentationThemeSummary(
+            GetColor(colorsByName, "accent1"),
+            GetColor(colorsByName, "accent2"),
+            GetColor(colorsByName, "accent3"),
+            GetColor(colorsByName, "lt1"),
+            GetColor(colorsByName, "dk1"),
+            ReadThemeFont(majorFont),
+            ReadThemeFont(minorFont),
+            colors);
+    }
+
+    private static string? ReadThemeColor(OpenXmlElement element) =>
+        element.Descendants<A.RgbColorModelHex>().Select(static color => color.Val?.Value).FirstOrDefault(static value => value is not null)
+        ?? element.Descendants<A.SystemColor>().Select(static color => color.LastColor?.Value).FirstOrDefault(static value => value is not null);
+
+    private static string? ReadThemeFont(OpenXmlElement? fontCollection)
+    {
+        if (fontCollection is null)
+        {
+            return null;
+        }
+
+        var japanese = fontCollection.Descendants()
+            .FirstOrDefault(static element =>
+                element.LocalName == "font"
+                && string.Equals(GetAttributeValue(element, "script"), "Jpan", StringComparison.OrdinalIgnoreCase));
+        var japaneseTypeface = GetAttributeValue(japanese, "typeface");
+        if (!string.IsNullOrWhiteSpace(japaneseTypeface))
+        {
+            return japaneseTypeface;
+        }
+
+        var latin = fontCollection.Descendants().FirstOrDefault(static element => element.LocalName == "latin");
+        var latinTypeface = GetAttributeValue(latin, "typeface");
+        return string.IsNullOrWhiteSpace(latinTypeface) ? null : latinTypeface;
+    }
+
+    private static string? GetAttributeValue(OpenXmlElement? element, string localName) =>
+        element?.GetAttributes().FirstOrDefault(attribute => attribute.LocalName == localName).Value;
+
+    private static string? GetColor(Dictionary<string, string> colors, string name) =>
+        colors.TryGetValue(name, out var value) ? value : null;
+
     private static P.ShapeTree CreateShapeTree(P.SlideLayout layout)
     {
         var shapeTree = new P.ShapeTree(
@@ -505,7 +570,46 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         part.ContentType.Contains("spreadsheet", StringComparison.OrdinalIgnoreCase)
         || part.ContentType.Contains("ms-excel", StringComparison.OrdinalIgnoreCase);
 
-    private static bool ExceedsTotalText(IEnumerable<string> values)
+    private static bool HasInvalidContent(string? text, IReadOnlyList<DeckParagraph>? paragraphs)
+    {
+        var hasText = text is not null;
+        var hasParagraphs = paragraphs is { Count: > 0 };
+        if (hasText == hasParagraphs)
+        {
+            return true;
+        }
+
+        if (hasText)
+        {
+            return text!.Length > MaxInstructionTextCharacters;
+        }
+
+        return paragraphs!.Count > 20 || paragraphs.Any(static paragraph =>
+            paragraph is null
+            || string.IsNullOrEmpty(paragraph.Text)
+            || paragraph.Text.Length > MaxInstructionTextCharacters
+            || paragraph.Level is < 0 or > 4
+            || paragraph.StartAt is < 1 or > 32_767
+            || (paragraph.Kind != DeckParagraphKind.Numbered && paragraph.StartAt is not null));
+    }
+
+    private static IEnumerable<string?> GetContentText(string? text, IReadOnlyList<DeckParagraph>? paragraphs)
+    {
+        if (text is not null)
+        {
+            yield return text;
+        }
+
+        if (paragraphs is not null)
+        {
+            foreach (var paragraph in paragraphs)
+            {
+                yield return paragraph.Text;
+            }
+        }
+    }
+
+    private static bool ExceedsTotalText(IEnumerable<string?> values)
     {
         long total = 0;
         foreach (var value in values)
@@ -625,6 +729,106 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         foreach (var node in nodes.Skip(1))
         {
             node.Text = string.Empty;
+        }
+    }
+
+    private static void SetContent(
+        P.Shape shape,
+        string? text,
+        IReadOnlyList<DeckParagraph>? paragraphs)
+    {
+        if (paragraphs is { Count: > 0 })
+        {
+            SetParagraphs(shape, paragraphs);
+            return;
+        }
+
+        SetText(shape, text ?? string.Empty);
+    }
+
+    private static void SetParagraphs(P.Shape shape, IReadOnlyList<DeckParagraph> values)
+    {
+        var textBody = shape.TextBody
+            ?? throw new PptxValidationException("template_target_has_no_text", "The selected template shape has no text body.");
+        var prototype = textBody.Elements<A.Paragraph>().FirstOrDefault();
+        var prototypeProperties = prototype?.ParagraphProperties;
+        var prototypeRunProperties = prototype?
+            .Descendants<A.RunProperties>()
+            .FirstOrDefault();
+        var prototypeEndProperties = prototype?.GetFirstChild<A.EndParagraphRunProperties>();
+
+        textBody.RemoveAllChildren<A.Paragraph>();
+        foreach (var value in values)
+        {
+            var paragraph = new A.Paragraph();
+            var paragraphProperties = prototypeProperties is null
+                ? new A.ParagraphProperties()
+                : (A.ParagraphProperties)prototypeProperties.CloneNode(deep: true);
+            paragraphProperties.Level = value.Level;
+            SetParagraphMarker(paragraphProperties, value);
+            paragraph.Append(paragraphProperties);
+
+            var runProperties = prototypeRunProperties is null
+                ? new A.RunProperties { Language = "ja-JP" }
+                : (A.RunProperties)prototypeRunProperties.CloneNode(deep: true);
+            var text = new A.Text(value.Text);
+            if (value.Text.Length > 0
+                && (char.IsWhiteSpace(value.Text[0]) || char.IsWhiteSpace(value.Text[^1])))
+            {
+                text.SetAttribute(new OpenXmlAttribute(
+                    "xml",
+                    "space",
+                    "http://www.w3.org/XML/1998/namespace",
+                    "preserve"));
+            }
+
+            paragraph.Append(new A.Run(runProperties, text));
+            if (prototypeEndProperties is not null)
+            {
+                paragraph.Append(prototypeEndProperties.CloneNode(deep: true));
+            }
+
+            textBody.Append(paragraph);
+        }
+    }
+
+    private static void SetParagraphMarker(A.ParagraphProperties properties, DeckParagraph value)
+    {
+        properties.RemoveAllChildren<A.NoBullet>();
+        properties.RemoveAllChildren<A.CharacterBullet>();
+        properties.RemoveAllChildren<A.AutoNumberedBullet>();
+
+        OpenXmlElement marker;
+        if (value.Kind == DeckParagraphKind.Bullet)
+        {
+            marker = new A.CharacterBullet { Char = "•" };
+        }
+        else if (value.Kind == DeckParagraphKind.Numbered)
+        {
+            var numbered = new A.AutoNumberedBullet
+            {
+                Type = A.TextAutoNumberSchemeValues.ArabicPeriod,
+            };
+            if (value.StartAt is not null)
+            {
+                numbered.StartAt = value.StartAt.Value;
+            }
+
+            marker = numbered;
+        }
+        else
+        {
+            marker = new A.NoBullet();
+        }
+        var insertBefore = properties.ChildElements.FirstOrDefault(static child =>
+            child.LocalName is "tabLst" or "defRPr" or "extLst");
+        if (insertBefore is null)
+        {
+            properties.Append(marker);
+        }
+        else
+        {
+            properties.InsertBefore(marker, insertBefore);
         }
     }
 

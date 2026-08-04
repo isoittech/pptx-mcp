@@ -25,6 +25,24 @@ public enum JobState
     Canceled,
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<DeckParagraphKind>))]
+public enum DeckParagraphKind
+{
+    Plain,
+    Bullet,
+    Numbered,
+}
+
+public sealed record DeckParagraph(
+    [property: JsonPropertyName("text"), Description("Text for one editable PowerPoint paragraph. Do not include a manual bullet or number prefix.")]
+    string Text,
+    [property: JsonPropertyName("kind"), Description("Paragraph semantics: Plain, Bullet, or Numbered.")]
+    DeckParagraphKind Kind = DeckParagraphKind.Plain,
+    [property: JsonPropertyName("level"), Description("Zero-based indentation level from 0 to 4.")]
+    int Level = 0,
+    [property: JsonPropertyName("start_at"), Description("Optional starting number from 1 to 32767. Only valid for Numbered paragraphs.")]
+    int? StartAt = null);
+
 public sealed record TextReplacement : IJsonOnDeserialized
 {
     [JsonConstructor]
@@ -74,21 +92,26 @@ public sealed record TemplateField : IJsonOnDeserialized
     [JsonConstructor]
     public TemplateField(
         int SlideNumber,
-        string Text,
+        string? Text = null,
         string? ShapeName = null,
-        uint? ShapeId = null)
+        uint? ShapeId = null,
+        IReadOnlyList<DeckParagraph>? Paragraphs = null)
     {
         this.SlideNumber = SlideNumber;
         this.Text = Text;
         this.ShapeName = ShapeName;
         this.ShapeId = ShapeId;
+        this.Paragraphs = Paragraphs;
     }
 
     [JsonPropertyName("slide_number")]
     public int SlideNumber { get; private set; }
 
     [JsonPropertyName("text")]
-    public string Text { get; private set; }
+    public string? Text { get; private set; }
+
+    [JsonPropertyName("paragraphs")]
+    public IReadOnlyList<DeckParagraph>? Paragraphs { get; private set; }
 
     [JsonPropertyName("shape_name")]
     public string? ShapeName { get; private set; }
@@ -112,19 +135,24 @@ public sealed record DeckField : IJsonOnDeserialized
 {
     [JsonConstructor]
     public DeckField(
-        string Text,
+        string? Text = null,
         string? ShapeName = null,
         uint? ShapeId = null,
-        uint? PlaceholderIndex = null)
+        uint? PlaceholderIndex = null,
+        IReadOnlyList<DeckParagraph>? Paragraphs = null)
     {
         this.Text = Text;
         this.ShapeName = ShapeName;
         this.ShapeId = ShapeId;
         this.PlaceholderIndex = PlaceholderIndex;
+        this.Paragraphs = Paragraphs;
     }
 
-    [JsonPropertyName("text"), Description("Text to place in the selected placeholder.")]
-    public string Text { get; private set; }
+    [JsonPropertyName("text"), Description("Plain text to place in the selected placeholder. Use paragraphs instead for real bullet or numbered lists.")]
+    public string? Text { get; private set; }
+
+    [JsonPropertyName("paragraphs"), Description("Editable PowerPoint paragraphs. Use one item per list entry and never type bullet glyphs or number prefixes into text.")]
+    public IReadOnlyList<DeckParagraph>? Paragraphs { get; private set; }
 
     [JsonPropertyName("shape_name"), Description("Optional exact shape_name copied from pptx_analyze.")]
     public string? ShapeName { get; private set; }
@@ -159,7 +187,7 @@ public sealed record DeckSlideSpec : IJsonOnDeserialized
     [JsonPropertyName("layout_id"), Description("Exact layout_id copied verbatim from pptx_analyze. Never construct or modify this value.")]
     public string LayoutId { get; private set; }
 
-    [JsonPropertyName("fields"), Description("Placeholder values for this slide. Use text plus shape_id whenever available.")]
+    [JsonPropertyName("fields"), Description("Placeholder values for this slide. Use exactly one of text or paragraphs, plus shape_id whenever available.")]
     public IReadOnlyList<DeckField> Fields { get; private set; }
 
     [JsonExtensionData]
@@ -205,6 +233,13 @@ public sealed record ToolInputRequest(
     [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("tool")] string Tool,
     [property: JsonPropertyName("required_arguments")] IReadOnlyList<string> RequiredArguments,
+    [property: JsonPropertyName("instruction")] string Instruction);
+
+public sealed record ToolValidationError(
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("tool")] string Tool,
+    [property: JsonPropertyName("code")] string Code,
+    [property: JsonPropertyName("message")] string Message,
     [property: JsonPropertyName("instruction")] string Instruction);
 
 internal static class LegacyJsonAliases

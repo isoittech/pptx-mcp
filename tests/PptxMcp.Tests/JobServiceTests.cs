@@ -64,4 +64,52 @@ public sealed class JobServiceTests
 
         Assert.Equal("deck_revision_invalid", error.Code);
     }
+
+    [Fact]
+    public void AppliesOnlyRequestedVisualSlideRevisionsAndPreservesCreativeDirection()
+    {
+        var original = new VisualDeckSpec(
+            "危機対応",
+            [
+                new VisualSlideSpec(VisualSlideKind.Title, "初動72時間"),
+                new VisualSlideSpec(VisualSlideKind.Process, "初動", Steps:
+                [
+                    new VisualStepSpec("検知"),
+                    new VisualStepSpec("封じ込め"),
+                    new VisualStepSpec("復旧"),
+                ]),
+            ],
+            Design: new VisualDesignSpec("bold", "airy", "orbit"));
+        var revisions = new[]
+        {
+            new VisualSlideRevision(
+                2,
+                new VisualSlideSpec(VisualSlideKind.Statement, "判断", Body: "事業継続を最優先する")),
+        };
+
+        var result = JobService.ApplyVisualDeckRevisions(original, revisions, 50);
+
+        Assert.Equal(VisualSlideKind.Title, result.Slides[0].Kind);
+        Assert.Equal(VisualSlideKind.Statement, result.Slides[1].Kind);
+        Assert.Equal("bold", result.Design?.Style);
+        Assert.Equal("orbit", result.Design?.Motif);
+    }
+
+    [Fact]
+    public void RejectsDuplicateVisualDeckRevisionSlideNumbers()
+    {
+        var original = new VisualDeckSpec(
+            "危機対応",
+            [new VisualSlideSpec(VisualSlideKind.Title, "初動72時間")]);
+        var revisions = new[]
+        {
+            new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "A")),
+            new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "B")),
+        };
+
+        var error = Assert.Throws<PptxValidationException>(() =>
+            JobService.ApplyVisualDeckRevisions(original, revisions, 50));
+
+        Assert.Equal("visual_deck_revision_invalid", error.Code);
+    }
 }
