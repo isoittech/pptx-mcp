@@ -20,10 +20,11 @@ public sealed class PowerPointTools
             "LibreChatへPPTXをアップロードする",
             "pptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileIdを省略して最新アップロードを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
-            "pptx_create_deck、pptx_replace_text、pptx_populate_templateのいずれかを実行する",
+            "企業テンプレートから新規作成する場合は、解析結果のlayout_idとshape_idをそのまま使い、全ページ分のslidesを1回のpptx_create_deckへ渡す",
+            "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
             "白紙から作る場合はpptx_create_visual_deckで意味ベースのレイアウトを指定する",
             "pptx_get_jobで完了を確認する",
-            "pptx_get_preview_imagesで全ページを実際に見て、違和感があれば最大2回まで仕様を修正して再生成する",
+            "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料の違和感はpptx_refine_deckへ変更ページだけを渡して最大2回まで再生成する",
             "視覚確認後にのみPPTXのダウンロードリンクを提示する",
         },
         limits = new
@@ -98,16 +99,70 @@ public sealed class PowerPointTools
         jobs.SubmitPopulateTemplateAsync(callerContext.GetRequired(), sourceFileId, fields, cancellationToken);
 
     [McpServerTool(Name = "pptx_create_deck", Destructive = true),
-     Description("企業テンプレートのマスターと定義済みレイアウトを使い、1〜50枚の新規PPTXと全ページプレビューを作ります。先にpptx_analyzeでlayout_idとplaceholderのshape_idを取得してください。")]
-    public static Task<JobReceipt> CreateDeckAsync(
+     Description("企業テンプレートのマスターと定義済みレイアウトを使い、1〜50枚の新規PPTXと全ページプレビューを作ります。先にpptx_analyzeとpptx_get_jobでlayout_idとplaceholderのshape_idを取得してください。slidesは必須で、完成版の全ページを1回の呼び出しに含めます。sourceFileIdだけで呼んではいけません。slidesが欠けた呼び出しにはinput_requiredを返すので、同じツールを全slides付きで直ちに再実行してください。各layout_id、shape_id、placeholder_indexは解析結果から一字も変更せずコピーし、推測したパスやIDを作らないでください。")]
+    public static async Task<object> CreateDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("layoutIdとfieldsからなるスライド一覧。fieldsはtextと解析結果のshapeId、任意でshapeNameまたはplaceholderIndexを指定します。")]
-        IReadOnlyList<DeckSlideSpec> slides,
         CancellationToken cancellationToken,
+        [Description("動作上必須。完成版の全1〜50ページからなる配列です。各要素はlayout_idとfields、各fieldはtextと解析結果のshape_id（任意でshape_nameまたはplaceholder_index）を使います。例: [{\"layout_id\":\"/ppt/slideLayouts/slideLayout1.xml\",\"fields\":[{\"text\":\"Title\",\"shape_id\":2}]}]。キーはこのsnake_caseを厳守し、全ページの内容を組み立て終えてから1回だけ呼びます。")]
+        IReadOnlyList<DeckSlideSpec>? slides = null,
         [Description("LibreChatへアップロード済みの企業テンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
-        string sourceFileId = "latest") =>
-        jobs.SubmitCreateDeckAsync(callerContext.GetRequired(), sourceFileId, slides, cancellationToken);
+        string sourceFileId = "latest")
+    {
+        if (slides is null || slides.Count == 0)
+        {
+            return new ToolInputRequest(
+                "input_required",
+                "pptx_create_deck",
+                ["slides"],
+                "Call pptx_create_deck again now with the complete 1-50 slide array. Do not call it with only sourceFileId.");
+        }
+
+        return await jobs.SubmitCreateDeckAsync(
+            callerContext.GetRequired(),
+            sourceFileId,
+            slides,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    [McpServerTool(Name = "pptx_refine_deck", Destructive = true),
+     Description("成功したpptx_create_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。全10ページ等の完全仕様を再送せず、変更ページだけをrevisionsへ指定してください。元のlayout_idは自動的に保持されます。jobIdまたはrevisionsが欠けた呼び出しにはinput_requiredを返すので、両方を付けて直ちに再実行してください。")]
+    public static async Task<object> RefineDeckAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        CancellationToken cancellationToken,
+        [Description("動作上必須。直前の成功したpptx_create_deckが返したjob_idをjobIdとして指定します。")]
+        string jobId = "",
+        [Description("動作上必須。変更するページだけの配列です。各要素は1始まりのslide_numberと、そのページに残す全フィールドのfieldsをsnake_caseで指定します。fieldsの各要素はtextと元ページで使ったshape_idを含めます。")]
+        IReadOnlyList<DeckSlideRevision>? revisions = null)
+    {
+        var missing = new List<string>(2);
+        var requestedRevisions = revisions ?? [];
+        if (string.IsNullOrWhiteSpace(jobId))
+        {
+            missing.Add("jobId");
+        }
+
+        if (requestedRevisions.Count == 0)
+        {
+            missing.Add("revisions");
+        }
+
+        if (missing.Count > 0)
+        {
+            return new ToolInputRequest(
+                "input_required",
+                "pptx_refine_deck",
+                missing,
+                "Call pptx_refine_deck again now with the successful deck jobId and only the changed slides in revisions.");
+        }
+
+        return await jobs.SubmitRefineDeckAsync(
+            callerContext.GetRequired(),
+            jobId,
+            requestedRevisions,
+            cancellationToken).ConfigureAwait(false);
+    }
 
     [McpServerTool(Name = "pptx_create_visual_deck", Destructive = true),
      Description("アップロード済みテンプレートを使わず、検証済みの宣言型レイアウトから華やかで編集可能な16:9 PPTXを作ります。title/agenda/section/bullets/metrics/comparison/process/timeline/chart/quote/closingを内容に応じて使い分けてください。生成後はpptx_get_jobを待ち、必ずpptx_get_preview_imagesで全スライドを視覚確認し、問題があればdeckを修正して最大2回まで再生成してください。")]
@@ -130,7 +185,7 @@ public sealed class PowerPointTools
         jobs.GetAsync(callerContext.GetRequired(), jobId, cancellationToken);
 
     [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
-     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・はみ出し・重なり・小さすぎる文字・余白・整列・コントラスト・情報階層・密度・バランス・資料全体の一貫性を確認してください。問題があれば元の宣言型仕様を修正して再生成し、最大2回で収束させます。このツールを呼ばずに視覚確認済みと述べてはいけません。")]
+     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・はみ出し・重なり・小さすぎる文字・余白・整列・コントラスト・情報階層・密度・バランス・資料全体の一貫性を確認してください。企業テンプレート資料の問題はpptx_refine_deckへ変更ページだけを渡して再生成し、白紙資料は仕様を修正して再生成します。最大2回で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
     public static async Task<CallToolResult> GetPreviewImagesAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -154,7 +209,7 @@ public sealed class PowerPointTools
 
         content.Add(new TextContentBlock
         {
-            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, and consistency. Regenerate from a corrected declarative specification when necessary.",
+            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, and consistency. For a template-based deck, call pptx_refine_deck with only the changed slides when necessary; do not resend the complete deck to pptx_create_deck.",
         });
         return new CallToolResult
         {

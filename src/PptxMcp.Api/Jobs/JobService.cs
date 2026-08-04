@@ -53,6 +53,38 @@ public sealed class JobService(
         CancellationToken cancellationToken) =>
         SubmitAsync(caller, sourceFileId, JobKind.CreateDeck, slides, cancellationToken);
 
+    public async Task<JobReceipt> SubmitRefineDeckAsync(
+        CallerContext caller,
+        string jobId,
+        IReadOnlyList<DeckSlideRevision> revisions,
+        CancellationToken cancellationToken)
+    {
+        var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (sourceJob.Kind != JobKind.CreateDeck || sourceJob.State != JobState.Succeeded)
+        {
+            throw new PptxValidationException(
+                "deck_job_not_refinable",
+                "Only a successful pptx_create_deck job can be refined.");
+        }
+
+        var originalSlides = sourceJob.Payload?.Deserialize<List<DeckSlideSpec>>(SerializerOptions)
+            ?? throw new PptxValidationException("invalid_job_payload", "The source deck specification is missing.");
+        var refinedSlides = ApplyDeckRevisions(originalSlides, revisions, options.MaxSlides);
+        var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
+        if (!File.Exists(sourcePath))
+        {
+            throw new PptxValidationException("source_expired", "The source template is no longer available.");
+        }
+
+        return await SubmitFromPathAsync(
+            caller,
+            sourceJob.SourceFileId,
+            sourcePath,
+            JobKind.CreateDeck,
+            refinedSlides,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     public Task<JobReceipt> SubmitVisualDeckAsync(
         CallerContext caller,
         VisualDeckSpec deck,
@@ -179,6 +211,34 @@ public sealed class JobService(
             : null;
     }
 
+    internal static IReadOnlyList<DeckSlideSpec> ApplyDeckRevisions(
+        IReadOnlyList<DeckSlideSpec> originalSlides,
+        IReadOnlyList<DeckSlideRevision> revisions,
+        int maximumSlides)
+    {
+        if (originalSlides is null
+            || originalSlides.Count is < 1
+            || originalSlides.Count > maximumSlides
+            || revisions is null
+            || revisions.Count is < 1
+            || revisions.Count > originalSlides.Count
+            || revisions.Any(static revision => revision is null || revision.Fields is null)
+            || revisions.Select(static revision => revision.SlideNumber).Distinct().Count() != revisions.Count
+            || revisions.Any(revision => revision.SlideNumber < 1 || revision.SlideNumber > originalSlides.Count))
+        {
+            throw new PptxValidationException(
+                "deck_revision_invalid",
+                "Provide 1 or more distinct slide revisions within the source deck slide range.");
+        }
+
+        var revisionsBySlide = revisions.ToDictionary(static revision => revision.SlideNumber);
+        return originalSlides
+            .Select((slide, index) => revisionsBySlide.TryGetValue(index + 1, out var revision)
+                ? new DeckSlideSpec(slide.LayoutId, revision.Fields)
+                : slide)
+            .ToArray();
+    }
+
     private async Task<JobReceipt> SubmitAsync<TPayload>(
         CallerContext caller,
         string sourceFileId,
@@ -187,6 +247,23 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         var input = await inputFileResolver.ResolveAsync(caller, sourceFileId, cancellationToken).ConfigureAwait(false);
+        return await SubmitFromPathAsync(
+            caller,
+            input.FileId,
+            input.Path,
+            kind,
+            payload,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<JobReceipt> SubmitFromPathAsync<TPayload>(
+        CallerContext caller,
+        string sourceFileId,
+        string sourcePath,
+        JobKind kind,
+        TPayload? payload,
+        CancellationToken cancellationToken)
+    {
         var now = timeProvider.GetUtcNow();
         var job = new JobRecord
         {
@@ -195,7 +272,7 @@ public sealed class JobService(
             State = JobState.Queued,
             UserScope = caller.UserScope,
             ConversationScope = caller.ConversationScope,
-            SourceFileId = input.FileId,
+            SourceFileId = sourceFileId,
             CreatedAt = now,
             ExpiresAt = now.AddDays(options.RetentionDays),
             ProgressPercent = 0,
@@ -206,7 +283,7 @@ public sealed class JobService(
         {
             await repository.CreateAsync(job, cancellationToken).ConfigureAwait(false);
             var sourceCopy = Path.Combine(repository.GetJobDirectory(job.Id), "source.pptx");
-            await CopyFileAsync(input.Path, sourceCopy, options.MaxFileBytes, cancellationToken).ConfigureAwait(false);
+            await CopyFileAsync(sourcePath, sourceCopy, options.MaxFileBytes, cancellationToken).ConfigureAwait(false);
             await packageGuard.ValidateAsync(sourceCopy, cancellationToken).ConfigureAwait(false);
             if (!queue.TryEnqueue(job.Id))
             {
