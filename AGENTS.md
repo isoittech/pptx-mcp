@@ -55,3 +55,4 @@
 - Bedrockが大きな作成ツールを空引数で先行実行する場合は、スキーマ検証エラーではなく`input_required`を返して完全入力での再実行を促す。Visual Deckの自動修正は大きな`revisions`配列を避け、必須`revision`を持つ`pptx_refine_visual_slide`で1ページずつ逐次適用する。
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
 - PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルートとグラフだけを正規化し、`node_modules`を直接改変しない。
+- PptxGenJSのスライドを企業テンプレートへ1枚ずつ`AddPart`すると、空のノートスライド経由で共有ノートマスターがページごとに複製される。`VisualDeckSpec`は発表者ノートを扱わないため、合成時に生成側のノートスライドを削除し、企業テンプレート側のノートマスターだけを保持する。

@@ -469,6 +469,14 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         {
             cancellationToken.ThrowIfCancellationRequested();
             var importedSlide = destinationPresentationPart.AddPart(visualSlide);
+            if (importedSlide.NotesSlidePart is { } generatedNotesSlide)
+            {
+                // VisualDeckSpec has no speaker-notes field. PptxGenJS still creates an empty
+                // notes slide for every slide; importing slides one by one clones its shared
+                // notes master and produces relationships PowerPoint attempts to repair.
+                importedSlide.DeletePart(generatedNotesSlide);
+            }
+
             var importedLayout = importedSlide.SlideLayoutPart;
             if (importedLayout is not null && !ReferenceEquals(importedLayout, selectedLayout))
             {

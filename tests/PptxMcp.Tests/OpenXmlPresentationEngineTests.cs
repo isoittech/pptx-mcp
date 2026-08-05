@@ -363,4 +363,40 @@ public sealed class OpenXmlPresentationEngineTests
             File.Delete(destination);
         }
     }
+
+    [Fact]
+    public async Task RemovesGeneratedNotesPartsDuringBrandedVisualComposition()
+    {
+        var template = TestPresentationFactory.CreateBlankBrandedTemplate();
+        var visual = TestPresentationFactory.CreateWithGeneratedNotes("VISUAL CONTENT");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            await new OpenXmlPresentationEngine().CreateBrandedVisualDeckAsync(
+                template,
+                visual,
+                destination,
+                "auto",
+                CancellationToken.None);
+
+            using (var document = PresentationDocument.Open(destination, false))
+            {
+                Assert.Null(document.PresentationPart!.SlideParts.Single().NotesSlidePart);
+            }
+
+            using var archive = ZipFile.OpenRead(destination);
+            Assert.DoesNotContain(
+                archive.Entries,
+                static entry => entry.FullName.StartsWith("ppt/notesSlides/", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                archive.Entries,
+                static entry => entry.FullName.StartsWith("ppt/notesMasters/", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(template);
+            File.Delete(visual);
+            File.Delete(destination);
+        }
+    }
 }

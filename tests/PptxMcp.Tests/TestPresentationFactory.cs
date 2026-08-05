@@ -78,6 +78,38 @@ internal static class TestPresentationFactory
         return path;
     }
 
+    public static string CreateWithGeneratedNotes(params string[] runs)
+    {
+        var path = Create(runs);
+        using var document = PresentationDocument.Open(path, true);
+        var slidePart = document.PresentationPart!.SlideParts.Single();
+        var notesSlidePart = slidePart.AddNewPart<NotesSlidePart>();
+        var notesMasterPart = notesSlidePart.AddNewPart<NotesMasterPart>();
+        notesMasterPart.NotesMaster = new P.NotesMaster(
+            new P.CommonSlideData(CreateShapeTree()),
+            new P.ColorMap
+            {
+                Background1 = A.ColorSchemeIndexValues.Light1,
+                Text1 = A.ColorSchemeIndexValues.Dark1,
+                Background2 = A.ColorSchemeIndexValues.Light2,
+                Text2 = A.ColorSchemeIndexValues.Dark2,
+                Accent1 = A.ColorSchemeIndexValues.Accent1,
+                Accent2 = A.ColorSchemeIndexValues.Accent2,
+                Accent3 = A.ColorSchemeIndexValues.Accent3,
+                Accent4 = A.ColorSchemeIndexValues.Accent4,
+                Accent5 = A.ColorSchemeIndexValues.Accent5,
+                Accent6 = A.ColorSchemeIndexValues.Accent6,
+                Hyperlink = A.ColorSchemeIndexValues.Hyperlink,
+                FollowedHyperlink = A.ColorSchemeIndexValues.FollowedHyperlink,
+            });
+        notesSlidePart.NotesSlide = new P.NotesSlide(
+            new P.CommonSlideData(CreateShapeTree()),
+            new P.ColorMapOverride(new A.MasterColorMapping()));
+        notesMasterPart.NotesMaster.Save();
+        notesSlidePart.NotesSlide.Save();
+        return path;
+    }
+
     private static P.Shape CreateShape(IReadOnlyList<string> runs, bool isPlaceholder)
     {
         var paragraph = new A.Paragraph();
