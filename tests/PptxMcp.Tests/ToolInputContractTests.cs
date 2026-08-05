@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
+using ModelContextProtocol.Server;
 using PptxMcp.Domain;
+using PptxMcp.Jobs;
 using PptxMcp.Tools;
 
 namespace PptxMcp.Tests;
@@ -177,7 +179,7 @@ public sealed class ToolInputContractTests
     public void BrandedVisualDeckContractPreservesCorporateChromeAndSupportsAutoLayout()
     {
         var method = typeof(PowerPointTools).GetMethod(
-            nameof(PowerPointTools.CreateBrandedVisualDeckAsync),
+            nameof(PowerPointTools.FinishBrandedVisualDeckAsync),
             BindingFlags.Public | BindingFlags.Static);
 
         Assert.NotNull(method);
@@ -208,10 +210,10 @@ public sealed class ToolInputContractTests
     public void NewDeckToolsDefaultToDeploymentTemplate()
     {
         var visualMethod = typeof(PowerPointTools).GetMethod(
-            nameof(PowerPointTools.CreateVisualDeckAsync),
+            nameof(PowerPointTools.FinishVisualDeckAsync),
             BindingFlags.Public | BindingFlags.Static);
         var brandedMethod = typeof(PowerPointTools).GetMethod(
-            nameof(PowerPointTools.CreateBrandedVisualDeckAsync),
+            nameof(PowerPointTools.FinishBrandedVisualDeckAsync),
             BindingFlags.Public | BindingFlags.Static);
         var strictMethod = typeof(PowerPointTools).GetMethod(
             nameof(PowerPointTools.CreateDeckAsync),
@@ -229,6 +231,37 @@ public sealed class ToolInputContractTests
         Assert.Equal(
             "default",
             strictMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
+    }
+
+    [Theory]
+    [InlineData(nameof(PowerPointTools.CreateDeckAsync), "slides")]
+    [InlineData(nameof(PowerPointTools.StartVisualDeck), "title")]
+    [InlineData(nameof(PowerPointTools.StartVisualDeck), "expectedSlideCount")]
+    [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "draftId")]
+    [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "startSlideNumber")]
+    [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "slides")]
+    [InlineData(nameof(PowerPointTools.FinishVisualDeckAsync), "draftId")]
+    [InlineData(nameof(PowerPointTools.FinishBrandedVisualDeckAsync), "draftId")]
+    [InlineData(nameof(PowerPointTools.InsertVisualSlidesAsync), "slides")]
+    [InlineData(nameof(PowerPointTools.RefineDeckAsync), "jobId")]
+    [InlineData(nameof(PowerPointTools.RefineDeckAsync), "revisions")]
+    [InlineData(nameof(PowerPointTools.RefineVisualDeckAsync), "jobId")]
+    [InlineData(nameof(PowerPointTools.RefineVisualDeckAsync), "revisions")]
+    public void BehaviorallyRequiredInputsAreRequiredInMcpSchema(string methodName, string argumentName)
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            methodName,
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var tool = McpServerTool.Create(method);
+        var required = tool.ProtocolTool.InputSchema
+            .GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToArray();
+
+        Assert.Contains(argumentName, required);
     }
 
     [Fact]
@@ -342,31 +375,42 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
-    public async Task CreateVisualDeckReturnsActionableInputRequestForEmptyBedrockCall()
+    public void VisualDeckCreationUsesBoundedDraftBatchesInsteadOfOneLargeDeckArgument()
     {
-        var result = await PowerPointTools.CreateVisualDeckAsync(
-            null!,
-            null!,
-            CancellationToken.None);
+        var start = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.StartVisualDeck),
+            BindingFlags.Public | BindingFlags.Static);
+        var add = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.AddVisualSlidesToDraft),
+            BindingFlags.Public | BindingFlags.Static);
+        var finish = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.FinishVisualDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
 
-        var inputRequest = Assert.IsType<ToolInputRequest>(result);
-        Assert.Equal("input_required", inputRequest.Status);
-        Assert.Equal("pptx_create_visual_deck", inputRequest.Tool);
-        Assert.Equal(["deck"], inputRequest.RequiredArguments);
+        Assert.NotNull(start);
+        Assert.NotNull(add);
+        Assert.NotNull(finish);
+        Assert.DoesNotContain(start.GetParameters(), parameter => parameter.Name == "deck");
+        Assert.DoesNotContain(finish.GetParameters(), parameter => parameter.Name == "deck");
+        Assert.Contains("1〜4ページ", add.GetCustomAttribute<DescriptionAttribute>()?.Description, StringComparison.Ordinal);
+        Assert.Equal(4, VisualDeckDraftService.MaximumBatchSlides);
     }
 
     [Fact]
-    public async Task CreateBrandedVisualDeckReturnsActionableInputRequestForEmptyBedrockCall()
+    public void OneCallVisualDeckCreationToolsAreNotExposed()
     {
-        var result = await PowerPointTools.CreateBrandedVisualDeckAsync(
-            null!,
-            null!,
-            CancellationToken.None);
+        var toolNames = typeof(PowerPointTools)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Select(method => method.GetCustomAttribute<McpServerToolAttribute>()?.Name)
+            .Where(name => name is not null)
+            .ToArray();
 
-        var inputRequest = Assert.IsType<ToolInputRequest>(result);
-        Assert.Equal("input_required", inputRequest.Status);
-        Assert.Equal("pptx_create_branded_visual_deck", inputRequest.Tool);
-        Assert.Equal(["deck"], inputRequest.RequiredArguments);
+        Assert.DoesNotContain("pptx_create_visual_deck", toolNames);
+        Assert.DoesNotContain("pptx_create_branded_visual_deck", toolNames);
+        Assert.Contains("pptx_start_visual_deck", toolNames);
+        Assert.Contains("pptx_add_visual_slides_to_draft", toolNames);
+        Assert.Contains("pptx_finish_visual_deck", toolNames);
+        Assert.Contains("pptx_finish_branded_visual_deck", toolNames);
     }
 
     [Fact]

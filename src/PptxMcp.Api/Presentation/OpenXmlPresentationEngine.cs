@@ -534,7 +534,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             {
                 throw new PptxValidationException(
                     "blank_layout_not_found",
-                    "The template has no blank layout. Add a blank or blank-with-footer layout, or use pptx_create_visual_deck.");
+                    "The template has no blank layout. Add a blank or blank-with-footer layout, or finish a visual draft without the branded template.");
             }
         }
 

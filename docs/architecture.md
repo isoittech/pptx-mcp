@@ -42,9 +42,9 @@ MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込
 
 OSS本体は企業固有テンプレートを保持せず、外部マウントされた `<template-id>.pptx` と導入環境の `DefaultTemplateId` だけを扱います。既定テンプレートは起動時に安全性検査と解析を完了し、欠落・不正時はfail-closedで起動を失敗させます。解析はPPTX内容のSHA-256単位でメモリキャッシュし、ジョブ領域へコピーした同一ファイルや同じ添付ファイルの再解析を避けます。
 
-新規 `pptx_create_visual_deck` は、既定テンプレートが設定され、`useDefaultTemplate` が `true` の場合に内部でブランドVisual Deckジョブへ切り替わります。テンプレート選択をモデルのツール選択だけに依存させません。利用者が明示した添付テンプレートはその処理だけ既定値を上書きし、明示的な `useDefaultTemplate=false` は白紙生成を選択します。詳細は [ADR 0006](adr/0006-deployment-default-template.md) に記録します。
+新規Visual Deckは、`pptx_start_visual_deck`で概要と完成ページ数を登録し、`pptx_add_visual_slides_to_draft`で最大4ページずつ仕様を蓄積して、finishツールでジョブ化します。`pptx_finish_visual_deck` は、既定テンプレートが設定され、`useDefaultTemplate` が `true` の場合に内部でブランドVisual Deckジョブへ切り替わります。テンプレート選択をモデルのツール選択だけに依存させません。利用者が明示した添付テンプレートは `pptx_finish_branded_visual_deck` でその処理だけ既定値を上書きし、明示的な `useDefaultTemplate=false` は白紙生成を選択します。既定テンプレートの判断は [ADR 0006](adr/0006-deployment-default-template.md)、段階入力は [ADR 0009](adr/0009-staged-visual-deck-input.md) に記録します。
 
-華やかさとブランド保持を両立する場合は `pptx_create_branded_visual_deck` を使います。MCPが `pptx_analyze` と同じ処理でaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、Visual Deckのテーマへ適用します。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、Open XMLでテンプレートの既存スライドだけを除去し、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。`templateLayoutId=auto` は「白紙（フッター有）」を優先し、写真背景は避けます。テンプレートのマスター、ロゴ、フッター、ページ設定は成果物側に残ります。
+華やかさとブランド保持を両立する場合は、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。MCPが `pptx_analyze` と同じ処理でaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、Visual Deckのテーマへ適用します。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、Open XMLでテンプレートの既存スライドだけを除去し、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。`templateLayoutId=auto` は「白紙（フッター有）」を優先し、写真背景は避けます。テンプレートのマスター、ロゴ、フッター、ページ設定は成果物側に残ります。
 
 テンプレートとVisual Deckの縦横比が一致しない場合や、白紙レイアウトがない場合は合成を拒否します。Visual Deck側の独自フッターは合成時だけ抑制し、企業フッターとの二重表示を防ぎます。詳細な判断は [ADR 0004](adr/0004-branded-visual-composition.md) に記録します。
 
@@ -52,7 +52,9 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 
 ## 白紙からの視覚的な生成
 
-`pptx_create_visual_deck` では、Claudeがスライドの意味に応じて次の固定レイアウトを選びます。既定テンプレートがない場合、または利用者が明示的に不要とした場合は白紙へ描画します。
+新規Visual Deckの段階ワークフローでは、Claudeがスライドの意味に応じて次の固定レイアウトを選びます。既定テンプレートがない場合、または利用者が明示的に不要とした場合は白紙へ描画します。
+
+最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。完成ページ数、次のページ番号、バッチ上限、全ページのドメイン検証をサーバー側で強制します。詳細は [ADR 0009](adr/0009-staged-visual-deck-input.md) に記録します。
 
 - title、agenda、section、statement、bullets
 - cards、metrics、comparison、process、timeline

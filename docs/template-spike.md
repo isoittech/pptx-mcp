@@ -29,7 +29,7 @@
 - 2026-08-05にブランドVisual Deck合成を実行し、`auto` が `/ppt/slideLayouts/slideLayout14.xml` の「白紙（フッター有）」を選択した。
 - 10ページ、スライド直下228シェイプ、編集可能グラフ1個、埋め込みワークブック1個の資料を合成し、元テンプレートの8マスター・44レイアウトを保持した。全10ページが選択レイアウトへ接続され、LibreOfficeで全ページを描画できた。
 - ブランドVisual Deckの部分修正では、元テンプレートとレイアウトを再指定せずに再利用し、変更ページを含む全10ページを再生成・描画できた。
-- 2026-08-05のLibreChat／Claude Opus 5通しE2Eでは、企業テンプレート添付後にモデルが`pptx_create_branded_visual_deck`を選び、Cards、Dashboard、Matrix、Comparison、Roadmap、Chartを含む8ページを生成した。全ページ画像を2巡確認し、P2・P3・P5・P8を1ページずつ累積修正した。
+- 2026-08-05のLibreChat／Claude Opus 5通しE2Eでは、企業テンプレート添付後にモデルが当時の一括作成ツール`pptx_create_branded_visual_deck`を選び、Cards、Dashboard、Matrix、Comparison、Roadmap、Chartを含む8ページを生成した。全ページ画像を2巡確認し、P2・P3・P5・P8を1ページずつ累積修正した。現在の新規生成は段階ドラフトと`pptx_finish_branded_visual_deck`を使う。
 - 完成版は8ページ、スライド直下229シェイプで、元テンプレートの8マスター・44レイアウトを保持した。全8ページが`/ppt/slideLayouts/slideLayout14.xml`へ接続され、ネイティブグラフと埋め込みExcelを含むPPTXをLibreOfficeで再描画できた。
 - 初回E2Eでは各修正後の状態ポーリングによりLibreChatの50ステップ上限へ達した。`pptx_refine_visual_slide`が最大30秒完了を待って`Succeeded`を直接返す方式へ変更後、同ツール1回だけで修正完了を受け取り、`pptx_get_job`を追加せず応答を終了できた。
 - `pptx_get_job(jobId=latest)`も利用者・会話境界内の直近ジョブを解決し、最終成果物の新しい署名付きURLを返すことを画面上で確認した。

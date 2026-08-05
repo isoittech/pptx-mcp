@@ -44,6 +44,16 @@ public sealed record VisualDeckSpec(
     string Language = "ja-JP",
     VisualDesignSpec? Design = null);
 
+public sealed record VisualDeckDraftView(
+    [property: JsonPropertyName("draft_id")] string DraftId,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("expected_slide_count")] int ExpectedSlideCount,
+    [property: JsonPropertyName("accepted_slide_count")] int AcceptedSlideCount,
+    [property: JsonPropertyName("next_slide_number")] int NextSlideNumber,
+    [property: JsonPropertyName("remaining_slide_count")] int RemainingSlideCount,
+    [property: JsonPropertyName("maximum_batch_slides")] int MaximumBatchSlides,
+    [property: JsonPropertyName("instruction")] string Instruction);
+
 public sealed record BrandedVisualDeckSpec(
     [property: JsonPropertyName("deck")] VisualDeckSpec Deck,
     [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId = "auto");
@@ -263,9 +273,7 @@ public static partial class VisualDeckValidator
     public static void Validate(VisualDeckSpec deck, int maximumSlides)
     {
         ArgumentNullException.ThrowIfNull(deck);
-        ValidateText(deck.Title, "deck.title", 1, 160);
-        ValidateOptionalText(deck.Subject, "deck.subject", 240);
-        ValidateText(deck.Language, "deck.language", 2, 24);
+        ValidateMetadata(deck.Title, deck.Subject, deck.Language, deck.Theme, deck.Design);
 
         if (deck.Slides is null || deck.Slides.Count is < 1 || deck.Slides.Count > maximumSlides)
         {
@@ -274,12 +282,24 @@ public static partial class VisualDeckValidator
                 $"Visual decks must contain between 1 and {maximumSlides} slides.");
         }
 
-        ValidateTheme(deck.Theme);
-        ValidateDesign(deck.Design);
         for (var index = 0; index < deck.Slides.Count; index++)
         {
             ValidateSlide(deck.Slides[index], index + 1);
         }
+    }
+
+    public static void ValidateMetadata(
+        string title,
+        string? subject,
+        string language,
+        VisualThemeSpec? theme,
+        VisualDesignSpec? design)
+    {
+        ValidateText(title, "deck.title", 1, 160);
+        ValidateOptionalText(subject, "deck.subject", 240);
+        ValidateText(language, "deck.language", 2, 24);
+        ValidateTheme(theme);
+        ValidateDesign(design);
     }
 
     public static IReadOnlyList<string> GetDesignWarnings(VisualDeckSpec deck)

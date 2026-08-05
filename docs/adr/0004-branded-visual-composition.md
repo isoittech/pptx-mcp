@@ -8,7 +8,7 @@
 
 ## 決定
 
-- `pptx_create_branded_visual_deck` を追加し、完全な `VisualDeckSpec` とアップロード済み企業テンプレートを受け取る。
+- 段階ドラフトで完成した `VisualDeckSpec` とアップロード済み企業テンプレートを `pptx_finish_branded_visual_deck` で受け取る。
 - テンプレートのテーマ色と日本語フォントを自動抽出し、Visual Deckのテーマへ上書きする。モデルによる値の転記は不要とする。
 - 固定PptxGenJSレンダラーで編集可能な図形、ネイティブグラフ、埋め込みワークブックを生成する。
 - Open XMLで企業テンプレートを成果物の基底にし、既存スライドを生成スライドへ置き換える。

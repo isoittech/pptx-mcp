@@ -45,7 +45,7 @@ PPTX_MCP_DEFAULT_TEMPLATE_ID=organization-default
 
 テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。
 
-`pptx_create_visual_deck` は既定で `useDefaultTemplate=true` として動作し、既定テンプレートがあればブランドVisual Deckを生成します。利用者がテンプレート不要と明示した場合だけ `false` にします。添付した別テンプレートは `pptx_create_branded_visual_deck` の `sourceFileId` で明示し、その処理だけ既定値を上書きします。
+通常の新規資料は `pptx_start_visual_deck` で概要を登録し、`pptx_add_visual_slides_to_draft` で最大4ページずつ追加した後、`pptx_finish_visual_deck` で生成します。finishは既定で `useDefaultTemplate=true` として動作し、既定テンプレートがあればブランドVisual Deckを生成します。利用者がテンプレート不要と明示した場合だけ `false` にします。添付した別テンプレートは `pptx_finish_branded_visual_deck` の `sourceFileId` で明示し、その処理だけ既定値を上書きします。
 
 導入環境固有の初回案内が必要な場合は、任意の文言を次へ設定できます。
 
@@ -64,8 +64,10 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 - `pptx_populate_template`
 - `pptx_create_deck`
 - `pptx_refine_deck`
-- `pptx_create_visual_deck`
-- `pptx_create_branded_visual_deck`
+- `pptx_start_visual_deck`
+- `pptx_add_visual_slides_to_draft`
+- `pptx_finish_visual_deck`
+- `pptx_finish_branded_visual_deck`
 - `pptx_insert_visual_slides`
 - `pptx_refine_visual_slide`
 - `pptx_refine_visual_deck`
@@ -76,9 +78,11 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 
 処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。`pptx_get_job`は待たない即時確認と障害復旧用です。両ツールの `jobId=latest` は同じ利用者・会話にある直近ジョブ（待機中・実行中を含む）を選びます。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
 
-新規生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
+新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
 
-企業テンプレートを使いつつ同じ視覚表現が必要な場合は `pptx_create_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、Visual Deckを生成した後、プレースホルダーのない白紙レイアウトへ各スライドを接続します。これにより企業マスターのロゴ・フッターと、カード、工程、マトリクス、編集可能グラフ等を両立します。既存プレースホルダーへの厳密な流し込みが目的の場合だけ `pptx_create_deck` を使います。
+新規Visual Deckは、タイトルと完成ページ数を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。モデルへ一度に最大50ページの巨大な`VisualDeckSpec`を要求せず、各ツールの必須入力を小さく保つためです。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。開始時に確定したページ数、次のページ番号、最大4ページのバッチ上限をサーバー側でも検証します。
+
+企業テンプレートを使いつつ同じ視覚表現が必要な場合は、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、Visual Deckを生成した後、プレースホルダーのない白紙レイアウトへ各スライドを接続します。これにより企業マスターのロゴ・フッターと、カード、工程、マトリクス、編集可能グラフ等を両立します。既存プレースホルダーへの厳密な流し込みが目的の場合だけ `pptx_create_deck` を使います。
 
 メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等を含む編集可能な組み込みアイコンを利用できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
 

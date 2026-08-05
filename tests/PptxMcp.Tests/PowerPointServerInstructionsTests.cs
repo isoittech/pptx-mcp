@@ -20,7 +20,11 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("instead of repeatedly calling pptx_get_job", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_insert_visual_slides with jobId=latest and only the new slides", instructions, StringComparison.Ordinal);
         Assert.Contains("Never reconstruct or resend the existing slides", instructions, StringComparison.Ordinal);
-        Assert.Contains("never call a create tool for this operation", instructions, StringComparison.Ordinal);
+        Assert.Contains("never start a new draft for this operation", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx_start_visual_deck exactly once", instructions, StringComparison.Ordinal);
+        Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);
+        Assert.Contains("remaining_slide_count is zero", instructions, StringComparison.Ordinal);
+        Assert.Contains("does not expose a one-call tool", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

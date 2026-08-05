@@ -26,6 +26,7 @@ builder.Services.AddSingleton<FileJobRepository>();
 builder.Services.AddSingleton<JobChannel>();
 builder.Services.AddSingleton<JobCancellationRegistry>();
 builder.Services.AddSingleton<JobService>();
+builder.Services.AddSingleton<VisualDeckDraftService>();
 builder.Services.AddSingleton<IPresentationEngine, OpenXmlPresentationEngine>();
 builder.Services.AddSingleton<IVisualPresentationEngine, PptxGenJsVisualPresentationEngine>();
 builder.Services.AddSingleton<PresentationAnalysisCache>();

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -23,9 +24,9 @@ public sealed class PowerPointTools
             "アップロードしたPPTXはpptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileId=latestを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
             "企業テンプレートから新規作成する場合は、解析結果のlayout_idとshape_idをそのまま使い、全ページ分のslidesを1回のpptx_create_deckへ渡す",
-            "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はpptx_create_branded_visual_deckを使う",
+            "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はVisual Deckドラフトをpptx_finish_branded_visual_deckで生成する",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
-            "新規資料はpptx_create_visual_deckで意味ベースのレイアウトとデザイン方針を指定し、明示的に不要と言われない限り既定テンプレートを使う",
+            "新規資料はpptx_start_visual_deck、pptx_add_visual_slides_to_draft、pptx_finish_visual_deckの順で小分けに構成し、明示的に不要と言われない限り既定テンプレートを使う",
             "成功したVisual Deckへページを追加する場合はpptx_insert_visual_slidesへ追加分だけを渡し、既存ページを再送しない",
             "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
             "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡して最大2巡まで再生成する",
@@ -110,7 +111,7 @@ public sealed class PowerPointTools
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("動作上必須。完成版の全1〜50ページからなる配列です。各要素はlayout_idとfields、各fieldはtextまたはparagraphsのどちらか一方と解析結果のshape_id（任意でshape_nameまたはplaceholder_index）を使います。paragraphsの各項目はtext、kind=Plain/Bullet/Numbered、level=0〜4、任意のstart_atです。例: [{\"layout_id\":\"/ppt/slideLayouts/slideLayout1.xml\",\"fields\":[{\"paragraphs\":[{\"text\":\"現状把握\",\"kind\":\"Numbered\",\"level\":0}],\"shape_id\":2}]}]。キーはsnake_caseを厳守し、全ページを組み立て終えてから1回だけ呼びます。")]
+        [Required, Description("動作上必須。完成版の全1〜50ページからなる配列です。各要素はlayout_idとfields、各fieldはtextまたはparagraphsのどちらか一方と解析結果のshape_id（任意でshape_nameまたはplaceholder_index）を使います。paragraphsの各項目はtext、kind=Plain/Bullet/Numbered、level=0〜4、任意のstart_atです。例: [{\"layout_id\":\"/ppt/slideLayouts/slideLayout1.xml\",\"fields\":[{\"paragraphs\":[{\"text\":\"現状把握\",\"kind\":\"Numbered\",\"level\":0}],\"shape_id\":2}]}]。キーはsnake_caseを厳守し、全ページを組み立て終えてから1回だけ呼びます。")]
         IReadOnlyList<DeckSlideSpec>? slides = null,
         [Description("既定テンプレートはdefault。添付した別テンプレートはLibreChatのfile_id、識別子が見えない場合はlatest。省略時はdefault。")]
         string sourceFileId = "default")
@@ -137,9 +138,9 @@ public sealed class PowerPointTools
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("動作上必須。直前の成功したpptx_create_deckが返したjob_idをjobIdとして指定します。")]
+        [Required, Description("動作上必須。直前の成功したpptx_create_deckが返したjob_idをjobIdとして指定します。")]
         string jobId = "",
-        [Description("動作上必須。変更するページだけの配列です。各要素は1始まりのslide_numberと、そのページに残す全フィールドのfieldsをsnake_caseで指定します。fieldsの各要素はtextと元ページで使ったshape_idを含めます。")]
+        [Required, Description("動作上必須。変更するページだけの配列です。各要素は1始まりのslide_numberと、そのページに残す全フィールドのfieldsをsnake_caseで指定します。fieldsの各要素はtextと元ページで使ったshape_idを含めます。")]
         IReadOnlyList<DeckSlideRevision>? revisions = null)
     {
         var missing = new List<string>(2);
@@ -170,84 +171,121 @@ public sealed class PowerPointTools
             cancellationToken).ConfigureAwait(false);
     }
 
-    [McpServerTool(Name = "pptx_create_visual_deck", Destructive = true),
-     Description("検証済みの宣言型レイアウトから華やかで編集可能な16:9 PPTXを作ります。導入環境に既定テンプレートがあれば自動的にマスター、ロゴ、フッター、テーマを適用します。ユーザーがテンプレート不要と明示した場合だけuseDefaultTemplate=falseにしてください。添付した別テンプレートを使う場合はpptx_create_branded_visual_deckを使います。title/agenda/section/statement/cards/metrics/comparison/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分け、6枚以上では4種類以上の構図を使ってください。単純な箇条書きは補助的に限定し、各ページに図形・データ・工程・比較等の視覚的な主役を置きます。生成後はpptx_wait_for_jobで完了を待ち、必ずpptx_get_preview_imagesで全スライドを確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
-    public static async Task<object> CreateVisualDeckAsync(
+    [McpServerTool(Name = "pptx_start_visual_deck", Destructive = true),
+     Description("新規Visual Deckの小さなサーバー側ドラフトを開始します。新規資料では必ず最初に1回だけ呼び、資料タイトル、最終ページ数、全体のthemeとdesignだけを指定します。この段階でスライド本文やPPTXは生成しません。返されたdraft_idへpptx_add_visual_slides_to_draftで1〜4ページずつ順番に追加してください。空引数で呼ばないでください。")]
+    public static object StartVisualDeck(
         CallerContextAccessor callerContext,
-        JobService jobs,
-        CancellationToken cancellationToken,
-        [Description("動作上必須。資料タイトル、任意のthemeとdesign、1〜50枚のスライドからなる宣言型仕様。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。design.styleはexecutive/editorial/bold/technical/playful、densityはairy/balanced/detailed、motifはgeometric/orbit/nodes/ribbon/noneです。各スライドは1枚1メッセージに絞り、variant=auto/grid/spotlight/split/cascade/editorialで構図を選べます。metric/cardのtoneはaccent/positive/success/warning/critical/danger/negative/neutral/info等の意味語または#RRGGBBを使えます。iconはinsight/target/growth/people/shield/clock/cloud/settings/data/warning/check/idea/search/compliance/decision/lock/network/document/communication/recovery/backup/legal/monitor/automationです。theme.presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyberです。")]
-        VisualDeckSpec? deck = null,
-        [Description("省略時true。導入環境の既定テンプレートを適用します。ユーザーがテンプレート不要と明示した場合だけfalse。")]
-        bool useDefaultTemplate = true)
+        VisualDeckDraftService drafts,
+        [Required, Description("資料全体のタイトル。1〜160文字。")]
+        string title,
+        [Required, Description("完成時の総ページ数。1〜50。後から変更しないため、構成を決めてから指定します。")]
+        int expectedSlideCount,
+        [Description("任意の全体テーマ。presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyber。")]
+        VisualThemeSpec? theme = null,
+        [Description("任意の資料サブジェクト。最大240文字。")]
+        string? subject = null,
+        [Description("言語コード。省略時ja-JP。")]
+        string language = "ja-JP",
+        [Description("任意の全体デザイン。style、density、motifを指定します。")]
+        VisualDesignSpec? design = null)
     {
-        if (deck is null)
-        {
-            return new ToolInputRequest(
-                "input_required",
-                "pptx_create_visual_deck",
-                ["deck"],
-                "Call pptx_create_visual_deck again with a complete VisualDeckSpec in deck. Do not call with empty arguments.");
-        }
-
         try
         {
-            return await jobs.SubmitVisualDeckAsync(
+            return drafts.Begin(
                 callerContext.GetRequired(),
-                deck,
-                useDefaultTemplate,
-                cancellationToken).ConfigureAwait(false);
+                title,
+                expectedSlideCount,
+                theme,
+                subject,
+                language,
+                design);
         }
         catch (PptxValidationException exception)
         {
-            return CreateValidationError("pptx_create_visual_deck", exception);
+            return CreateValidationError("pptx_start_visual_deck", exception);
         }
     }
 
-    [McpServerTool(Name = "pptx_create_branded_visual_deck", Destructive = true),
-     Description("既定またはアップロード済みの企業テンプレートのマスター、ロゴ、フッター、ページ設定を維持し、テンプレートから自動抽出した色と日本語フォントを適用したVisual Deckを合成します。通常の新規資料ではpptx_create_visual_deckが既定テンプレートを自動適用するため、主に添付した別テンプレートを明示的に使う場合に呼びます。厳密な既存プレースホルダー流し込みではなく、企業ブランドを保ちながらカード、KPI、工程、タイムライン、マトリクス、ファネル、ロードマップ、ダッシュボード、編集可能グラフ等の華やかな資料を作る場合に使います。deckにはpptx_create_visual_deckと同じ完全なVisualDeckSpecを渡します。templateLayoutIdは通常autoを使い、テンプレート内のプレースホルダー0個の白紙（フッター有を優先）レイアウトを自動選択します。生成後は全ページを視覚確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
-    public static async Task<object> CreateBrandedVisualDeckAsync(
+    [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは直前の応答が返したnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
+    public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
+        VisualDeckDraftService drafts,
+        [Required, Description("pptx_start_visual_deckが返したdraft_id。")]
+        string draftId,
+        [Required, Description("このバッチの先頭ページ番号。直前の応答にあるnext_slide_numberをそのまま使います。")]
+        int startSlideNumber,
+        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。metric/cardのtoneは意味語または#RRGGBB、iconは組み込み業務アイコンを使えます。")]
+        IReadOnlyList<VisualSlideSpec> slides)
+    {
+        try
+        {
+            return drafts.AddSlides(
+                callerContext.GetRequired(),
+                draftId,
+                startSlideNumber,
+                slides);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_add_visual_slides_to_draft", exception);
+        }
+    }
+
+    [McpServerTool(Name = "pptx_finish_visual_deck", Destructive = true),
+     Description("全ページを追加済みのVisual DeckドラフトをPPTXとして生成します。pptx_start_visual_deckとpptx_add_visual_slides_to_draftを完了し、remaining_slide_count=0になった後にdraftId付きで1回だけ呼びます。導入環境に既定テンプレートがあれば自動的にマスター、ロゴ、フッター、テーマを適用します。ユーザーがテンプレート不要と明示した場合だけuseDefaultTemplate=falseにします。生成後はpptx_wait_for_jobで完了を待ち、全ページを視覚確認してください。")]
+    public static Task<object> FinishVisualDeckAsync(
+        CallerContextAccessor callerContext,
+        VisualDeckDraftService drafts,
         JobService jobs,
-        CancellationToken cancellationToken,
-        [Description("動作上必須。資料タイトル、design、1〜50枚のスライドからなる完全なVisualDeckSpec。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。themeの色とフォントは企業テンプレートの値で自動上書きされるため、モデルが解析値を転記する必要はありません。")]
-        VisualDeckSpec? deck = null,
+        [Required, Description("全ページ追加後のVisual DeckドラフトID。")]
+        string draftId,
+        [Description("省略時true。導入環境の既定テンプレートを適用します。ユーザーがテンプレート不要と明示した場合だけfalse。")]
+        bool useDefaultTemplate = true,
+        CancellationToken cancellationToken = default) =>
+        FinishVisualDraftAsync(
+            "pptx_finish_visual_deck",
+            callerContext,
+            drafts,
+            jobs,
+            draftId,
+            (caller, deck, token) => jobs.SubmitVisualDeckAsync(caller, deck, useDefaultTemplate, token),
+            cancellationToken);
+
+    [McpServerTool(Name = "pptx_finish_branded_visual_deck", Destructive = true),
+     Description("全ページを追加済みのVisual Deckドラフトを、既定またはアップロード済み企業テンプレートのマスター、ロゴ、フッター、ページ設定へ合成します。通常の新規資料はpptx_finish_visual_deckが既定テンプレートを自動適用するため、主に添付した別テンプレートを明示的に使う場合に呼びます。事前に添付を解析し、remaining_slide_count=0になったドラフトIDを指定してください。templateLayoutIdは通常autoです。")]
+    public static Task<object> FinishBrandedVisualDeckAsync(
+        CallerContextAccessor callerContext,
+        VisualDeckDraftService drafts,
+        JobService jobs,
+        [Required, Description("全ページ追加後のVisual DeckドラフトID。")]
+        string draftId,
         [Description("通常はauto。明示する場合はpptx_analyzeが返したプレースホルダー0個の白紙layout_idを一字も変更せず指定します。")]
         string templateLayoutId = "auto",
         [Description("既定テンプレートはdefault。添付した別テンプレートはLibreChatのfile_id、識別子が見えない場合はlatest。省略時はdefault。")]
-        string sourceFileId = "default")
-    {
-        if (deck is null)
-        {
-            return new ToolInputRequest(
-                "input_required",
-                "pptx_create_branded_visual_deck",
-                ["deck"],
-                "Call pptx_create_branded_visual_deck again with a complete VisualDeckSpec in deck. Keep sourceFileId and templateLayoutId if already known; do not call with empty arguments.");
-        }
-
-        try
-        {
-            return await jobs.SubmitBrandedVisualDeckAsync(
-                callerContext.GetRequired(),
+        string sourceFileId = "default",
+        CancellationToken cancellationToken = default) =>
+        FinishVisualDraftAsync(
+            "pptx_finish_branded_visual_deck",
+            callerContext,
+            drafts,
+            jobs,
+            draftId,
+            (caller, deck, token) => jobs.SubmitBrandedVisualDeckAsync(
+                caller,
                 sourceFileId,
                 deck,
                 templateLayoutId,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (PptxValidationException exception)
-        {
-            return CreateValidationError("pptx_create_branded_visual_deck", exception);
-        }
-    }
+                token),
+            cancellationToken);
 
     [McpServerTool(Name = "pptx_insert_visual_slides", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckへ新しいページを追加します。ユーザーが追加・挿入・末尾へ追加を依頼した場合は、pptx_create_visual_deckやpptx_create_branded_visual_deckで資料全体を作り直さず、このツールへ追加分の完全なVisualSlideSpecだけを渡してください。jobIdは通常latest、afterSlideNumberは省略時に末尾追加、0なら先頭追加、正の値ならその1始まりページの直後へ挿入します。既存の資料タイトル、テーマ、design、全ページ、企業テンプレートと選択レイアウトはサーバー側で継承します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず全ページを視覚確認してください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckへ新しいページを追加します。ユーザーが追加・挿入・末尾へ追加を依頼した場合は、新しいVisual Deckドラフトで資料全体を作り直さず、このツールへ追加分の完全なVisualSlideSpecだけを渡してください。jobIdは通常latest、afterSlideNumberは省略時に末尾追加、0なら先頭追加、正の値ならその1始まりページの直後へ挿入します。既存の資料タイトル、テーマ、design、全ページ、企業テンプレートと選択レイアウトはサーバー側で継承します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず全ページを視覚確認してください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。")]
     public static async Task<object> InsertVisualSlidesAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("動作上必須。追加する1ページ以上のVisualSlideSpecだけを含む配列。既存ページを含めず、資料全体を再送しません。")]
+        [Required, Description("動作上必須。追加する1ページ以上のVisualSlideSpecだけを含む配列。既存ページを含めず、資料全体を再送しません。")]
         IReadOnlyList<VisualSlideSpec>? slides = null,
         [Description("省略時は末尾へ追加。0は先頭、正の値はその1始まりページの直後へ挿入します。既存ページ数を超えてはいけません。")]
         int? afterSlideNumber = null,
@@ -291,14 +329,14 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_deck", Destructive = true),
-     Description("成功したpptx_create_visual_deckまたはpptx_create_branded_visual_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトも自動的に維持します。資料全体を再送せず、変更ページの完全なVisualSlideSpecだけをrevisionsへ指定してください。jobIdまたはrevisionsが欠けた場合はinput_requiredを返します。")]
+     Description("成功したpptx_finish_visual_deckまたはpptx_finish_branded_visual_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトも自動的に維持します。資料全体を再送せず、変更ページの完全なVisualSlideSpecだけをrevisionsへ指定してください。jobIdまたはrevisionsが欠けた場合はinput_requiredを返します。")]
     public static async Task<object> RefineVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("動作上必須。直前の成功したpptx_create_visual_deckまたはpptx_create_branded_visual_deckが返したjob_id。")]
+        [Required, Description("動作上必須。直前の成功したpptx_finish_visual_deckまたはpptx_finish_branded_visual_deckが返したjob_id。")]
         string jobId = "",
-        [Description("動作上必須。変更ページだけの配列。各要素は1始まりのslide_numberと、差し替え後の完全なslideを含めます。")]
+        [Required, Description("動作上必須。変更ページだけの配列。各要素は1始まりのslide_numberと、差し替え後の完全なslideを含めます。")]
         IReadOnlyList<VisualSlideRevision>? revisions = null)
     {
         var missing = new List<string>(2);
@@ -471,6 +509,50 @@ public sealed class PowerPointTools
         string jobId,
         CancellationToken cancellationToken) =>
         jobs.CancelAsync(callerContext.GetRequired(), jobId, cancellationToken);
+
+    private static async Task<object> FinishVisualDraftAsync(
+        string toolName,
+        CallerContextAccessor callerContext,
+        VisualDeckDraftService drafts,
+        JobService jobs,
+        string draftId,
+        Func<CallerContext, VisualDeckSpec, CancellationToken, Task<JobReceipt>> submit,
+        CancellationToken cancellationToken)
+    {
+        var caller = callerContext.GetRequired();
+        var acquired = false;
+        try
+        {
+            var submission = drafts.AcquireForSubmission(caller, draftId);
+            if (submission.ExistingJobId is not null)
+            {
+                return await jobs.GetAsync(caller, submission.ExistingJobId, cancellationToken).ConfigureAwait(false);
+            }
+
+            acquired = true;
+            var receipt = await submit(caller, submission.Deck!, cancellationToken).ConfigureAwait(false);
+            drafts.MarkSubmitted(caller, draftId, receipt.JobId);
+            return receipt;
+        }
+        catch (PptxValidationException exception)
+        {
+            if (acquired)
+            {
+                drafts.ReleaseSubmission(caller, draftId);
+            }
+
+            return CreateValidationError(toolName, exception);
+        }
+        catch
+        {
+            if (acquired)
+            {
+                drafts.ReleaseSubmission(caller, draftId);
+            }
+
+            throw;
+        }
+    }
 
     private static ToolValidationError CreateValidationError(string tool, PptxValidationException exception) =>
         new(
