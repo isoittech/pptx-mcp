@@ -45,6 +45,14 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
         var barChart = new C.BarChart(
             new C.BarDirection { Val = C.BarDirectionValues.Column },
             new C.BarGrouping { Val = C.BarGroupingValues.Clustered },
+            new C.BarChartSeries(
+                new C.Index { Val = 0U },
+                new C.Order { Val = 0U },
+                new C.DataLabels(),
+                new C.DataPoint(new C.Index { Val = 0U }),
+                new C.DataPoint(new C.Index { Val = 1U }),
+                new C.CategoryAxisData(),
+                new C.Values()),
             new C.AxisId { Val = 4U },
             new C.AxisId { Val = 5U },
             new C.AxisId { Val = 6U });
@@ -54,7 +62,7 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
 
         var correctionCount = PptxGenJsOpenXmlNormalizer.NormalizeChartSpace(chartSpace);
 
-        Assert.Equal(5, correctionCount);
+        Assert.Equal(7, correctionCount);
         var grouping = Assert.IsType<C.Grouping>(lineChart.FirstChild);
         Assert.Equal(C.GroupingValues.Standard, grouping.Val?.Value);
         Assert.Empty(lineSeries.Elements<C.InvertIfNegative>());
@@ -64,6 +72,13 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
             < seriesChildren.IndexOf(lineSeries.GetFirstChild<C.DataLabels>()!));
         Assert.Equal(2, lineChart.Elements<C.AxisId>().Count());
         Assert.Equal(2, barChart.Elements<C.AxisId>().Count());
+        var barSeries = Assert.Single(barChart.Elements<C.BarChartSeries>());
+        var barSeriesChildren = barSeries.ChildElements.ToList();
+        Assert.All(
+            barSeries.Elements<C.DataPoint>(),
+            dataPoint => Assert.True(
+                barSeriesChildren.IndexOf(dataPoint)
+                < barSeriesChildren.IndexOf(barSeries.GetFirstChild<C.DataLabels>()!)));
     }
 
     [Fact]

@@ -20,6 +20,16 @@ internal static class PptxGenJsOpenXmlNormalizer
         "smooth",
         "extLst",
     ];
+    private static readonly HashSet<string> BarSeriesElementsAfterDataPoint =
+    [
+        "dLbls",
+        "trendline",
+        "errBars",
+        "cat",
+        "val",
+        "shape",
+        "extLst",
+    ];
 
     public static void NormalizeAndValidate(string presentationPath)
     {
@@ -116,7 +126,37 @@ internal static class PptxGenJsOpenXmlNormalizer
 
         foreach (var barChart in chartSpace.Descendants<C.BarChart>())
         {
+            foreach (var series in barChart.Elements<C.BarChartSeries>())
+            {
+                correctionCount += NormalizeBarSeriesDataPoints(series);
+            }
+
             correctionCount += RemoveSurplusAxisIds(barChart.Elements<C.AxisId>());
+        }
+
+        return correctionCount;
+    }
+
+    private static int NormalizeBarSeriesDataPoints(C.BarChartSeries series)
+    {
+        var correctionCount = 0;
+        foreach (var dataPoint in series.Elements<C.DataPoint>().ToArray())
+        {
+            var children = series.ChildElements.ToList();
+            var dataPointIndex = children.IndexOf(dataPoint);
+            var firstEarlierElementThatMustFollow = children
+                .Take(dataPointIndex)
+                .FirstOrDefault(static child =>
+                    child.NamespaceUri == ChartNamespace
+                    && BarSeriesElementsAfterDataPoint.Contains(child.LocalName));
+            if (firstEarlierElementThatMustFollow is null)
+            {
+                continue;
+            }
+
+            dataPoint.Remove();
+            series.InsertBefore(dataPoint, firstEarlierElementThatMustFollow);
+            correctionCount++;
         }
 
         return correctionCount;
