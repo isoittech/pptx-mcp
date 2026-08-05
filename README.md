@@ -66,6 +66,7 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 - `pptx_refine_deck`
 - `pptx_create_visual_deck`
 - `pptx_create_branded_visual_deck`
+- `pptx_insert_visual_slides`
 - `pptx_refine_visual_slide`
 - `pptx_refine_visual_deck`
 - `pptx_get_job`
@@ -84,6 +85,8 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 Visual Deckの入力検証エラーは `status=invalid_input`、エラーコード、対象フィールドを構造化して返します。モデルは推測で同じ呼び出しを繰り返さず、指摘されたフィールドだけを直せます。Closingの提言はPowerPointネイティブの箇条書きとして描画されます。
 
 6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。単独のMetricsスライドは最大6指標を3列×2段で配置できます。視覚確認後、Bedrock/Claudeでは `pptx_refine_visual_slide` へ問題ページを1枚ずつ渡します。`jobId=latest` が同じ会話の直前の成功ジョブを選ぶため、複数ページの修正は逐次累積し、大きな一括入力を避けられます。単一ページ修正はサーバー内で最大30秒完了を待ち、通常は最終状態を直接返すため、成功時の追加ポーリングとLibreChatのグラフステップ消費も抑えます。`pptx_refine_visual_deck` は一括配列を確実に送信できるクライアント向けです。
+
+成功済みVisual Deckへページを追加する場合は `pptx_insert_visual_slides` を使います。`slides` には追加分だけを渡し、既存ページを再送しません。`jobId` の既定値は `latest`、`afterSlideNumber` の省略時は末尾、`0` は先頭、正の値はそのページの直後へ挿入します。サーバーが元ジョブのタイトル、テーマ、デザイン、既存ページ、企業テンプレートとレイアウトを結合し、最大50ページの完成版を再生成します。通常はサーバー内で最大30秒待って最終状態を返します。この方式はAIの入力を追加ページ分に限定しますが、レンダラーとプレビュー生成は現段階では完成版全体を処理します。
 
 ## テスト
 

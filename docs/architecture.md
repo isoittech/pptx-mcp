@@ -75,6 +75,8 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 
 `pptx_refine_visual_slide` は `jobId=latest` で同じ利用者・会話の最新成功Visual Deckだけを解決します。複数ページは各ジョブの成功後に1枚ずつ適用するため、修正済み仕様と企業テンプレートが次のジョブへ累積します。Bedrockが大きな `revisions` 配列を省略する問題を避けつつ、会話境界を越えたジョブ参照は許しません。単一ページ修正は最大30秒だけサーバー内で完了を待ち、最終状態を返せた場合は追加ポーリングを不要にします。一括入力が安定したクライアント向けには `pptx_refine_visual_deck` も維持します。
 
+ページ数を増やす場合は `pptx_refine_visual_slide` ではなく `pptx_insert_visual_slides` を使います。同ツールは追加する `VisualSlideSpec` だけを受け取り、同じ利用者・会話にある成功済みVisual Deckの仕様へサーバー側で挿入します。`afterSlideNumber` は既存ページを基準とし、省略時は末尾へ追加します。ブランドVisual Deckでは元ジョブのテンプレートファイルと `templateLayoutId` も再利用します。第1段階では完成版の `VisualDeckSpec` をPptxGenJSへ再投入するためファイル生成・Open XML検証・プレビュー生成は全ページ分行いますが、モデルが既存ページを再構築・再送する必要はありません。
+
 これはMCPサーバーが別のモデルAPIを直接呼ぶループではなく、LibreChat上のClaudeがツール呼び出しを継続するエージェント駆動方式です。モデル認証情報をMCPへ持ち込まず、会話文脈を保ったまま評価できます。
 
 ## 編集エンジン

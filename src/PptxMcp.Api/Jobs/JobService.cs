@@ -179,6 +179,62 @@ public sealed class JobService(
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<JobReceipt> SubmitInsertVisualSlidesAsync(
+        CallerContext caller,
+        string jobId,
+        IReadOnlyList<VisualSlideSpec> insertedSlides,
+        int? afterSlideNumber,
+        CancellationToken cancellationToken)
+    {
+        var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (sourceJob.State != JobState.Succeeded
+            || sourceJob.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck))
+        {
+            throw new PptxValidationException(
+                "visual_deck_job_not_insertable",
+                "Only a successful visual or branded visual deck job can receive inserted slides.");
+        }
+
+        if (sourceJob.Kind == JobKind.CreateBrandedVisualDeck)
+        {
+            var branded = sourceJob.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions)
+                ?? throw new PptxValidationException("invalid_job_payload", "The source branded visual deck specification is missing.");
+            var extendedBrandedDeck = InsertVisualSlides(
+                branded.Deck,
+                insertedSlides,
+                afterSlideNumber,
+                options.MaxSlides);
+            VisualDeckValidator.Validate(extendedBrandedDeck, options.MaxSlides);
+            var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
+            if (!File.Exists(sourcePath))
+            {
+                throw new PptxValidationException("source_expired", "The source template is no longer available.");
+            }
+
+            return await SubmitFromPathAsync(
+                caller,
+                sourceJob.SourceFileId,
+                sourcePath,
+                JobKind.CreateBrandedVisualDeck,
+                branded with { Deck = extendedBrandedDeck },
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
+            ?? throw new PptxValidationException("invalid_job_payload", "The source visual deck specification is missing.");
+        var extendedDeck = InsertVisualSlides(
+            originalDeck,
+            insertedSlides,
+            afterSlideNumber,
+            options.MaxSlides);
+        VisualDeckValidator.Validate(extendedDeck, options.MaxSlides);
+        return await SubmitGeneratedAsync(
+            caller,
+            JobKind.CreateVisualDeck,
+            extendedDeck,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<string> GetLatestSuccessfulVisualJobIdAsync(
         CallerContext caller,
         CancellationToken cancellationToken)
@@ -457,6 +513,42 @@ public sealed class JobService(
                 : slide)
             .ToArray();
         return originalDeck with { Slides = slides };
+    }
+
+    internal static VisualDeckSpec InsertVisualSlides(
+        VisualDeckSpec originalDeck,
+        IReadOnlyList<VisualSlideSpec> insertedSlides,
+        int? afterSlideNumber,
+        int maximumSlides)
+    {
+        if (originalDeck is null
+            || originalDeck.Slides is null
+            || originalDeck.Slides.Count is < 1
+            || originalDeck.Slides.Count > maximumSlides
+            || insertedSlides is null
+            || insertedSlides.Count < 1
+            || insertedSlides.Any(static slide => slide is null)
+            || originalDeck.Slides.Count + insertedSlides.Count > maximumSlides)
+        {
+            throw new PptxValidationException(
+                "visual_deck_insert_invalid",
+                $"Provide 1 or more visual slides while keeping the combined deck within {maximumSlides} slides.");
+        }
+
+        var insertionIndex = afterSlideNumber ?? originalDeck.Slides.Count;
+        if (insertionIndex < 0 || insertionIndex > originalDeck.Slides.Count)
+        {
+            throw new PptxValidationException(
+                "visual_deck_insert_position_invalid",
+                $"afterSlideNumber must be between 0 and {originalDeck.Slides.Count}; omit it to append.");
+        }
+
+        var combinedSlides = originalDeck.Slides
+            .Take(insertionIndex)
+            .Concat(insertedSlides)
+            .Concat(originalDeck.Slides.Skip(insertionIndex))
+            .ToArray();
+        return originalDeck with { Slides = combinedSlides };
     }
 
     private async Task<JobReceipt> SubmitAsync<TPayload>(

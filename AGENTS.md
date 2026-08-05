@@ -30,6 +30,7 @@
 - 導入環境の既定テンプレートは外部マウントと`DefaultTemplateId`で指定し、実PPTX・会社名・ロゴ・固有文言をOSSへ含めない。起動時に検証・解析し、`pptx_create_visual_deck`は明示的に無効化されない限り既定テンプレートを自動適用する。添付した別テンプレートは明示`sourceFileId`でその処理だけ上書きする。
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。
 - Bedrockから白紙資料とブランドVisual Deckを視覚修正する場合は、`pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡し、各成功後に `jobId=latest` で次ページを直す。修正は累積し、元テンプレートとレイアウトもジョブから再利用する。単一ページ修正が`Succeeded`を直接返した場合は`pptx_get_job`を重ねず、LibreChatの再帰上限を節約する。`pptx_refine_visual_deck` の一括配列は確実に構造化入力できるクライアント向けに残す。
+- 成功済みVisual Deckへページを増やす場合は`pptx_insert_visual_slides`へ追加ページだけを渡す。既存ページを`pptx_create_visual_deck`へ再送しない。サーバー側で元仕様へ挿入し、ブランド資料では元テンプレートとレイアウトを継承する。第1段階では完成版全体を再レンダリングするため、物理的な差分編集とは区別する。
 - `pptx_get_job(jobId=latest)` は同じ利用者・会話の直近ジョブを状態にかかわらず返す。逐次修正の入力解決は成功済みVisual Deckだけを対象とするため、両者の `latest` の意味を混同しない。
 - 非同期ジョブの通常フローは`pptx_wait_for_job`で最大45秒サーバー内待機し、`pptx_get_job`の短間隔反復でLibreChatの再帰上限を消費しない。`pptx_get_job`は障害復旧や待たない即時確認に使う。
 - Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。

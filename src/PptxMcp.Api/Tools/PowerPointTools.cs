@@ -26,6 +26,7 @@ public sealed class PowerPointTools
             "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はpptx_create_branded_visual_deckを使う",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
             "新規資料はpptx_create_visual_deckで意味ベースのレイアウトとデザイン方針を指定し、明示的に不要と言われない限り既定テンプレートを使う",
+            "成功したVisual Deckへページを追加する場合はpptx_insert_visual_slidesへ追加分だけを渡し、既存ページを再送しない",
             "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
             "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡して最大2巡まで再生成する",
             "視覚確認後にのみPPTXのダウンロードリンクを提示する",
@@ -45,6 +46,7 @@ public sealed class PowerPointTools
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
             "白紙からKPI・カード・比較・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
             "企業テンプレートの空白レイアウトと自動抽出したテーマをVisual Deckへ合成し、ブランド要素と編集可能な視覚表現を両立",
+            "成功したVisual DeckまたはブランドVisual Deckへの1〜49ページの追加（末尾追加または指定ページ直後への挿入）",
             "LibreOfficeによる全スライドPNGプレビュー",
             "プレビュー画像をClaudeへ返す自動視覚リフレクション",
             "署名付きURLによる成果物ダウンロード",
@@ -54,7 +56,7 @@ public sealed class PowerPointTools
             "SmartArtノードの追加・削除（種類変更は対象外）",
             "編集可能グラフのデータ・系列・凡例・軸・色の更新（種類変更は対象外）",
             "埋め込みExcelの値・式・範囲・行列更新",
-            "既存デッキに対するスライド追加・削除・並べ替え",
+            "任意の既存PPTXまたは厳密なプレースホルダー資料に対するスライド追加、およびスライド削除・並べ替え",
         },
     };
 
@@ -239,6 +241,55 @@ public sealed class PowerPointTools
         }
     }
 
+    [McpServerTool(Name = "pptx_insert_visual_slides", Destructive = true),
+     Description("成功したVisual DeckまたはブランドVisual Deckへ新しいページを追加します。ユーザーが追加・挿入・末尾へ追加を依頼した場合は、pptx_create_visual_deckやpptx_create_branded_visual_deckで資料全体を作り直さず、このツールへ追加分の完全なVisualSlideSpecだけを渡してください。jobIdは通常latest、afterSlideNumberは省略時に末尾追加、0なら先頭追加、正の値ならその1始まりページの直後へ挿入します。既存の資料タイトル、テーマ、design、全ページ、企業テンプレートと選択レイアウトはサーバー側で継承します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず全ページを視覚確認してください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。")]
+    public static async Task<object> InsertVisualSlidesAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        CancellationToken cancellationToken,
+        [Description("動作上必須。追加する1ページ以上のVisualSlideSpecだけを含む配列。既存ページを含めず、資料全体を再送しません。")]
+        IReadOnlyList<VisualSlideSpec>? slides = null,
+        [Description("省略時は末尾へ追加。0は先頭、正の値はその1始まりページの直後へ挿入します。既存ページ数を超えてはいけません。")]
+        int? afterSlideNumber = null,
+        [Description("通常はlatest。明示する場合は直前に成功したVisual Deckジョブのjob_id。latestは同じ会話の最新成功ジョブを安全に選びます。")]
+        string jobId = "latest")
+    {
+        var requestedSlides = slides ?? [];
+        if (requestedSlides.Count == 0)
+        {
+            return new ToolInputRequest(
+                "input_required",
+                "pptx_insert_visual_slides",
+                ["slides"],
+                "Call pptx_insert_visual_slides again with only the new slides. Do not resend existing slides or call a create tool.");
+        }
+
+        try
+        {
+            var caller = callerContext.GetRequired();
+            var resolvedJobId = string.IsNullOrWhiteSpace(jobId)
+                || string.Equals(jobId, "latest", StringComparison.OrdinalIgnoreCase)
+                ? await jobs.GetLatestSuccessfulVisualJobIdAsync(caller, cancellationToken).ConfigureAwait(false)
+                : jobId;
+            var receipt = await jobs.SubmitInsertVisualSlidesAsync(
+                caller,
+                resolvedJobId,
+                requestedSlides,
+                afterSlideNumber,
+                cancellationToken).ConfigureAwait(false);
+            var completed = await jobs.WaitForTerminalAsync(
+                caller,
+                receipt.JobId,
+                TimeSpan.FromSeconds(30),
+                cancellationToken).ConfigureAwait(false);
+            return completed is not null ? completed : receipt;
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_insert_visual_slides", exception);
+        }
+    }
+
     [McpServerTool(Name = "pptx_refine_visual_deck", Destructive = true),
      Description("成功したpptx_create_visual_deckまたはpptx_create_branded_visual_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトも自動的に維持します。資料全体を再送せず、変更ページの完全なVisualSlideSpecだけをrevisionsへ指定してください。jobIdまたはrevisionsが欠けた場合はinput_requiredを返します。")]
     public static async Task<object> RefineVisualDeckAsync(
@@ -286,7 +337,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの問題ページを1枚だけ差し替えます。Bedrock/Claudeでの自動視覚リフレクションでは、大きなrevisions配列を作るpptx_refine_visual_deckよりこのツールを優先してください。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。全ページを最大2巡までに収束させてください。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションでは、大きなrevisions配列を作るpptx_refine_visual_deckよりこのツールを優先してください。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。全ページを最大2巡までに収束させてください。")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,

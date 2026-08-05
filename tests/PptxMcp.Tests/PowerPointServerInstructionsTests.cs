@@ -18,6 +18,9 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("explicit alternate template overrides", instructions, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("call pptx_wait_for_job once", instructions, StringComparison.Ordinal);
         Assert.Contains("instead of repeatedly calling pptx_get_job", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx_insert_visual_slides with jobId=latest and only the new slides", instructions, StringComparison.Ordinal);
+        Assert.Contains("Never reconstruct or resend the existing slides", instructions, StringComparison.Ordinal);
+        Assert.Contains("never call a create tool for this operation", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

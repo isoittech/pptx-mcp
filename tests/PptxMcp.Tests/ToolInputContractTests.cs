@@ -247,6 +247,27 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void VisualSlideInsertionDefaultsToLatestJobAndAppend()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.InsertVisualSlidesAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        var slides = method.GetParameters().Single(parameter => parameter.Name == "slides");
+        var afterSlideNumber = method.GetParameters().Single(parameter => parameter.Name == "afterSlideNumber");
+        var jobId = method.GetParameters().Single(parameter => parameter.Name == "jobId");
+
+        Assert.Null(slides.DefaultValue);
+        Assert.Null(afterSlideNumber.DefaultValue);
+        Assert.Equal("latest", jobId.DefaultValue);
+        Assert.Contains("追加分", description, StringComparison.Ordinal);
+        Assert.Contains("資料全体を作り直さず", description, StringComparison.Ordinal);
+        Assert.Contains("既存の資料タイトル、テーマ、design、全ページ、企業テンプレート", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WaitForJobContractUsesBoundedServerSideWait()
     {
         var method = typeof(PowerPointTools).GetMethod(
@@ -346,6 +367,21 @@ public sealed class ToolInputContractTests
         Assert.Equal("input_required", inputRequest.Status);
         Assert.Equal("pptx_create_branded_visual_deck", inputRequest.Tool);
         Assert.Equal(["deck"], inputRequest.RequiredArguments);
+    }
+
+    [Fact]
+    public async Task InsertVisualSlidesReturnsActionableInputRequestForEmptyBedrockCall()
+    {
+        var result = await PowerPointTools.InsertVisualSlidesAsync(
+            null!,
+            null!,
+            CancellationToken.None);
+
+        var inputRequest = Assert.IsType<ToolInputRequest>(result);
+        Assert.Equal("input_required", inputRequest.Status);
+        Assert.Equal("pptx_insert_visual_slides", inputRequest.Tool);
+        Assert.Equal(["slides"], inputRequest.RequiredArguments);
+        Assert.Contains("only the new slides", inputRequest.Instruction, StringComparison.Ordinal);
     }
 
     [Fact]

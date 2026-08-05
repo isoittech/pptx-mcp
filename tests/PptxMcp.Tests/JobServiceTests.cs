@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 using PptxMcp.Configuration;
 using PptxMcp.Jobs;
@@ -9,6 +10,8 @@ namespace PptxMcp.Tests;
 
 public sealed class JobServiceTests
 {
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+
     [Theory]
     [InlineData("preview/slide-1.png", 1)]
     [InlineData("preview/slide-01.png", 1)]
@@ -114,6 +117,92 @@ public sealed class JobServiceTests
             JobService.ApplyVisualDeckRevisions(original, revisions, 50));
 
         Assert.Equal("visual_deck_revision_invalid", error.Code);
+    }
+
+    [Fact]
+    public void InsertsOnlyNewVisualSlidesAndPreservesCreativeDirection()
+    {
+        var design = new VisualDesignSpec("editorial", "airy", "ribbon");
+        var original = new VisualDeckSpec(
+            "経営報告",
+            [
+                new VisualSlideSpec(VisualSlideKind.Title, "表紙"),
+                new VisualSlideSpec(VisualSlideKind.Closing, "まとめ"),
+            ],
+            Design: design);
+        var inserted = new[]
+        {
+            new VisualSlideSpec(VisualSlideKind.Metrics, "追加KPI", Metrics:
+            [
+                new VisualMetricSpec("42", "対象拠点"),
+                new VisualMetricSpec("18%", "改善率"),
+            ]),
+            new VisualSlideSpec(VisualSlideKind.Statement, "追加提言", Body: "重点投資を前倒しする"),
+        };
+
+        var result = JobService.InsertVisualSlides(original, inserted, 1, 50);
+
+        Assert.Equal(["表紙", "追加KPI", "追加提言", "まとめ"], result.Slides.Select(static slide => slide.Title));
+        Assert.Same(design, result.Design);
+        Assert.Equal("経営報告", result.Title);
+    }
+
+    [Fact]
+    public void AppendsVisualSlidesWhenPositionIsOmitted()
+    {
+        var original = new VisualDeckSpec(
+            "経営報告",
+            [new VisualSlideSpec(VisualSlideKind.Title, "表紙")]);
+
+        var result = JobService.InsertVisualSlides(
+            original,
+            [new VisualSlideSpec(VisualSlideKind.Closing, "追加ページ")],
+            null,
+            50);
+
+        Assert.Equal(["表紙", "追加ページ"], result.Slides.Select(static slide => slide.Title));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
+    public void RejectsVisualSlideInsertionOutsideExistingDeck(int afterSlideNumber)
+    {
+        var original = new VisualDeckSpec(
+            "経営報告",
+            [
+                new VisualSlideSpec(VisualSlideKind.Title, "表紙"),
+                new VisualSlideSpec(VisualSlideKind.Closing, "まとめ"),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() =>
+            JobService.InsertVisualSlides(
+                original,
+                [new VisualSlideSpec(VisualSlideKind.Statement, "追加", Body: "追加本文")],
+                afterSlideNumber,
+                50));
+
+        Assert.Equal("visual_deck_insert_position_invalid", error.Code);
+    }
+
+    [Fact]
+    public void RejectsVisualSlideInsertionBeyondMaximumDeckSize()
+    {
+        var original = new VisualDeckSpec(
+            "経営報告",
+            [
+                new VisualSlideSpec(VisualSlideKind.Title, "表紙"),
+                new VisualSlideSpec(VisualSlideKind.Closing, "まとめ"),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() =>
+            JobService.InsertVisualSlides(
+                original,
+                [new VisualSlideSpec(VisualSlideKind.Statement, "追加", Body: "追加本文")],
+                null,
+                2));
+
+        Assert.Equal("visual_deck_insert_invalid", error.Code);
     }
 
     [Fact]
@@ -363,6 +452,91 @@ public sealed class JobServiceTests
             Assert.NotNull(job);
             Assert.Equal(JobKind.CreateVisualDeck, job.Kind);
             Assert.Equal("generated", job.SourceFileId);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+            Directory.Delete(templatesRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task InsertedSlidesReuseBrandedDeckTemplateAndSpecification()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        var templatesRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-templates-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+        Directory.CreateDirectory(templatesRoot);
+        File.Move(
+            TestPresentationFactory.CreateBlankBrandedTemplate(),
+            Path.Combine(templatesRoot, "organization-default.pptx"));
+
+        try
+        {
+            var options = Options.Create(new PptxMcpOptions
+            {
+                StorageRoot = storageRoot,
+                LibreChatUploadsRoot = uploadsRoot,
+                TemplatesRoot = templatesRoot,
+                DefaultTemplateId = "organization-default",
+                SigningKey = new string('k', 32),
+                MaxQueueDepth = 12,
+            });
+            var repository = new FileJobRepository(options);
+            var guard = new PptxPackageGuard(options);
+            var service = new JobService(
+                repository,
+                new InputFileResolver(options, guard),
+                new TemplateRegistry(options, guard),
+                guard,
+                new JobChannel(options),
+                new JobCancellationRegistry(),
+                new ArtifactTokenService(options, TimeProvider.System),
+                options,
+                TimeProvider.System);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var originalDeck = new VisualDeckSpec(
+                "既定テンプレート",
+                [new VisualSlideSpec(VisualSlideKind.Title, "表紙")],
+                Design: new VisualDesignSpec("bold", "balanced", "nodes"));
+            var originalReceipt = await service.SubmitVisualDeckAsync(
+                caller,
+                originalDeck,
+                true,
+                CancellationToken.None);
+            await repository.UpdateAsync(
+                originalReceipt.JobId,
+                current => current with
+                {
+                    State = JobState.Succeeded,
+                    ProgressPercent = 100,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                },
+                CancellationToken.None);
+
+            var insertedReceipt = await service.SubmitInsertVisualSlidesAsync(
+                caller,
+                originalReceipt.JobId,
+                [new VisualSlideSpec(VisualSlideKind.Statement, "追加提言", Body: "投資を前倒しする")],
+                null,
+                CancellationToken.None);
+            var insertedJob = await repository.GetAsync(insertedReceipt.JobId, CancellationToken.None);
+
+            Assert.NotNull(insertedJob);
+            Assert.Equal(JobKind.CreateBrandedVisualDeck, insertedJob.Kind);
+            Assert.Equal("organization-default", insertedJob.SourceFileId);
+            Assert.True(File.Exists(Path.Combine(repository.GetJobDirectory(insertedJob.Id), "source.pptx")));
+            var payload = insertedJob.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions);
+            Assert.NotNull(payload);
+            Assert.Equal("auto", payload.TemplateLayoutId);
+            Assert.Equal(["表紙", "追加提言"], payload.Deck.Slides.Select(static slide => slide.Title));
+            Assert.Equal("bold", payload.Deck.Design?.Style);
         }
         finally
         {
