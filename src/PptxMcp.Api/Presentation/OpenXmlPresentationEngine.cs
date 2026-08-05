@@ -428,6 +428,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 "Specify 'auto' or an exact blank template layout_id returned by pptx_analyze.");
         }
 
+        var sourceErrorCount = GetValidationErrorCount(templatePath);
         await CopyFileAsync(templatePath, destinationPath, cancellationToken).ConfigureAwait(false);
         using var visualDocument = PresentationDocument.Open(visualDeckPath, false);
         using var destinationDocument = OpenForSurgicalEdit(destinationPath);
@@ -484,6 +485,7 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         }
 
         presentation.Save();
+        RejectNewValidationErrors(destinationDocument, sourceErrorCount);
         return new BrandedVisualCompositionResult(
             visualSlides.Length,
             selectedLayout.Uri.ToString(),
@@ -1018,12 +1020,18 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         new OpenXmlValidator()
             .Validate(document)
             .Take(100)
-            .Select(static error => $"{error.Path?.XPath}: {error.Description}")
+            .Select(static error =>
+                $"{error.Part?.Uri.ToString() ?? "unknown part"} {error.Path?.XPath ?? "unknown path"}: {error.Description}")
             .ToArray();
 
     private static void RejectNewValidationErrors(string path, int sourceErrorCount)
     {
         using var output = PresentationDocument.Open(path, false);
+        RejectNewValidationErrors(output, sourceErrorCount);
+    }
+
+    private static void RejectNewValidationErrors(PresentationDocument output, int sourceErrorCount)
+    {
         var outputErrors = Validate(output);
         if (outputErrors.Length > sourceErrorCount)
         {

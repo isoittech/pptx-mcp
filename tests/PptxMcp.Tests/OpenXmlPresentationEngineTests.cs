@@ -297,6 +297,8 @@ public sealed class OpenXmlPresentationEngineTests
         var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
         try
         {
+            var engine = new OpenXmlPresentationEngine();
+            var templateSummary = await engine.AnalyzeAsync(template, CancellationToken.None);
             var result = await new OpenXmlPresentationEngine().CreateBrandedVisualDeckAsync(
                 template,
                 visual,
@@ -321,6 +323,9 @@ public sealed class OpenXmlPresentationEngineTests
                 StringComparison.Ordinal);
             Assert.Single(presentationPart.SlideMasterParts);
             Assert.Same(presentationPart.SlideMasterParts.Single(), layout.SlideMasterPart);
+
+            var summary = await engine.AnalyzeAsync(destination, CancellationToken.None);
+            Assert.Equal(templateSummary.ValidationErrors.Count, summary.ValidationErrors.Count);
         }
         finally
         {

@@ -90,6 +90,8 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
                 $"The visual presentation renderer failed with exit code {process.ExitCode}: {diagnostic}");
         }
 
+        PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(destinationPath);
+
         return new VisualDeckCreationResult(
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),

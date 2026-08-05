@@ -31,6 +31,7 @@
 - Bedrockから白紙資料とブランドVisual Deckを視覚修正する場合は、`pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡し、各成功後に `jobId=latest` で次ページを直す。修正は累積し、元テンプレートとレイアウトもジョブから再利用する。単一ページ修正が`Succeeded`を直接返した場合は`pptx_get_job`を重ねず、LibreChatの再帰上限を節約する。`pptx_refine_visual_deck` の一括配列は確実に構造化入力できるクライアント向けに残す。
 - `pptx_get_job(jobId=latest)` は同じ利用者・会話の直近ジョブを状態にかかわらず返す。逐次修正の入力解決は成功済みVisual Deckだけを対象とするため、両者の `latest` の意味を混同しない。
 - Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。
+- PptxGenJSを含む外部レンダラーの生成物は、LibreOfficeで表示できてもPowerPoint互換とは限らない。生成直後と企業テンプレートへの合成後にOpenXmlValidatorを通し、新規検証エラーがある成果物は配布しない。
 
 ## セキュリティと制約
 
@@ -53,3 +54,4 @@
 - `pptx_analyze`の`layout_id`/`shape_id`/`placeholder_index`を作成・編集ツールへ直接コピーできるよう、対応するネスト入力キーもsnake_caseで維持する。`pptx_create_deck`は完成版の全ページを必須`slides`へまとめ、`sourceFileId`だけの呼出しを許容する説明にしない。
 - Bedrockが大きな作成ツールを空引数で先行実行する場合は、スキーマ検証エラーではなく`input_required`を返して完全入力での再実行を促す。Visual Deckの自動修正は大きな`revisions`配列を避け、必須`revision`を持つ`pptx_refine_visual_slide`で1ページずつ逐次適用する。
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
+- PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルートとグラフだけを正規化し、`node_modules`を直接改変しない。
