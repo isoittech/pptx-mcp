@@ -206,12 +206,51 @@ public sealed class JobWorker(
                         ?? throw new PptxValidationException("invalid_job_payload", "Visual deck specification is missing.");
                     VisualDeckValidator.Validate(deck, options.MaxSlides);
                     var outputPath = Path.Combine(directory, "presentation.pptx");
-                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, cancellationToken)
+                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, false, cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
                     var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
                     return (
                         JsonSerializer.SerializeToElement(creation, SerializerOptions),
+                        CreateOutputArtifacts(outputPath, images, directory));
+                }
+
+            case JobKind.CreateBrandedVisualDeck:
+                {
+                    var branded = job.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions)
+                        ?? throw new PptxValidationException("invalid_job_payload", "Branded visual deck specifications are missing.");
+                    VisualDeckValidator.Validate(branded.Deck, options.MaxSlides);
+                    var templateSummary = await presentationEngine.AnalyzeAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                    var themedDeck = VisualDeckBranding.ApplyTemplateTheme(branded.Deck, templateSummary.Theme);
+                    var visualPath = Path.Combine(directory, "visual-source.pptx");
+                    var visualCreation = await visualPresentationEngine.CreateAsync(
+                            visualPath,
+                            themedDeck,
+                            true,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    await packageGuard.ValidateAsync(visualPath, cancellationToken).ConfigureAwait(false);
+
+                    var outputPath = Path.Combine(directory, "presentation.pptx");
+                    var composition = await presentationEngine.CreateBrandedVisualDeckAsync(
+                            sourcePath,
+                            visualPath,
+                            outputPath,
+                            branded.TemplateLayoutId,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
+                    var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
+                    var result = new BrandedVisualDeckCreationResult(
+                        composition.SlideCount,
+                        visualCreation.LayoutKinds,
+                        visualCreation.Renderer,
+                        composition.TemplateLayoutId,
+                        composition.TemplateLayoutName,
+                        templateSummary.Theme is not null,
+                        visualCreation.DesignWarnings);
+                    return (
+                        JsonSerializer.SerializeToElement(result, SerializerOptions),
                         CreateOutputArtifacts(outputPath, images, directory));
                 }
 

@@ -23,4 +23,11 @@ public interface IPresentationEngine
         string destinationPath,
         IReadOnlyList<DeckSlideSpec> slides,
         CancellationToken cancellationToken);
+
+    Task<BrandedVisualCompositionResult> CreateBrandedVisualDeckAsync(
+        string templatePath,
+        string visualDeckPath,
+        string destinationPath,
+        string templateLayoutId,
+        CancellationToken cancellationToken);
 }

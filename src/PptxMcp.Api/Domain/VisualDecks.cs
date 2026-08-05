@@ -44,6 +44,10 @@ public sealed record VisualDeckSpec(
     string Language = "ja-JP",
     VisualDesignSpec? Design = null);
 
+public sealed record BrandedVisualDeckSpec(
+    [property: JsonPropertyName("deck")] VisualDeckSpec Deck,
+    [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId = "auto");
+
 public sealed record VisualDesignSpec(
     string Style = "executive",
     string Density = "balanced",
@@ -117,15 +121,49 @@ public sealed record VisualChartSeriesSpec(
     string Name,
     IReadOnlyList<double> Values);
 
+public static class VisualDeckBranding
+{
+    public static VisualDeckSpec ApplyTemplateTheme(
+        VisualDeckSpec deck,
+        PresentationThemeSummary? templateTheme)
+    {
+        if (templateTheme is null)
+        {
+            return deck;
+        }
+
+        var current = deck.Theme ?? new VisualThemeSpec("minimal");
+        var brandedTheme = current with
+        {
+            PrimaryColor = templateTheme.PrimaryColor ?? current.PrimaryColor,
+            SecondaryColor = templateTheme.SecondaryColor ?? current.SecondaryColor,
+            AccentColor = templateTheme.AccentColor ?? current.AccentColor,
+            BackgroundColor = templateTheme.BackgroundColor ?? current.BackgroundColor,
+            TextColor = templateTheme.TextColor ?? current.TextColor,
+            FontFace = templateTheme.BodyFont ?? templateTheme.HeadingFont ?? current.FontFace,
+        };
+        return deck with { Theme = brandedTheme };
+    }
+}
+
 public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
     [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
     [property: JsonPropertyName("renderer")] string Renderer,
     [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
 
+public sealed record BrandedVisualDeckCreationResult(
+    [property: JsonPropertyName("slide_count")] int SlideCount,
+    [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
+    [property: JsonPropertyName("renderer")] string Renderer,
+    [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId,
+    [property: JsonPropertyName("template_layout_name")] string TemplateLayoutName,
+    [property: JsonPropertyName("template_theme_applied")] bool TemplateThemeApplied,
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+
 public sealed record VisualSlideRevision(
-    [property: JsonPropertyName("slide_number")] int SlideNumber,
-    [property: JsonPropertyName("slide")] VisualSlideSpec Slide);
+    [property: JsonPropertyName("slide_number"), Description("One-based slide number to replace.")] int SlideNumber,
+    [property: JsonPropertyName("slide"), Description("Complete replacement VisualSlideSpec for this one slide.")] VisualSlideSpec Slide);
 
 public static partial class VisualDeckValidator
 {
@@ -339,9 +377,10 @@ public static partial class VisualDeckValidator
 
         if (slide.Metrics is not null)
         {
-            if (slide.Metrics.Count > 4)
+            var maximumMetrics = slide.Kind == VisualSlideKind.Metrics ? 6 : 4;
+            if (slide.Metrics.Count > maximumMetrics)
             {
-                ThrowDensity(prefix, "metrics", 4);
+                ThrowDensity(prefix, "metrics", maximumMetrics);
             }
 
             foreach (var metric in slide.Metrics)
@@ -428,7 +467,7 @@ public static partial class VisualDeckValidator
                 RequireCount(slide.Bullets, prefix, "bullets", 2, 7);
                 break;
             case VisualSlideKind.Metrics:
-                RequireCount(slide.Metrics, prefix, "metrics", 2, 4);
+                RequireCount(slide.Metrics, prefix, "metrics", 2, 6);
                 break;
             case VisualSlideKind.Comparison:
                 RequireCount(slide.Panels, prefix, "panels", 2, 3);

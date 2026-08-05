@@ -38,11 +38,12 @@ GET /artifacts/{job_id}/{file_name}?token=...
 
 - 資料編集前に `pptx_analyze` を実行する。
 - 会話に`file_id`が提示されていなければ`sourceFileId`を省略し、最新アップロードを使う。
-- 企業テンプレートを使う新規資料では、解析結果の `layout_id` とプレースホルダー `shape_id` を一字も変更せず使う。`pptx_create_deck`には動作上必須の`slides`へ完成版の全ページをまとめ、各要素を`layout_id`/`fields`、各フィールドを`text`または`paragraphs`のどちらか一方と`shape_id`（必要時のみ`shape_name`/`placeholder_index`）のsnake_caseで指定する。箇条書きや番号を文字として手入力しない。`sourceFileId`だけで呼ばない。Bedrockから空引数が先行した場合は`input_required`応答を受け、全`slides`付きで直ちに再実行する。
+- 企業テンプレートを使う新規資料で、マスター、ロゴ、フッターを保ちながらカード、KPI、工程、マトリクス、グラフ等を活用する場合は `pptx_create_branded_visual_deck` を使う。`templateLayoutId` は通常 `auto` とし、テーマ色やフォントをモデル側で転記しない。
+- 企業テンプレートの既存プレースホルダー配置へ厳密に流し込むことが明示された場合だけ、解析結果の `layout_id` とプレースホルダー `shape_id` を一字も変更せず `pptx_create_deck` に渡す。動作上必須の`slides`へ完成版の全ページをまとめ、各要素を`layout_id`/`fields`、各フィールドを`text`または`paragraphs`のどちらか一方と`shape_id`（必要時のみ`shape_name`/`placeholder_index`）のsnake_caseで指定する。箇条書きや番号を文字として手入力しない。`sourceFileId`だけで呼ばない。Bedrockから空引数が先行した場合は`input_required`応答を受け、全`slides`付きで直ちに再実行する。
 - 白紙からの新規資料では、内容ごとに意味ベースのレイアウトを選び、`design`とスライド単位の`variant`で構図を指定して `pptx_create_visual_deck` を実行する。6枚以上では4種類以上の構図を使い、単純な箇条書きを補助用途に限定する。
 - 編集対象が一意でなければ候補を列挙し、利用者の選択まで更新しない。
 - ジョブ完了後は `pptx_get_preview_images` で全スライドを1〜4枚ずつ取得し、文字切れ、重なり、可読性、余白、整列、コントラスト、情報階層、密度、バランス、一貫性を評価する。
-- 企業テンプレート資料に問題があれば`pptx_refine_deck`、白紙資料は`pptx_refine_visual_deck`へ成功ジョブの`jobId`と変更ページだけを渡し、全ページ仕様を再送しない。いずれも最大2回まで自律的に再生成し、画像を取得していない場合は視覚確認済みと述べない。
+- 厳密なプレースホルダー資料に問題があれば`pptx_refine_deck`を使う。白紙資料とブランドVisual Deckは`pptx_refine_visual_slide`へ完全な差し替えページを1枚だけ渡し、ジョブ成功後に次の問題ページを`jobId=latest`で直す。修正は逐次累積し、大きな`revisions`配列をBedrockへ要求しない。同ツールが`Succeeded`を直接返した場合は`pptx_get_job`を呼ばず次へ進み、30秒以内に完了せずジョブ受領情報だけを返した場合に限って状態確認する。全ページを最大2巡まで自律的に再生成し、画像を取得していない場合は視覚確認済みと述べない。
 - 視覚評価の完了後にPPTXダウンロードリンクを提示する。
 - MCPに情報収集を依頼しない。外部情報はLibreChat側で収集し、構造化した内容だけを渡す。
 

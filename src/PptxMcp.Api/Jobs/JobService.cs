@@ -94,6 +94,29 @@ public sealed class JobService(
         return SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken);
     }
 
+    public Task<JobReceipt> SubmitBrandedVisualDeckAsync(
+        CallerContext caller,
+        string sourceFileId,
+        VisualDeckSpec deck,
+        string templateLayoutId,
+        CancellationToken cancellationToken)
+    {
+        VisualDeckValidator.Validate(deck, options.MaxSlides);
+        if (string.IsNullOrWhiteSpace(templateLayoutId) || templateLayoutId.Length > 512)
+        {
+            throw new PptxValidationException(
+                "invalid_template_layout",
+                "Specify 'auto' or an exact blank template layout_id returned by pptx_analyze.");
+        }
+
+        return SubmitAsync(
+            caller,
+            sourceFileId,
+            JobKind.CreateBrandedVisualDeck,
+            new BrandedVisualDeckSpec(deck, templateLayoutId),
+            cancellationToken);
+    }
+
     public async Task<JobReceipt> SubmitRefineVisualDeckAsync(
         CallerContext caller,
         string jobId,
@@ -101,11 +124,33 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
-        if (sourceJob.Kind != JobKind.CreateVisualDeck || sourceJob.State != JobState.Succeeded)
+        if (sourceJob.State != JobState.Succeeded
+            || sourceJob.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck))
         {
             throw new PptxValidationException(
                 "visual_deck_job_not_refinable",
-                "Only a successful pptx_create_visual_deck job can be refined.");
+                "Only a successful visual or branded visual deck job can be refined.");
+        }
+
+        if (sourceJob.Kind == JobKind.CreateBrandedVisualDeck)
+        {
+            var branded = sourceJob.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions)
+                ?? throw new PptxValidationException("invalid_job_payload", "The source branded visual deck specification is missing.");
+            var refinedBrandedDeck = ApplyVisualDeckRevisions(branded.Deck, revisions, options.MaxSlides);
+            VisualDeckValidator.Validate(refinedBrandedDeck, options.MaxSlides);
+            var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
+            if (!File.Exists(sourcePath))
+            {
+                throw new PptxValidationException("source_expired", "The source template is no longer available.");
+            }
+
+            return await SubmitFromPathAsync(
+                caller,
+                sourceJob.SourceFileId,
+                sourcePath,
+                JobKind.CreateBrandedVisualDeck,
+                branded with { Deck = refinedBrandedDeck },
+                cancellationToken).ConfigureAwait(false);
         }
 
         var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
@@ -119,9 +164,38 @@ public sealed class JobService(
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<string> GetLatestSuccessfulVisualJobIdAsync(
+        CallerContext caller,
+        CancellationToken cancellationToken)
+    {
+        JobRecord? latest = null;
+        await foreach (var candidate in repository.ListAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (candidate.State != JobState.Succeeded
+                || candidate.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck)
+                || !string.Equals(candidate.UserScope, caller.UserScope, StringComparison.Ordinal)
+                || !string.Equals(candidate.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (latest is null || candidate.CreatedAt > latest.CreatedAt)
+            {
+                latest = candidate;
+            }
+        }
+
+        return latest?.Id
+            ?? throw new PptxValidationException(
+                "visual_job_not_found",
+                "No successful visual deck job was found in this conversation. Create the deck before refining a slide.");
+    }
+
     public async Task<JobView> GetAsync(CallerContext caller, string jobId, CancellationToken cancellationToken)
     {
-        var job = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        var job = string.Equals(jobId, "latest", StringComparison.OrdinalIgnoreCase)
+            ? await GetLatestOwnedAsync(caller, cancellationToken).ConfigureAwait(false)
+            : await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
         var links = job.Artifacts.Select(artifact => CreateLink(job.Id, artifact)).ToArray();
         return new JobView(
             job.Id,
@@ -134,6 +208,55 @@ public sealed class JobService(
             links,
             job.ErrorCode,
             job.ErrorMessage);
+    }
+
+    public async Task<JobView?> WaitForTerminalAsync(
+        CallerContext caller,
+        string jobId,
+        TimeSpan maximumWait,
+        CancellationToken cancellationToken)
+    {
+        var startedAt = timeProvider.GetTimestamp();
+        while (timeProvider.GetElapsedTime(startedAt) < maximumWait)
+        {
+            var view = await GetAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+            if (view.Status is JobState.Succeeded or JobState.Failed or JobState.Canceled)
+            {
+                return view;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
+    private async Task<JobRecord> GetLatestOwnedAsync(
+        CallerContext caller,
+        CancellationToken cancellationToken)
+    {
+        JobRecord? latest = null;
+        await foreach (var candidate in repository.ListAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!string.Equals(candidate.UserScope, caller.UserScope, StringComparison.Ordinal)
+                || !string.Equals(candidate.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (latest is null
+                || candidate.CreatedAt > latest.CreatedAt
+                || (candidate.CreatedAt == latest.CreatedAt
+                    && string.CompareOrdinal(candidate.Id, latest.Id) > 0))
+            {
+                latest = candidate;
+            }
+        }
+
+        return latest
+            ?? throw new PptxValidationException(
+                "job_not_found",
+                "No PowerPoint job was found in this conversation.");
     }
 
     public async Task<bool> CancelAsync(CallerContext caller, string jobId, CancellationToken cancellationToken)

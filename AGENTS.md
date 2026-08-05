@@ -26,8 +26,10 @@
 - `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。
 - テンプレートのリストは `DeckField.paragraphs` / `TemplateField.paragraphs` を使い、1項目1段落で `Plain`、`Bullet`、`Numbered` と0〜4の `level` を指定する。本文へ `■`、`・`、`1.` 等を手入力しない。
 - `pptx_analyze` の `theme` はaccent1〜3、light1、dark1、日本語優先の見出し・本文フォントを返す。白紙生成へ企業スタイルを移す場合はこの値を `VisualDeckSpec.theme` に使う。
+- 企業テンプレートで華やかな新規資料を作る場合は `pptx_create_branded_visual_deck` を既定とする。プレースホルダー0個のレイアウトへVisual Deckを接続し、マスター、ロゴ、フッターと編集可能な図形・グラフを両立する。`pptx_create_deck` は既存プレースホルダー配置への厳密な流し込みが明示された場合だけ使う。
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。
-- 白紙資料の視覚修正は `pptx_refine_visual_deck` へ問題ページだけを渡す。元資料全体を再送しない。
+- Bedrockから白紙資料とブランドVisual Deckを視覚修正する場合は、`pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡し、各成功後に `jobId=latest` で次ページを直す。修正は累積し、元テンプレートとレイアウトもジョブから再利用する。単一ページ修正が`Succeeded`を直接返した場合は`pptx_get_job`を重ねず、LibreChatの再帰上限を節約する。`pptx_refine_visual_deck` の一括配列は確実に構造化入力できるクライアント向けに残す。
+- `pptx_get_job(jobId=latest)` は同じ利用者・会話の直近ジョブを状態にかかわらず返す。逐次修正の入力解決は成功済みVisual Deckだけを対象とするため、両者の `latest` の意味を混同しない。
 - Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。
 
 ## セキュリティと制約
@@ -49,5 +51,5 @@
 - `p:ph` の `type` 属性は省略可能である。`PlaceholderShape.Type?.InnerText` を読み、省略時は `body` として扱う。存在しない型付き属性を `GetAttribute` で読むと Open XML SDK が例外を返す。
 - Bedrock は PPTX 添付をモデル入力へ渡さない。LibreChat 上で `file_id` が会話に提示されない場合に備え、PPTX入力ツールの `sourceFileId` 省略時は呼出ユーザー配下の最新アップロードを解決する。明示された `file_id` は常に優先する。
 - `pptx_analyze`の`layout_id`/`shape_id`/`placeholder_index`を作成・編集ツールへ直接コピーできるよう、対応するネスト入力キーもsnake_caseで維持する。`pptx_create_deck`は完成版の全ページを必須`slides`へまとめ、`sourceFileId`だけの呼出しを許容する説明にしない。
-- Bedrockが大きな`pptx_create_deck`を空引数で先行実行する場合は、スキーマ検証エラーではなく`input_required`を返して全`slides`付き再実行を促す。視覚修正では全仕様を再送せず、`pptx_refine_deck`へ変更ページだけを渡して元ジョブの仕様を再利用する。
+- Bedrockが大きな作成ツールを空引数で先行実行する場合は、スキーマ検証エラーではなく`input_required`を返して完全入力での再実行を促す。Visual Deckの自動修正は大きな`revisions`配列を避け、必須`revision`を持つ`pptx_refine_visual_slide`で1ページずつ逐次適用する。
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。

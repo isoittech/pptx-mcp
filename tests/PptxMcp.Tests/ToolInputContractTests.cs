@@ -174,6 +174,51 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void BrandedVisualDeckContractPreservesCorporateChromeAndSupportsAutoLayout()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.CreateBrandedVisualDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var toolDescription = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        var layoutDescription = method
+            .GetParameters()
+            .Single(parameter => parameter.Name == "templateLayoutId")
+            .GetCustomAttribute<DescriptionAttribute>()?
+            .Description;
+
+        Assert.Contains("マスター", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("ロゴ", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("フッター", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("auto", layoutDescription, StringComparison.Ordinal);
+
+        var specification = new BrandedVisualDeckSpec(
+            new VisualDeckSpec(
+                "ブランド資料",
+                [new VisualSlideSpec(VisualSlideKind.Title, "タイトル")]),
+            "/ppt/slideLayouts/slideLayout14.xml");
+        var json = JsonSerializer.Serialize(specification, SerializerOptions);
+
+        Assert.Contains("\"template_layout_id\"", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("templateLayoutId", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SingleSlideRefinementGuidanceAvoidsRedundantPolling()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.RefineVisualSlideAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.Contains("Succeededならpptx_get_jobを呼ばず", description, StringComparison.Ordinal);
+        Assert.Contains("30秒以内に完了しない場合だけ", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CreateDeckReturnsActionableInputRequestForEmptyBedrockCall()
     {
         var result = await PowerPointTools.CreateDeckAsync(
@@ -217,6 +262,34 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public async Task CreateVisualDeckReturnsActionableInputRequestForEmptyBedrockCall()
+    {
+        var result = await PowerPointTools.CreateVisualDeckAsync(
+            null!,
+            null!,
+            CancellationToken.None);
+
+        var inputRequest = Assert.IsType<ToolInputRequest>(result);
+        Assert.Equal("input_required", inputRequest.Status);
+        Assert.Equal("pptx_create_visual_deck", inputRequest.Tool);
+        Assert.Equal(["deck"], inputRequest.RequiredArguments);
+    }
+
+    [Fact]
+    public async Task CreateBrandedVisualDeckReturnsActionableInputRequestForEmptyBedrockCall()
+    {
+        var result = await PowerPointTools.CreateBrandedVisualDeckAsync(
+            null!,
+            null!,
+            CancellationToken.None);
+
+        var inputRequest = Assert.IsType<ToolInputRequest>(result);
+        Assert.Equal("input_required", inputRequest.Status);
+        Assert.Equal("pptx_create_branded_visual_deck", inputRequest.Tool);
+        Assert.Equal(["deck"], inputRequest.RequiredArguments);
+    }
+
+    [Fact]
     public void VisualValidationErrorsExposeTheExactFieldFailureToTheModel()
     {
         var error = new ToolValidationError(
@@ -231,5 +304,23 @@ public sealed class ToolInputContractTests
         Assert.Contains("\"status\":\"invalid_input\"", json, StringComparison.Ordinal);
         Assert.Contains("\"code\":\"visual_content_missing\"", json, StringComparison.Ordinal);
         Assert.Contains("slides[9].body", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SingleSlideRefinementIsRequiredAndDefaultsToLatestJob()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.RefineVisualSlideAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var revision = method.GetParameters().Single(parameter => parameter.Name == "revision");
+        var jobId = method.GetParameters().Single(parameter => parameter.Name == "jobId");
+        var toolDescription = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.False(revision.HasDefaultValue);
+        Assert.Equal("latest", jobId.DefaultValue);
+        Assert.Contains("1枚", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("累積", toolDescription, StringComparison.Ordinal);
     }
 }

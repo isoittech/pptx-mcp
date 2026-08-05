@@ -288,4 +288,74 @@ public sealed class OpenXmlPresentationEngineTests
 
         Assert.Equal("invalid_deck_spec", error.Code);
     }
+
+    [Fact]
+    public async Task ComposesVisualSlidesOntoBlankCorporateLayout()
+    {
+        var template = TestPresentationFactory.CreateBlankBrandedTemplate();
+        var visual = TestPresentationFactory.Create("VISUAL CONTENT");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            var result = await new OpenXmlPresentationEngine().CreateBrandedVisualDeckAsync(
+                template,
+                visual,
+                destination,
+                "auto",
+                CancellationToken.None);
+
+            using var document = PresentationDocument.Open(destination, false);
+            var presentationPart = document.PresentationPart!;
+            var slide = Assert.Single(presentationPart.SlideParts);
+            var layout = slide.SlideLayoutPart!;
+
+            Assert.Equal(1, result.SlideCount);
+            Assert.Equal("白紙（フッター有）", result.TemplateLayoutName);
+            Assert.Equal(layout.Uri.ToString(), result.TemplateLayoutId);
+            Assert.Equal(
+                "VISUAL CONTENT",
+                string.Concat(slide.Slide!.Descendants<A.Text>().Select(static text => text.Text)));
+            Assert.Contains(
+                "BRAND FOOTER",
+                string.Concat(layout.SlideLayout!.Descendants<A.Text>().Select(static text => text.Text)),
+                StringComparison.Ordinal);
+            Assert.Single(presentationPart.SlideMasterParts);
+            Assert.Same(presentationPart.SlideMasterParts.Single(), layout.SlideMasterPart);
+        }
+        finally
+        {
+            File.Delete(template);
+            File.Delete(visual);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
+    public async Task RejectsPlaceholderLayoutForBrandedVisualComposition()
+    {
+        var template = TestPresentationFactory.Create("template guide");
+        var visual = TestPresentationFactory.Create("VISUAL CONTENT");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            var engine = new OpenXmlPresentationEngine();
+            var layout = Assert.Single((await engine.AnalyzeAsync(template, CancellationToken.None)).Layouts);
+
+            var error = await Assert.ThrowsAsync<PptxValidationException>(() =>
+                engine.CreateBrandedVisualDeckAsync(
+                    template,
+                    visual,
+                    destination,
+                    layout.LayoutId,
+                    CancellationToken.None));
+
+            Assert.Equal("hybrid_layout_not_blank", error.Code);
+        }
+        finally
+        {
+            File.Delete(template);
+            File.Delete(visual);
+            File.Delete(destination);
+        }
+    }
 }

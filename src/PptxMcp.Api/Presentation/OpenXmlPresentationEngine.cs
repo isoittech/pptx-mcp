@@ -414,9 +414,176 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         return new DeckCreationResult(slides.Count, populatedFieldCount, slides.Select(static slide => slide.LayoutId).ToArray());
     }
 
+    public async Task<BrandedVisualCompositionResult> CreateBrandedVisualDeckAsync(
+        string templatePath,
+        string visualDeckPath,
+        string destinationPath,
+        string templateLayoutId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(templateLayoutId) || templateLayoutId.Length > MaxSelectorCharacters)
+        {
+            throw new PptxValidationException(
+                "invalid_template_layout",
+                "Specify 'auto' or an exact blank template layout_id returned by pptx_analyze.");
+        }
+
+        await CopyFileAsync(templatePath, destinationPath, cancellationToken).ConfigureAwait(false);
+        using var visualDocument = PresentationDocument.Open(visualDeckPath, false);
+        using var destinationDocument = OpenForSurgicalEdit(destinationPath);
+        var visualPresentationPart = GetPresentationPart(visualDocument);
+        var destinationPresentationPart = GetPresentationPart(destinationDocument);
+        EnsureCompatibleSlideSize(visualPresentationPart, destinationPresentationPart);
+
+        var selectedLayout = SelectBrandedVisualLayout(destinationPresentationPart, templateLayoutId);
+        var layoutName = selectedLayout.SlideLayout?.CommonSlideData?.Name?.Value ?? string.Empty;
+        var visualSlides = GetSlides(visualPresentationPart).ToArray();
+        if (visualSlides.Length is <= 0 or > 50)
+        {
+            throw new PptxValidationException(
+                "invalid_visual_deck",
+                "The visual deck must contain between 1 and 50 slides.");
+        }
+
+        var presentation = destinationPresentationPart.Presentation
+            ?? throw new PptxValidationException("invalid_pptx", "The presentation root is missing.");
+        var slideIdList = presentation.SlideIdList
+            ?? presentation.InsertAfter(new P.SlideIdList(), presentation.HandoutMasterIdList);
+        var oldSlideIds = slideIdList.Elements<P.SlideId>().ToArray();
+        var nextSlideId = Math.Max(
+            256U,
+            oldSlideIds.Select(static slideId => slideId.Id?.Value ?? 255U).DefaultIfEmpty(255U).Max() + 1U);
+        foreach (var slideId in oldSlideIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var relationshipId = slideId.RelationshipId?.Value;
+            slideId.Remove();
+            if (relationshipId is not null && destinationPresentationPart.TryGetPartById(relationshipId, out var oldSlidePart))
+            {
+                destinationPresentationPart.DeletePart(oldSlidePart);
+            }
+        }
+
+        foreach (var visualSlide in visualSlides)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var importedSlide = destinationPresentationPart.AddPart(visualSlide);
+            var importedLayout = importedSlide.SlideLayoutPart;
+            if (importedLayout is not null && !ReferenceEquals(importedLayout, selectedLayout))
+            {
+                importedSlide.DeletePart(importedLayout);
+            }
+
+            if (!ReferenceEquals(importedSlide.SlideLayoutPart, selectedLayout))
+            {
+                importedSlide.AddPart(selectedLayout);
+            }
+
+            var relationshipId = destinationPresentationPart.GetIdOfPart(importedSlide);
+            slideIdList.Append(new P.SlideId { Id = nextSlideId++, RelationshipId = relationshipId });
+        }
+
+        presentation.Save();
+        return new BrandedVisualCompositionResult(
+            visualSlides.Length,
+            selectedLayout.Uri.ToString(),
+            layoutName);
+    }
+
     private static PresentationPart GetPresentationPart(PresentationDocument document) =>
         document.PresentationPart
         ?? throw new PptxValidationException("invalid_pptx", "The PPTX does not contain a presentation part.");
+
+    private static SlideLayoutPart SelectBrandedVisualLayout(
+        PresentationPart presentationPart,
+        string requestedLayoutId)
+    {
+        var layouts = presentationPart.SlideMasterParts
+            .SelectMany(static master => master.SlideLayoutParts)
+            .ToArray();
+        SlideLayoutPart? selected;
+        if (!string.Equals(requestedLayoutId, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            selected = layouts.SingleOrDefault(layout =>
+                string.Equals(layout.Uri.ToString(), requestedLayoutId, StringComparison.Ordinal));
+            if (selected is null)
+            {
+                throw new PptxValidationException(
+                    "layout_not_found",
+                    $"Layout '{requestedLayoutId}' was not found in the template.");
+            }
+        }
+        else
+        {
+            selected = layouts
+                .Where(static layout => !layout.SlideLayout!.Descendants<P.PlaceholderShape>().Any())
+                .OrderByDescending(ScoreBrandedVisualLayout)
+                .ThenBy(static layout => layout.Uri.ToString(), StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (selected is null)
+            {
+                throw new PptxValidationException(
+                    "blank_layout_not_found",
+                    "The template has no blank layout. Add a blank or blank-with-footer layout, or use pptx_create_visual_deck.");
+            }
+        }
+
+        if (selected.SlideLayout!.Descendants<P.PlaceholderShape>().Any())
+        {
+            throw new PptxValidationException(
+                "hybrid_layout_not_blank",
+                "The branded visual deck requires a layout with zero placeholders so template text cannot overlap visual content.");
+        }
+
+        return selected;
+    }
+
+    private static int ScoreBrandedVisualLayout(SlideLayoutPart layout)
+    {
+        var slideLayout = layout.SlideLayout!;
+        var name = slideLayout.CommonSlideData?.Name?.Value ?? string.Empty;
+        var score = name.Contains("フッター", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("footer", StringComparison.OrdinalIgnoreCase)
+                ? 100
+                : 0;
+        if (name.Contains("白紙", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("blank", StringComparison.OrdinalIgnoreCase))
+        {
+            score += 50;
+        }
+
+        if (slideLayout.Descendants<P.Picture>().Any())
+        {
+            score -= 100;
+        }
+
+        return score;
+    }
+
+    private static void EnsureCompatibleSlideSize(
+        PresentationPart visualPresentationPart,
+        PresentationPart templatePresentationPart)
+    {
+        var visualSize = visualPresentationPart.Presentation?.SlideSize;
+        var templateSize = templatePresentationPart.Presentation?.SlideSize;
+        var visualWidth = visualSize?.Cx?.Value;
+        var visualHeight = visualSize?.Cy?.Value;
+        var templateWidth = templateSize?.Cx?.Value;
+        var templateHeight = templateSize?.Cy?.Value;
+        if (visualWidth is null || visualHeight is null || templateWidth is null || templateHeight is null)
+        {
+            throw new PptxValidationException("slide_size_missing", "Both presentations must define a slide size.");
+        }
+
+        var visualRatio = (double)visualWidth.Value / visualHeight.Value;
+        var templateRatio = (double)templateWidth.Value / templateHeight.Value;
+        if (Math.Abs(visualRatio - templateRatio) > 0.01)
+        {
+            throw new PptxValidationException(
+                "slide_size_incompatible",
+                "Branded visual generation currently requires a 16:9-compatible template.");
+        }
+    }
 
     private static PresentationDocument OpenForSurgicalEdit(string path) =>
         PresentationDocument.Open(path, true, new OpenSettings { AutoSave = false });

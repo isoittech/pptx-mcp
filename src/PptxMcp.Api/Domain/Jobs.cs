@@ -13,6 +13,7 @@ public enum JobKind
     PopulateTemplate,
     CreateDeck,
     CreateVisualDeck,
+    CreateBrandedVisualDeck,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]

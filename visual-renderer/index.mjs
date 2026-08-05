@@ -11,6 +11,7 @@ if (!specificationPath || !outputPath) {
 }
 
 const spec = JSON.parse(await readFile(specificationPath, "utf8"));
+const templateChrome = spec.templateChrome === true;
 if (!Array.isArray(spec.slides) || spec.slides.length < 1 || spec.slides.length > 50) {
   throw new Error("The visual deck must contain between 1 and 50 slides.");
 }
@@ -364,7 +365,9 @@ function renderMetrics(slide, data, index) {
     return;
   }
 
-  const columns = metrics.length === 3 ? 3 : 2;
+  // Five or six metrics use a compact 3x2 grid. This is a common model output
+  // for risk-signal dashboards and remains readable without discarding items.
+  const columns = metrics.length === 3 || metrics.length >= 5 ? 3 : 2;
   const rows = Math.ceil(metrics.length / columns);
   const gap = 0.24;
   const cardWidth = (11.93 - gap * (columns - 1)) / columns;
@@ -899,11 +902,13 @@ function contentBase(slide, data, index) {
       margin: 0, fit: "shrink",
     });
   }
-  slide.addText(String(index + 1).padStart(2, "0"), {
-    x: 11.72, y: 0.42, w: 0.8, h: 0.42,
-    fontFace: theme.font, fontSize: scaled(13), bold: true,
-    color: theme.secondary, transparency: 20, margin: 0, align: "right",
-  });
+  if (!templateChrome) {
+    slide.addText(String(index + 1).padStart(2, "0"), {
+      x: 11.72, y: 0.42, w: 0.8, h: 0.42,
+      fontFace: theme.font, fontSize: scaled(13), bold: true,
+      color: theme.secondary, transparency: 20, margin: 0, align: "right",
+    });
+  }
   footer(slide, index, false);
 }
 
@@ -912,6 +917,10 @@ function background(slide, color) {
 }
 
 function footer(slide, index, inverse) {
+  if (templateChrome) {
+    return;
+  }
+
   const color = inverse ? theme.onPrimary : theme.muted;
   slide.addText(spec.title, {
     x: 0.7, y: 7.12, w: 8.6, h: 0.18,

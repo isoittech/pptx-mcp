@@ -6,6 +6,46 @@ namespace PptxMcp.Tests;
 public sealed class VisualDeckValidatorTests
 {
     [Fact]
+    public void AppliesCorporateThemeWithoutDiscardingCreativeDirection()
+    {
+        var deck = new VisualDeckSpec(
+            "事業計画",
+            [new VisualSlideSpec(VisualSlideKind.Title, "成長戦略")],
+            new VisualThemeSpec("aurora", AccentColor: "#ABCDEF"),
+            Design: new VisualDesignSpec("editorial", "spacious", "organic"));
+        var templateTheme = new PresentationThemeSummary(
+            "#112233",
+            "#445566",
+            "#778899",
+            "#FFFFFF",
+            "#101010",
+            "Corporate Heading",
+            "Corporate Body",
+            []);
+
+        var result = VisualDeckBranding.ApplyTemplateTheme(deck, templateTheme);
+
+        Assert.Equal("aurora", result.Theme!.Preset);
+        Assert.Equal("#112233", result.Theme.PrimaryColor);
+        Assert.Equal("#445566", result.Theme.SecondaryColor);
+        Assert.Equal("#778899", result.Theme.AccentColor);
+        Assert.Equal("#FFFFFF", result.Theme.BackgroundColor);
+        Assert.Equal("#101010", result.Theme.TextColor);
+        Assert.Equal("Corporate Body", result.Theme.FontFace);
+        Assert.Equal(deck.Design, result.Design);
+    }
+
+    [Fact]
+    public void LeavesVisualDeckUnchangedWhenTemplateHasNoTheme()
+    {
+        var deck = new VisualDeckSpec(
+            "事業計画",
+            [new VisualSlideSpec(VisualSlideKind.Title, "成長戦略")]);
+
+        Assert.Same(deck, VisualDeckBranding.ApplyTemplateTheme(deck, null));
+    }
+
+    [Fact]
     public void AcceptsSemanticLayoutsAndEditableChartData()
     {
         var deck = new VisualDeckSpec(
@@ -197,6 +237,58 @@ public sealed class VisualDeckValidatorTests
         var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
 
         Assert.Equal("visual_metric_tone_invalid", error.Code);
+    }
+
+    [Fact]
+    public void AcceptsSixMetricsForAStandaloneMetricsGrid()
+    {
+        var deck = new VisualDeckSpec(
+            "リスク指標",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Metrics,
+                    "兆候ダッシュボード",
+                    Metrics:
+                    [
+                        new VisualMetricSpec("1", "項目A"),
+                        new VisualMetricSpec("2", "項目B"),
+                        new VisualMetricSpec("3", "項目C"),
+                        new VisualMetricSpec("4", "項目D"),
+                        new VisualMetricSpec("5", "項目E"),
+                        new VisualMetricSpec("6", "項目F"),
+                    ]),
+            ]);
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void KeepsDashboardMetricsAtFourBecauseTheChartSharesTheCanvas()
+    {
+        var deck = new VisualDeckSpec(
+            "KPI",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Dashboard,
+                    "KPIダッシュボード",
+                    Metrics:
+                    [
+                        new VisualMetricSpec("1", "項目A"),
+                        new VisualMetricSpec("2", "項目B"),
+                        new VisualMetricSpec("3", "項目C"),
+                        new VisualMetricSpec("4", "項目D"),
+                        new VisualMetricSpec("5", "項目E"),
+                    ],
+                    Chart: new VisualChartSpec(
+                        VisualChartKind.Line,
+                        ["A", "B"],
+                        [new VisualChartSeriesSpec("系列", [1, 2])])),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_content_density_invalid", error.Code);
+        Assert.Contains("more than 4", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

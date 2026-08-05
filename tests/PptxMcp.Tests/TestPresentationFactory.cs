@@ -63,6 +63,21 @@ internal static class TestPresentationFactory
         return path;
     }
 
+    public static string CreateBlankBrandedTemplate()
+    {
+        var path = Create("template guide");
+        using var document = PresentationDocument.Open(path, true);
+        var layout = document.PresentationPart!.SlideMasterParts.Single().SlideLayoutParts.Single();
+        layout.SlideLayout!.CommonSlideData = new P.CommonSlideData(
+            CreateShapeTree(CreateShape(["BRAND FOOTER"], isPlaceholder: false)))
+        {
+            Name = "白紙（フッター有）",
+        };
+        layout.SlideLayout.Type = P.SlideLayoutValues.Blank;
+        layout.SlideLayout.Save();
+        return path;
+    }
+
     private static P.Shape CreateShape(IReadOnlyList<string> runs, bool isPlaceholder)
     {
         var paragraph = new A.Paragraph();

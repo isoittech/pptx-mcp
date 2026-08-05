@@ -1,5 +1,8 @@
+using Microsoft.Extensions.Options;
+using PptxMcp.Configuration;
 using PptxMcp.Jobs;
 using PptxMcp.Domain;
+using PptxMcp.Security;
 using PptxMcp.Storage;
 
 namespace PptxMcp.Tests;
@@ -112,4 +115,130 @@ public sealed class JobServiceTests
 
         Assert.Equal("visual_deck_revision_invalid", error.Code);
     }
+
+    [Fact]
+    public async Task LatestJobIsResolvedWithinCallerConversationIncludingRunningJobs()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+
+        try
+        {
+            var (service, repository) = CreateJobService(storageRoot, uploadsRoot);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var now = DateTimeOffset.UtcNow;
+
+            await repository.CreateAsync(CreateJob(
+                "11111111111111111111111111111111",
+                caller,
+                JobState.Succeeded,
+                now.AddMinutes(-1)), CancellationToken.None);
+            await repository.CreateAsync(CreateJob(
+                "22222222222222222222222222222222",
+                caller,
+                JobState.Running,
+                now), CancellationToken.None);
+            await repository.CreateAsync(CreateJob(
+                "33333333333333333333333333333333",
+                new CallerContext("user-1", "conversation-2", null),
+                JobState.Succeeded,
+                now.AddMinutes(1)), CancellationToken.None);
+
+            var result = await service.GetAsync(caller, "latest", CancellationToken.None);
+
+            Assert.Equal("22222222222222222222222222222222", result.JobId);
+            Assert.Equal(JobState.Running, result.Status);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TerminalJobWaitReturnsImmediatelyForSucceededJob()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+
+        try
+        {
+            var (service, repository) = CreateJobService(storageRoot, uploadsRoot);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var job = CreateJob(
+                "44444444444444444444444444444444",
+                caller,
+                JobState.Succeeded,
+                DateTimeOffset.UtcNow);
+            await repository.CreateAsync(job, CancellationToken.None);
+
+            var result = await service.WaitForTerminalAsync(
+                caller,
+                job.Id,
+                TimeSpan.FromSeconds(1),
+                CancellationToken.None);
+
+            Assert.NotNull(result);
+            Assert.Equal(JobState.Succeeded, result.Status);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+        }
+    }
+
+    private static (JobService Service, FileJobRepository Repository) CreateJobService(
+        string storageRoot,
+        string uploadsRoot)
+    {
+        var options = Options.Create(new PptxMcpOptions
+        {
+            StorageRoot = storageRoot,
+            LibreChatUploadsRoot = uploadsRoot,
+            SigningKey = new string('k', 32),
+            MaxQueueDepth = 12,
+        });
+        var repository = new FileJobRepository(options);
+        var guard = new PptxPackageGuard(options);
+        var service = new JobService(
+            repository,
+            new InputFileResolver(options, guard),
+            guard,
+            new JobChannel(options),
+            new JobCancellationRegistry(),
+            new ArtifactTokenService(options, TimeProvider.System),
+            options,
+            TimeProvider.System);
+        return (service, repository);
+    }
+
+    private static JobRecord CreateJob(
+        string id,
+        CallerContext caller,
+        JobState state,
+        DateTimeOffset createdAt) =>
+        new()
+        {
+            Id = id,
+            Kind = JobKind.CreateBrandedVisualDeck,
+            State = state,
+            UserScope = caller.UserScope,
+            ConversationScope = caller.ConversationScope,
+            SourceFileId = "generated",
+            CreatedAt = createdAt,
+            ExpiresAt = createdAt.AddDays(7),
+            ProgressPercent = state == JobState.Succeeded ? 100 : 50,
+        };
 }

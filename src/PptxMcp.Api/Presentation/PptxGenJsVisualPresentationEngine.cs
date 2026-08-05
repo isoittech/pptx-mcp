@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Options;
 using PptxMcp.Configuration;
 using PptxMcp.Domain;
@@ -20,15 +21,19 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
     public async Task<VisualDeckCreationResult> CreateAsync(
         string destinationPath,
         VisualDeckSpec deck,
+        bool useTemplateChrome,
         CancellationToken cancellationToken)
     {
         var workingDirectory = Path.GetDirectoryName(destinationPath)
             ?? throw new InvalidOperationException("The presentation output directory is missing.");
         Directory.CreateDirectory(workingDirectory);
         var specificationPath = Path.Combine(workingDirectory, "visual-deck.json");
+        var specification = JsonSerializer.SerializeToNode(deck, SerializerOptions)?.AsObject()
+            ?? throw new PptxValidationException("invalid_visual_deck", "The visual deck specification could not be serialized.");
+        specification["templateChrome"] = useTemplateChrome;
         await using (var stream = File.Open(specificationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
-            await JsonSerializer.SerializeAsync(stream, deck, SerializerOptions, cancellationToken).ConfigureAwait(false);
+            await JsonSerializer.SerializeAsync<JsonNode>(stream, specification, SerializerOptions, cancellationToken).ConfigureAwait(false);
         }
 
         using var process = new Process
@@ -88,7 +93,9 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
         return new VisualDeckCreationResult(
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
-            "PptxGenJS 4.0.1 declarative renderer v2",
+            useTemplateChrome
+                ? "PptxGenJS 4.0.1 declarative renderer v2 + template chrome"
+                : "PptxGenJS 4.0.1 declarative renderer v2",
             VisualDeckValidator.GetDesignWarnings(deck));
     }
 }
