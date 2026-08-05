@@ -199,6 +199,183 @@ public sealed class JobServiceTests
         }
     }
 
+    [Fact]
+    public async Task JobWaitReturnsTerminalViewAfterBackgroundCompletion()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+
+        try
+        {
+            var (service, repository) = CreateJobService(storageRoot, uploadsRoot);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var job = CreateJob(
+                "55555555555555555555555555555555",
+                caller,
+                JobState.Running,
+                DateTimeOffset.UtcNow);
+            await repository.CreateAsync(job, CancellationToken.None);
+
+            var wait = service.WaitAsync(
+                caller,
+                "latest",
+                TimeSpan.FromSeconds(2),
+                CancellationToken.None);
+            await Task.Delay(100);
+            await repository.UpdateAsync(
+                job.Id,
+                current => current with
+                {
+                    State = JobState.Succeeded,
+                    ProgressPercent = 100,
+                    CompletedAt = DateTimeOffset.UtcNow,
+                },
+                CancellationToken.None);
+
+            var result = await wait;
+
+            Assert.Equal(job.Id, result.JobId);
+            Assert.Equal(JobState.Succeeded, result.Status);
+            Assert.Equal(100, result.ProgressPercent);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VisualDeckUsesConfiguredDefaultTemplateWithoutUpload()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        var templatesRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-templates-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+        Directory.CreateDirectory(templatesRoot);
+        File.Move(
+            TestPresentationFactory.CreateBlankBrandedTemplate(),
+            Path.Combine(templatesRoot, "organization-default.pptx"));
+
+        try
+        {
+            var options = Options.Create(new PptxMcpOptions
+            {
+                StorageRoot = storageRoot,
+                LibreChatUploadsRoot = uploadsRoot,
+                TemplatesRoot = templatesRoot,
+                DefaultTemplateId = "organization-default",
+                SigningKey = new string('k', 32),
+                MaxQueueDepth = 12,
+            });
+            var repository = new FileJobRepository(options);
+            var guard = new PptxPackageGuard(options);
+            var service = new JobService(
+                repository,
+                new InputFileResolver(options, guard),
+                new TemplateRegistry(options, guard),
+                guard,
+                new JobChannel(options),
+                new JobCancellationRegistry(),
+                new ArtifactTokenService(options, TimeProvider.System),
+                options,
+                TimeProvider.System);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var deck = new VisualDeckSpec(
+                "既定テンプレート",
+                [new VisualSlideSpec(VisualSlideKind.Title, "タイトル")]);
+
+            var receipt = await service.SubmitVisualDeckAsync(caller, deck, true, CancellationToken.None);
+            var job = await repository.GetAsync(receipt.JobId, CancellationToken.None);
+
+            Assert.NotNull(job);
+            Assert.Equal(JobKind.CreateBrandedVisualDeck, job.Kind);
+            Assert.Equal("organization-default", job.SourceFileId);
+            Assert.True(File.Exists(Path.Combine(repository.GetJobDirectory(job.Id), "source.pptx")));
+
+            var analysisReceipt = await service.SubmitAnalyzeAsync(caller, "default", CancellationToken.None);
+            var analysisJob = await repository.GetAsync(analysisReceipt.JobId, CancellationToken.None);
+
+            Assert.NotNull(analysisJob);
+            Assert.Equal(JobKind.Analyze, analysisJob.Kind);
+            Assert.Equal("organization-default", analysisJob.SourceFileId);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+            Directory.Delete(templatesRoot, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task VisualDeckCanExplicitlyBypassConfiguredDefaultTemplate()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        var templatesRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-templates-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+        Directory.CreateDirectory(templatesRoot);
+        File.Move(
+            TestPresentationFactory.CreateBlankBrandedTemplate(),
+            Path.Combine(templatesRoot, "organization-default.pptx"));
+
+        try
+        {
+            var options = Options.Create(new PptxMcpOptions
+            {
+                StorageRoot = storageRoot,
+                LibreChatUploadsRoot = uploadsRoot,
+                TemplatesRoot = templatesRoot,
+                DefaultTemplateId = "organization-default",
+                SigningKey = new string('k', 32),
+                MaxQueueDepth = 12,
+            });
+            var repository = new FileJobRepository(options);
+            var guard = new PptxPackageGuard(options);
+            var service = new JobService(
+                repository,
+                new InputFileResolver(options, guard),
+                new TemplateRegistry(options, guard),
+                guard,
+                new JobChannel(options),
+                new JobCancellationRegistry(),
+                new ArtifactTokenService(options, TimeProvider.System),
+                options,
+                TimeProvider.System);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var deck = new VisualDeckSpec(
+                "テンプレートなし",
+                [new VisualSlideSpec(VisualSlideKind.Title, "タイトル")]);
+
+            var receipt = await service.SubmitVisualDeckAsync(caller, deck, false, CancellationToken.None);
+            var job = await repository.GetAsync(receipt.JobId, CancellationToken.None);
+
+            Assert.NotNull(job);
+            Assert.Equal(JobKind.CreateVisualDeck, job.Kind);
+            Assert.Equal("generated", job.SourceFileId);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+            Directory.Delete(templatesRoot, recursive: true);
+        }
+    }
+
     private static (JobService Service, FileJobRepository Repository) CreateJobService(
         string storageRoot,
         string uploadsRoot)
@@ -215,6 +392,7 @@ public sealed class JobServiceTests
         var service = new JobService(
             repository,
             new InputFileResolver(options, guard),
+            new TemplateRegistry(options, guard),
             guard,
             new JobChannel(options),
             new JobCancellationRegistry(),

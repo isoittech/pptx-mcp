@@ -22,6 +22,12 @@ LibreChat側にも個別ファイル30MBの上限を設定し、リバースプ�
 
 S3等へ移行する場合は `InputFileResolver` を、LibreChatの認証済み内部ファイル取得APIを呼ぶ実装へ交換します。MCPツールから任意URLを取得する方式にはしません。
 
+## 既定テンプレートと初回案内
+
+既定テンプレートはLibreChatのアップロード領域ではなく、管理者が用意した非公開ディレクトリからMCPコンテナへ読み取り専用でマウントします。`PPTX_MCP_DEFAULT_TEMPLATE_ID` に対応する `<template-id>.pptx` を配置してください。起動時に検証・解析するため、通常の新規作成では利用者による添付も `pptx_analyze` の待機も不要です。
+
+導入環境固有の案内文は `PPTX_MCP_FIRST_ASSISTANT_NOTICE` からMCPサーバー指示へ注入できます。LibreChat側は `serverInstructions: true` を維持してください。これは新規チャット画面の `customWelcome` ではなく、最初のユーザー可視assistant応答に一度だけ案内を含めるようモデルへ指示する方式です。実際の文言は導入側で管理し、OSS設定の既定値は空です。
+
 ## 成果物公開
 
 `PPTX_MCP_PUBLIC_BASE_URL` は利用者のブラウザーから到達可能なHTTPS URLです。次の経路だけをリバースプロキシで公開します。
@@ -38,12 +44,14 @@ GET /artifacts/{job_id}/{file_name}?token=...
 
 - 資料編集前に `pptx_analyze` を実行する。
 - 会話に`file_id`が提示されていなければ`sourceFileId`を省略し、最新アップロードを使う。
-- 企業テンプレートを使う新規資料で、マスター、ロゴ、フッターを保ちながらカード、KPI、工程、マトリクス、グラフ等を活用する場合は `pptx_create_branded_visual_deck` を使う。`templateLayoutId` は通常 `auto` とし、テーマ色やフォントをモデル側で転記しない。
+- 通常の新規資料は `pptx_create_visual_deck` を使う。既定テンプレートが登録されていれば `useDefaultTemplate` の既定値 `true` によりマスター、ロゴ、フッター、テーマが自動適用されるため、事前解析しない。利用者がテンプレート不要と明示した場合だけ `false` にする。
+- 添付した別テンプレートを使う新規資料では、先にそのファイルを解析し、`pptx_create_branded_visual_deck` へ明示的な `sourceFileId`（不明なら `latest`）を渡す。`templateLayoutId` は通常 `auto` とし、その処理だけ導入環境の既定テンプレートを上書きする。
 - 企業テンプレートの既存プレースホルダー配置へ厳密に流し込むことが明示された場合だけ、解析結果の `layout_id` とプレースホルダー `shape_id` を一字も変更せず `pptx_create_deck` に渡す。動作上必須の`slides`へ完成版の全ページをまとめ、各要素を`layout_id`/`fields`、各フィールドを`text`または`paragraphs`のどちらか一方と`shape_id`（必要時のみ`shape_name`/`placeholder_index`）のsnake_caseで指定する。箇条書きや番号を文字として手入力しない。`sourceFileId`だけで呼ばない。Bedrockから空引数が先行した場合は`input_required`応答を受け、全`slides`付きで直ちに再実行する。
-- 白紙からの新規資料では、内容ごとに意味ベースのレイアウトを選び、`design`とスライド単位の`variant`で構図を指定して `pptx_create_visual_deck` を実行する。6枚以上では4種類以上の構図を使い、単純な箇条書きを補助用途に限定する。
+- 新規資料では、内容ごとに意味ベースのレイアウトを選び、`design`とスライド単位の`variant`で構図を指定して `pptx_create_visual_deck` を実行する。6枚以上では4種類以上の構図を使い、単純な箇条書きを補助用途に限定する。
 - 編集対象が一意でなければ候補を列挙し、利用者の選択まで更新しない。
 - ジョブ完了後は `pptx_get_preview_images` で全スライドを1〜4枚ずつ取得し、文字切れ、重なり、可読性、余白、整列、コントラスト、情報階層、密度、バランス、一貫性を評価する。
-- 厳密なプレースホルダー資料に問題があれば`pptx_refine_deck`を使う。白紙資料とブランドVisual Deckは`pptx_refine_visual_slide`へ完全な差し替えページを1枚だけ渡し、ジョブ成功後に次の問題ページを`jobId=latest`で直す。修正は逐次累積し、大きな`revisions`配列をBedrockへ要求しない。同ツールが`Succeeded`を直接返した場合は`pptx_get_job`を呼ばず次へ進み、30秒以内に完了せずジョブ受領情報だけを返した場合に限って状態確認する。全ページを最大2巡まで自律的に再生成し、画像を取得していない場合は視覚確認済みと述べない。
+- 非同期ツールが`job_id`を返したら`pptx_wait_for_job`を使い、`pptx_get_job`を短間隔で反復しない。45秒以内に終わらない場合だけ、同じ`job_id`でもう一度待機する。
+- 厳密なプレースホルダー資料に問題があれば`pptx_refine_deck`を使う。白紙資料とブランドVisual Deckは`pptx_refine_visual_slide`へ完全な差し替えページを1枚だけ渡し、ジョブ成功後に次の問題ページを`jobId=latest`で直す。修正は逐次累積し、大きな`revisions`配列をBedrockへ要求しない。同ツールが`Succeeded`を直接返した場合は状態確認ツールを呼ばず次へ進み、30秒以内に完了せずジョブ受領情報だけを返した場合に限って`pptx_wait_for_job`を使う。全ページを最大2巡まで自律的に再生成し、画像を取得していない場合は視覚確認済みと述べない。
 - 視覚評価の完了後にPPTXダウンロードリンクを提示する。
 - MCPに情報収集を依頼しない。外部情報はLibreChat側で収集し、構造化した内容だけを渡す。
 

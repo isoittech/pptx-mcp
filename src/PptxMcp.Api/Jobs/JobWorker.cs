@@ -11,6 +11,7 @@ public sealed class JobWorker(
     JobChannel queue,
     FileJobRepository repository,
     IPresentationEngine presentationEngine,
+    PresentationAnalysisCache analysisCache,
     IVisualPresentationEngine visualPresentationEngine,
     LibreOfficeRenderer renderer,
     PptxPackageGuard packageGuard,
@@ -148,7 +149,7 @@ public sealed class JobWorker(
         {
             case JobKind.Analyze:
                 {
-                    var summary = await presentationEngine.AnalyzeAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                    var summary = await analysisCache.GetAsync(sourcePath, cancellationToken).ConfigureAwait(false);
                     return (JsonSerializer.SerializeToElement(summary, SerializerOptions), []);
                 }
 
@@ -220,7 +221,7 @@ public sealed class JobWorker(
                     var branded = job.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions)
                         ?? throw new PptxValidationException("invalid_job_payload", "Branded visual deck specifications are missing.");
                     VisualDeckValidator.Validate(branded.Deck, options.MaxSlides);
-                    var templateSummary = await presentationEngine.AnalyzeAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                    var templateSummary = await analysisCache.GetAsync(sourcePath, cancellationToken).ConfigureAwait(false);
                     var themedDeck = VisualDeckBranding.ApplyTemplateTheme(branded.Deck, templateSummary.Theme);
                     var visualPath = Path.Combine(directory, "visual-source.pptx");
                     var visualCreation = await visualPresentationEngine.CreateAsync(

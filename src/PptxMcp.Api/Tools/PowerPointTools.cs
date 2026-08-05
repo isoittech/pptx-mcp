@@ -18,14 +18,15 @@ public sealed class PowerPointTools
     {
         workflow = new[]
         {
-            "LibreChatへPPTXをアップロードする",
-            "pptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileIdを省略して最新アップロードを使う）",
+            "導入環境に既定テンプレートが登録されていれば、新規Visual Deckへ自動適用する",
+            "別テンプレートや既存資料を使う場合だけLibreChatへPPTXをアップロードする",
+            "アップロードしたPPTXはpptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileId=latestを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
             "企業テンプレートから新規作成する場合は、解析結果のlayout_idとshape_idをそのまま使い、全ページ分のslidesを1回のpptx_create_deckへ渡す",
             "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はpptx_create_branded_visual_deckを使う",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
-            "白紙から作る場合はpptx_create_visual_deckで意味ベースのレイアウトとデザイン方針を指定する",
-            "pptx_get_jobで完了を確認する",
+            "新規資料はpptx_create_visual_deckで意味ベースのレイアウトとデザイン方針を指定し、明示的に不要と言われない限り既定テンプレートを使う",
+            "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
             "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡して最大2巡まで再生成する",
             "視覚確認後にのみPPTXのダウンロードリンクを提示する",
         },
@@ -58,22 +59,22 @@ public sealed class PowerPointTools
     };
 
     [McpServerTool(Name = "pptx_analyze", ReadOnly = true, Idempotent = true),
-     Description("LibreChatにアップロード済みのPPTXを安全に検査し、編集候補、企業テーマ色、日本語フォントを非同期で解析します。file_idが不明ならsourceFileIdを省略し、そのユーザーの最新PPTXを使ってください。解析結果のthemeは白紙VisualDeckSpecのthemeへ移植できます。")]
+     Description("登録済み既定テンプレートまたはLibreChatにアップロード済みのPPTXを安全に検査し、編集候補、企業テーマ色、日本語フォントを非同期で解析します。既定テンプレートはsourceFileId=default、添付のfile_idが不明ならlatestを使ってください。既定テンプレートは起動時解析キャッシュを再利用します。解析結果のthemeは白紙VisualDeckSpecのthemeへ移植できます。")]
     public static Task<JobReceipt> AnalyzeAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。会話にfile_idが提示されていなければ省略して最新アップロードを使います。ファイル名やパスは指定しません。")]
+        [Description("既定テンプレートはdefault。添付PPTXはLibreChatのfile_id、会話にfile_idが提示されていなければlatest。ファイル名やパスは指定しません。省略時はlatest。")]
         string sourceFileId = "latest") =>
         jobs.SubmitAnalyzeAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
 
     [McpServerTool(Name = "pptx_render_preview", ReadOnly = true, Idempotent = true),
-     Description("アップロード済みPPTXの全スライドをPNGへ変換する非同期ジョブを開始します。")]
+     Description("登録済み既定テンプレートまたはアップロード済みPPTXの全スライドをPNGへ変換する非同期ジョブを開始します。")]
     public static Task<JobReceipt> RenderPreviewAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        [Description("既定テンプレートはdefault。添付PPTXはLibreChatのfile_idまたはlatest。省略時はlatest。")]
         string sourceFileId = "latest") =>
         jobs.SubmitRenderAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
 
@@ -102,15 +103,15 @@ public sealed class PowerPointTools
         jobs.SubmitPopulateTemplateAsync(callerContext.GetRequired(), sourceFileId, fields, cancellationToken);
 
     [McpServerTool(Name = "pptx_create_deck", Destructive = true),
-     Description("企業テンプレートのマスターと定義済みレイアウトを使い、1〜50枚の新規PPTXと全ページプレビューを作ります。先にpptx_analyzeとpptx_get_jobでlayout_idとplaceholderのshape_idを取得してください。通常文はtext、箇条書き・番号付き手順はparagraphsを使い、記号や番号を本文へ手入力しません。slidesは必須で、完成版の全ページを1回の呼び出しに含めます。sourceFileIdだけで呼んではいけません。slidesが欠けた呼び出しにはinput_requiredを返すので、同じツールを全slides付きで直ちに再実行してください。各layout_id、shape_id、placeholder_indexは解析結果から一字も変更せずコピーし、推測したパスやIDを作らないでください。")]
+     Description("企業テンプレートのマスターと定義済みレイアウトを使い、1〜50枚の新規PPTXと全ページプレビューを作ります。既定テンプレートにはsourceFileId=defaultを使い、厳密な既存プレースホルダー流し込みが必要な場合だけpptx_analyzeへsourceFileId=defaultを渡して起動時解析キャッシュからlayout_idとshape_idを取得します。アップロードした別テンプレートでも先にpptx_analyzeとpptx_wait_for_jobを実行してください。通常文はtext、箇条書き・番号付き手順はparagraphsを使い、記号や番号を本文へ手入力しません。slidesは必須で、完成版の全ページを1回の呼び出しに含めます。sourceFileIdだけで呼んではいけません。slidesが欠けた呼び出しにはinput_requiredを返すので、同じツールを全slides付きで直ちに再実行してください。各layout_id、shape_id、placeholder_indexは解析結果から一字も変更せずコピーし、推測したパスやIDを作らないでください。")]
     public static async Task<object> CreateDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
         [Description("動作上必須。完成版の全1〜50ページからなる配列です。各要素はlayout_idとfields、各fieldはtextまたはparagraphsのどちらか一方と解析結果のshape_id（任意でshape_nameまたはplaceholder_index）を使います。paragraphsの各項目はtext、kind=Plain/Bullet/Numbered、level=0〜4、任意のstart_atです。例: [{\"layout_id\":\"/ppt/slideLayouts/slideLayout1.xml\",\"fields\":[{\"paragraphs\":[{\"text\":\"現状把握\",\"kind\":\"Numbered\",\"level\":0}],\"shape_id\":2}]}]。キーはsnake_caseを厳守し、全ページを組み立て終えてから1回だけ呼びます。")]
         IReadOnlyList<DeckSlideSpec>? slides = null,
-        [Description("LibreChatへアップロード済みの企業テンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
-        string sourceFileId = "latest")
+        [Description("既定テンプレートはdefault。添付した別テンプレートはLibreChatのfile_id、識別子が見えない場合はlatest。省略時はdefault。")]
+        string sourceFileId = "default")
     {
         if (slides is null || slides.Count == 0)
         {
@@ -168,13 +169,15 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_create_visual_deck", Destructive = true),
-     Description("アップロード済みテンプレートを使わず、検証済みの宣言型レイアウトから華やかで編集可能な16:9 PPTXを作ります。企業テンプレートが添付され、ブランド要素も維持する依頼ではpptx_create_branded_visual_deckを優先してください。title/agenda/section/statement/cards/metrics/comparison/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分け、6枚以上では4種類以上の構図を使ってください。単純な箇条書きは補助的に限定し、各ページに図形・データ・工程・比較等の視覚的な主役を置きます。生成後はpptx_get_jobを待ち、必ずpptx_get_preview_imagesで全スライドを確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
+     Description("検証済みの宣言型レイアウトから華やかで編集可能な16:9 PPTXを作ります。導入環境に既定テンプレートがあれば自動的にマスター、ロゴ、フッター、テーマを適用します。ユーザーがテンプレート不要と明示した場合だけuseDefaultTemplate=falseにしてください。添付した別テンプレートを使う場合はpptx_create_branded_visual_deckを使います。title/agenda/section/statement/cards/metrics/comparison/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分け、6枚以上では4種類以上の構図を使ってください。単純な箇条書きは補助的に限定し、各ページに図形・データ・工程・比較等の視覚的な主役を置きます。生成後はpptx_wait_for_jobで完了を待ち、必ずpptx_get_preview_imagesで全スライドを確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
     public static async Task<object> CreateVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
         [Description("動作上必須。資料タイトル、任意のthemeとdesign、1〜50枚のスライドからなる宣言型仕様。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。design.styleはexecutive/editorial/bold/technical/playful、densityはairy/balanced/detailed、motifはgeometric/orbit/nodes/ribbon/noneです。各スライドは1枚1メッセージに絞り、variant=auto/grid/spotlight/split/cascade/editorialで構図を選べます。metric/cardのtoneはaccent/positive/success/warning/critical/danger/negative/neutral/info等の意味語または#RRGGBBを使えます。iconはinsight/target/growth/people/shield/clock/cloud/settings/data/warning/check/idea/search/compliance/decision/lock/network/document/communication/recovery/backup/legal/monitor/automationです。theme.presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyberです。")]
-        VisualDeckSpec? deck = null)
+        VisualDeckSpec? deck = null,
+        [Description("省略時true。導入環境の既定テンプレートを適用します。ユーザーがテンプレート不要と明示した場合だけfalse。")]
+        bool useDefaultTemplate = true)
     {
         if (deck is null)
         {
@@ -190,6 +193,7 @@ public sealed class PowerPointTools
             return await jobs.SubmitVisualDeckAsync(
                 callerContext.GetRequired(),
                 deck,
+                useDefaultTemplate,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (PptxValidationException exception)
@@ -199,7 +203,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_create_branded_visual_deck", Destructive = true),
-     Description("アップロード済み企業テンプレートのマスター、ロゴ、フッター、ページ設定を維持し、テンプレートから自動抽出した色と日本語フォントを適用したVisual Deckを合成します。厳密な既存プレースホルダー流し込みではなく、企業ブランドを保ちながらカード、KPI、工程、タイムライン、マトリクス、ファネル、ロードマップ、ダッシュボード、編集可能グラフ等の華やかな資料を作る場合に使います。deckにはpptx_create_visual_deckと同じ完全なVisualDeckSpecを渡します。templateLayoutIdは通常autoを使い、テンプレート内のプレースホルダー0個の白紙（フッター有を優先）レイアウトを自動選択します。生成後は全ページを視覚確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
+     Description("既定またはアップロード済みの企業テンプレートのマスター、ロゴ、フッター、ページ設定を維持し、テンプレートから自動抽出した色と日本語フォントを適用したVisual Deckを合成します。通常の新規資料ではpptx_create_visual_deckが既定テンプレートを自動適用するため、主に添付した別テンプレートを明示的に使う場合に呼びます。厳密な既存プレースホルダー流し込みではなく、企業ブランドを保ちながらカード、KPI、工程、タイムライン、マトリクス、ファネル、ロードマップ、ダッシュボード、編集可能グラフ等の華やかな資料を作る場合に使います。deckにはpptx_create_visual_deckと同じ完全なVisualDeckSpecを渡します。templateLayoutIdは通常autoを使い、テンプレート内のプレースホルダー0個の白紙（フッター有を優先）レイアウトを自動選択します。生成後は全ページを視覚確認し、問題ページをpptx_refine_visual_slideで1枚ずつ最大2巡まで修正してください。")]
     public static async Task<object> CreateBrandedVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -208,8 +212,8 @@ public sealed class PowerPointTools
         VisualDeckSpec? deck = null,
         [Description("通常はauto。明示する場合はpptx_analyzeが返したプレースホルダー0個の白紙layout_idを一字も変更せず指定します。")]
         string templateLayoutId = "auto",
-        [Description("LibreChatへアップロード済みの企業テンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
-        string sourceFileId = "latest")
+        [Description("既定テンプレートはdefault。添付した別テンプレートはLibreChatのfile_id、識別子が見えない場合はlatest。省略時はdefault。")]
+        string sourceFileId = "default")
     {
         if (deck is null)
         {
@@ -282,7 +286,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの問題ページを1枚だけ差し替えます。Bedrock/Claudeでの自動視覚リフレクションでは、大きなrevisions配列を作るpptx_refine_visual_deckよりこのツールを優先してください。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededならpptx_get_jobを呼ばず次のページへ進んでください。30秒以内に完了しない場合だけjob_idをpptx_get_jobで確認します。複数ページを1ページずつ直すと修正が累積します。全ページを最大2巡までに収束させてください。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckの問題ページを1枚だけ差し替えます。Bedrock/Claudeでの自動視覚リフレクションでは、大きなrevisions配列を作るpptx_refine_visual_deckよりこのツールを優先してください。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。全ページを最大2巡までに収束させてください。")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -318,7 +322,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_get_job", ReadOnly = true, Idempotent = true),
-     Description("PowerPointジョブの状態、解析結果、短時間有効なプレビューURLとダウンロードURLを取得します。jobId=latestでは同じ利用者・会話の直近ジョブ（待機中・実行中を含む）を安全に選びます。完了までpoll_after_secondsを目安に再実行してください。")]
+     Description("PowerPointジョブの現在状態を待たずに1回だけ取得します。障害復旧や即時確認用です。待機中・実行中ジョブの通常フローでは、短間隔でこのツールを反復せずpptx_wait_for_jobを使ってください。jobId=latestでは同じ利用者・会話の直近ジョブを安全に選びます。")]
     public static async Task<object> GetJobAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -333,6 +337,39 @@ public sealed class PowerPointTools
         catch (PptxValidationException exception)
         {
             return CreateValidationError("pptx_get_job", exception);
+        }
+    }
+
+    [McpServerTool(Name = "pptx_wait_for_job", ReadOnly = true, Idempotent = true),
+     Description("PowerPointジョブをMCPサーバー内で最大45秒待ち、終端状態になれば解析結果、プレビューURL、ダウンロードURLを返します。非同期ジョブ受領後はpptx_get_jobの短間隔ポーリングをせず、このツールを1回呼んでください。指定時間後もRunningまたはQueuedなら、同じjobIdでもう一度だけ待機できます。")]
+    public static async Task<object> WaitForJobAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        CancellationToken cancellationToken,
+        [Description("PowerPoint MCPが返したjob_id、または同じ会話の直近ジョブを選ぶlatest。省略時はlatest。")] string jobId = "latest",
+        [Description("サーバー内で待つ秒数。省略時45秒、1〜50秒。LibreChatのMCPタイムアウトより短くします。")] int waitSeconds = 45)
+    {
+        if (waitSeconds is < 1 or > 50)
+        {
+            return new ToolValidationError(
+                "invalid_input",
+                "pptx_wait_for_job",
+                "wait_seconds_invalid",
+                "waitSeconds must be between 1 and 50.",
+                "Call pptx_wait_for_job again with waitSeconds between 1 and 50.");
+        }
+
+        try
+        {
+            return await jobs.WaitAsync(
+                callerContext.GetRequired(),
+                jobId,
+                TimeSpan.FromSeconds(waitSeconds),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_wait_for_job", exception);
         }
     }
 

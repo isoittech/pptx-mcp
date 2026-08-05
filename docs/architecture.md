@@ -34,11 +34,15 @@ LibreChat uploads            ├─ Open XML SDK: Visual Deckと企業マスタ�
 
 ## 処理モデル
 
-MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込みません。更新系ツールは `job_id` を返し、`pptx_get_job` が状態、解析JSON、短時間有効な成果物URLを返します。視覚評価時だけ `pptx_get_preview_images` が指定された1〜4枚をMCP画像ブロックとして返します。サービス再起動時は実行中ジョブを待機状態へ戻して再処理します。
+MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込みません。更新系ツールは `job_id` を返し、`pptx_wait_for_job` がサーバー内で最大45秒待って状態、解析JSON、短時間有効な成果物URLを返します。`pptx_get_job`は待たない即時確認用です。視覚評価時だけ `pptx_get_preview_images` が指定された1〜4枚をMCP画像ブロックとして返します。サービス再起動時は実行中ジョブを待機状態へ戻して再処理します。
 
 ## テンプレート戦略
 
 企業テンプレートはテーマ、マスター、レイアウト、フォント、余白を正本とします。既存スライドは `slide_number + shape_id` で一意指定して更新できます。既存レイアウトへ厳密に内容を流し込む新規生成では、解析で得た `layout_id` とプレースホルダーの `shape_id` を使い、選択された定義済みレイアウトから1〜50枚のスライドを構成します。
+
+OSS本体は企業固有テンプレートを保持せず、外部マウントされた `<template-id>.pptx` と導入環境の `DefaultTemplateId` だけを扱います。既定テンプレートは起動時に安全性検査と解析を完了し、欠落・不正時はfail-closedで起動を失敗させます。解析はPPTX内容のSHA-256単位でメモリキャッシュし、ジョブ領域へコピーした同一ファイルや同じ添付ファイルの再解析を避けます。
+
+新規 `pptx_create_visual_deck` は、既定テンプレートが設定され、`useDefaultTemplate` が `true` の場合に内部でブランドVisual Deckジョブへ切り替わります。テンプレート選択をモデルのツール選択だけに依存させません。利用者が明示した添付テンプレートはその処理だけ既定値を上書きし、明示的な `useDefaultTemplate=false` は白紙生成を選択します。詳細は [ADR 0006](adr/0006-deployment-default-template.md) に記録します。
 
 華やかさとブランド保持を両立する場合は `pptx_create_branded_visual_deck` を使います。MCPが `pptx_analyze` と同じ処理でaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、Visual Deckのテーマへ適用します。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、Open XMLでテンプレートの既存スライドだけを除去し、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。`templateLayoutId=auto` は「白紙（フッター有）」を優先し、写真背景は避けます。テンプレートのマスター、ロゴ、フッター、ページ設定は成果物側に残ります。
 
@@ -48,7 +52,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 
 ## 白紙からの視覚的な生成
 
-テンプレートがない場合は `pptx_create_visual_deck` を使います。Claudeはスライドの意味に応じて次の固定レイアウトを選びます。
+`pptx_create_visual_deck` では、Claudeがスライドの意味に応じて次の固定レイアウトを選びます。既定テンプレートがない場合、または利用者が明示的に不要とした場合は白紙へ描画します。
 
 - title、agenda、section、statement、bullets
 - cards、metrics、comparison、process、timeline

@@ -10,6 +10,7 @@ namespace PptxMcp.Jobs;
 public sealed class JobService(
     FileJobRepository repository,
     InputFileResolver inputFileResolver,
+    TemplateRegistry templates,
     PptxPackageGuard packageGuard,
     JobChannel queue,
     JobCancellationRegistry cancellationRegistry,
@@ -23,14 +24,16 @@ public sealed class JobService(
     public Task<JobReceipt> SubmitAnalyzeAsync(
         CallerContext caller,
         string sourceFileId,
-        CancellationToken cancellationToken) =>
-        SubmitAsync<object>(caller, sourceFileId, JobKind.Analyze, payload: null, cancellationToken);
+        CancellationToken cancellationToken) => string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
+        ? SubmitTemplateAsync<object>(caller, sourceFileId, JobKind.Analyze, payload: null, cancellationToken)
+        : SubmitAsync<object>(caller, sourceFileId, JobKind.Analyze, payload: null, cancellationToken);
 
     public Task<JobReceipt> SubmitRenderAsync(
         CallerContext caller,
         string sourceFileId,
-        CancellationToken cancellationToken) =>
-        SubmitAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken);
+        CancellationToken cancellationToken) => string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
+        ? SubmitTemplateAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken)
+        : SubmitAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken);
 
     public Task<JobReceipt> SubmitReplaceTextAsync(
         CallerContext caller,
@@ -51,7 +54,7 @@ public sealed class JobService(
         string sourceFileId,
         IReadOnlyList<DeckSlideSpec> slides,
         CancellationToken cancellationToken) =>
-        SubmitAsync(caller, sourceFileId, JobKind.CreateDeck, slides, cancellationToken);
+        SubmitTemplateAsync(caller, sourceFileId, JobKind.CreateDeck, slides, cancellationToken);
 
     public async Task<JobReceipt> SubmitRefineDeckAsync(
         CallerContext caller,
@@ -85,13 +88,25 @@ public sealed class JobService(
             cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<JobReceipt> SubmitVisualDeckAsync(
+    public async Task<JobReceipt> SubmitVisualDeckAsync(
         CallerContext caller,
         VisualDeckSpec deck,
+        bool useDefaultTemplate,
         CancellationToken cancellationToken)
     {
         VisualDeckValidator.Validate(deck, options.MaxSlides);
-        return SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken);
+        if (!useDefaultTemplate || !templates.HasDefault)
+        {
+            return await SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await SubmitTemplateAsync(
+            caller,
+            "default",
+            JobKind.CreateBrandedVisualDeck,
+            new BrandedVisualDeckSpec(deck, "auto"),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public Task<JobReceipt> SubmitBrandedVisualDeckAsync(
@@ -109,7 +124,7 @@ public sealed class JobService(
                 "Specify 'auto' or an exact blank template layout_id returned by pptx_analyze.");
         }
 
-        return SubmitAsync(
+        return SubmitTemplateAsync(
             caller,
             sourceFileId,
             JobKind.CreateBrandedVisualDeck,
@@ -216,19 +231,46 @@ public sealed class JobService(
         TimeSpan maximumWait,
         CancellationToken cancellationToken)
     {
+        var current = await GetAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (current.Status is JobState.Succeeded or JobState.Failed or JobState.Canceled)
+        {
+            return current;
+        }
+
+        var resolvedJobId = current.JobId;
         var startedAt = timeProvider.GetTimestamp();
         while (timeProvider.GetElapsedTime(startedAt) < maximumWait)
         {
-            var view = await GetAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
-            if (view.Status is JobState.Succeeded or JobState.Failed or JobState.Canceled)
-            {
-                return view;
-            }
-
             await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+            current = await GetAsync(caller, resolvedJobId, cancellationToken).ConfigureAwait(false);
+            if (current.Status is JobState.Succeeded or JobState.Failed or JobState.Canceled)
+            {
+                return current;
+            }
         }
 
         return null;
+    }
+
+    public async Task<JobView> WaitAsync(
+        CallerContext caller,
+        string jobId,
+        TimeSpan maximumWait,
+        CancellationToken cancellationToken)
+    {
+        var initial = await GetAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        if (initial.Status is JobState.Succeeded or JobState.Failed or JobState.Canceled)
+        {
+            return initial;
+        }
+
+        var terminal = await WaitForTerminalAsync(
+            caller,
+            initial.JobId,
+            maximumWait,
+            cancellationToken).ConfigureAwait(false);
+        return terminal
+            ?? await GetAsync(caller, initial.JobId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<JobRecord> GetLatestOwnedAsync(
@@ -425,6 +467,25 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         var input = await inputFileResolver.ResolveAsync(caller, sourceFileId, cancellationToken).ConfigureAwait(false);
+        return await SubmitFromPathAsync(
+            caller,
+            input.FileId,
+            input.Path,
+            kind,
+            payload,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<JobReceipt> SubmitTemplateAsync<TPayload>(
+        CallerContext caller,
+        string sourceFileId,
+        JobKind kind,
+        TPayload? payload,
+        CancellationToken cancellationToken)
+    {
+        var input = string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
+            ? await templates.ResolveDefaultAsync(cancellationToken).ConfigureAwait(false)
+            : await inputFileResolver.ResolveAsync(caller, sourceFileId, cancellationToken).ConfigureAwait(false);
         return await SubmitFromPathAsync(
             caller,
             input.FileId,

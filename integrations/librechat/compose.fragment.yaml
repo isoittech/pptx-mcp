@@ -16,11 +16,15 @@ services:
       PptxMcp__PublicBaseUrl: ${PPTX_MCP_PUBLIC_BASE_URL}
       PptxMcp__StorageRoot: /data/pptx-mcp
       PptxMcp__LibreChatUploadsRoot: /data/librechat-uploads
+      PptxMcp__TemplatesRoot: /data/pptx-templates
+      PptxMcp__DefaultTemplateId: ${PPTX_MCP_DEFAULT_TEMPLATE_ID:-}
+      PptxMcp__FirstAssistantNotice: ${PPTX_MCP_FIRST_ASSISTANT_NOTICE:-}
     networks:
       - pptx-mcp
     volumes:
       - pptx-mcp-data:/data/pptx-mcp
       - ./uploads:/data/librechat-uploads:ro
+      - ${PPTX_MCP_TEMPLATES_PATH:-./templates}:/data/pptx-templates:ro
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777

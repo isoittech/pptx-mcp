@@ -14,6 +14,12 @@ public sealed class PptxMcpOptions
 
     public string LibreChatUploadsRoot { get; init; } = "/data/librechat-uploads";
 
+    public string TemplatesRoot { get; init; } = "/data/pptx-templates";
+
+    public string DefaultTemplateId { get; init; } = string.Empty;
+
+    public string FirstAssistantNotice { get; init; } = string.Empty;
+
     public string VisualRendererPath { get; init; } = "/app/visual-renderer/index.mjs";
 
     public long MaxFileBytes { get; init; } = 30L * 1024 * 1024;
@@ -68,6 +74,23 @@ public sealed class PptxMcpOptions
         if (!Path.IsPathFullyQualified(VisualRendererPath))
         {
             throw new InvalidOperationException("PptxMcp:VisualRendererPath must be an absolute path.");
+        }
+
+        if (!Path.IsPathFullyQualified(TemplatesRoot))
+        {
+            throw new InvalidOperationException("PptxMcp:TemplatesRoot must be an absolute path.");
+        }
+
+        if (DefaultTemplateId.Length > 128
+            || DefaultTemplateId.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_'))
+        {
+            throw new InvalidOperationException(
+                "PptxMcp:DefaultTemplateId may contain only ASCII letters, digits, hyphens, and underscores (maximum 128 characters).");
+        }
+
+        if (FirstAssistantNotice.Length > 1_000)
+        {
+            throw new InvalidOperationException("PptxMcp:FirstAssistantNotice must not exceed 1000 characters.");
         }
     }
 }

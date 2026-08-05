@@ -205,6 +205,33 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void NewDeckToolsDefaultToDeploymentTemplate()
+    {
+        var visualMethod = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.CreateVisualDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
+        var brandedMethod = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.CreateBrandedVisualDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
+        var strictMethod = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.CreateDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(visualMethod);
+        Assert.NotNull(brandedMethod);
+        Assert.NotNull(strictMethod);
+        Assert.Equal(
+            true,
+            visualMethod.GetParameters().Single(parameter => parameter.Name == "useDefaultTemplate").DefaultValue);
+        Assert.Equal(
+            "default",
+            brandedMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
+        Assert.Equal(
+            "default",
+            strictMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
+    }
+
+    [Fact]
     public void SingleSlideRefinementGuidanceAvoidsRedundantPolling()
     {
         var method = typeof(PowerPointTools).GetMethod(
@@ -214,8 +241,40 @@ public sealed class ToolInputContractTests
         Assert.NotNull(method);
         var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
-        Assert.Contains("Succeededならpptx_get_jobを呼ばず", description, StringComparison.Ordinal);
-        Assert.Contains("30秒以内に完了しない場合だけ", description, StringComparison.Ordinal);
+        Assert.Contains("Succeededなら状態確認ツールを呼ばず", description, StringComparison.Ordinal);
+        Assert.Contains("30秒以内に完了せずqueuedを返した場合だけ", description, StringComparison.Ordinal);
+        Assert.Contains("pptx_wait_for_job", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WaitForJobContractUsesBoundedServerSideWait()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.WaitForJobAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        var jobId = method.GetParameters().Single(parameter => parameter.Name == "jobId");
+        var waitSeconds = method.GetParameters().Single(parameter => parameter.Name == "waitSeconds");
+
+        Assert.Contains("短間隔ポーリング", description, StringComparison.Ordinal);
+        Assert.Equal("latest", jobId.DefaultValue);
+        Assert.Equal(45, waitSeconds.DefaultValue);
+    }
+
+    [Fact]
+    public async Task WaitForJobRejectsOutOfRangeWaitBeforeAccessingServices()
+    {
+        var result = await PowerPointTools.WaitForJobAsync(
+            null!,
+            null!,
+            CancellationToken.None,
+            waitSeconds: 51);
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal("wait_seconds_invalid", error.Code);
+        Assert.Equal("pptx_wait_for_job", error.Tool);
     }
 
     [Fact]

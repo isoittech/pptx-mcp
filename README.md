@@ -15,6 +15,8 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
 - 白紙から意味ベースの17レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
 - 企業テンプレートのマスター、ロゴ、フッター、ページ設定を保ち、テーマを自動抽出して意味ベースのVisual Deckを合成
+- 外部登録された既定テンプレートの起動時検証・事前解析と、新規資料への自動適用
+- 導入環境から任意に注入できる初回assistant案内
 - PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
 - LibreOffice と Poppler による全ページ PNG プレビュー
 - プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
@@ -32,6 +34,27 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 
 `PPTX_MCP_PUBLIC_BASE_URL` は利用者のブラウザーから到達できる HTTPS URL にしてください。MCP の内部URL `http://pptx-mcp:8080/mcp` とは別です。
 
+## 既定テンプレート
+
+既定テンプレートを使う場合は、PPTXをホスト側の非公開ディレクトリへ置き、読み取り専用でコンテナの `/data/pptx-templates` へマウントします。ファイル名は `<template-id>.pptx` とし、次を設定します。
+
+```dotenv
+PPTX_MCP_TEMPLATES_PATH=/absolute/path/to/pptx-templates
+PPTX_MCP_DEFAULT_TEMPLATE_ID=organization-default
+```
+
+テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。
+
+`pptx_create_visual_deck` は既定で `useDefaultTemplate=true` として動作し、既定テンプレートがあればブランドVisual Deckを生成します。利用者がテンプレート不要と明示した場合だけ `false` にします。添付した別テンプレートは `pptx_create_branded_visual_deck` の `sourceFileId` で明示し、その処理だけ既定値を上書きします。
+
+導入環境固有の初回案内が必要な場合は、任意の文言を次へ設定できます。
+
+```dotenv
+PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テンプレートを使用します。
+```
+
+この値はMCPサーバー指示へ追加され、会話内でまだ案内されていない場合に、最初のユーザー可視assistant応答の冒頭へ一度だけ表示するようモデルへ指示します。文言は導入環境で管理し、OSS側の既定値は空です。
+
 ## MCPツール
 
 - `pptx_get_capabilities`
@@ -46,12 +69,13 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 - `pptx_refine_visual_slide`
 - `pptx_refine_visual_deck`
 - `pptx_get_job`
+- `pptx_wait_for_job`
 - `pptx_get_preview_images`
 - `pptx_cancel_job`
 
-処理ツールはすぐに `job_id` を返します。Claude は `pptx_get_job` をポーリングし、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。`pptx_get_job` の `jobId=latest` は同じ利用者・会話にある直近ジョブ（待機中・実行中を含む）を選びます。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
+処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。`pptx_get_job`は待たない即時確認と障害復旧用です。両ツールの `jobId=latest` は同じ利用者・会話にある直近ジョブ（待機中・実行中を含む）を選びます。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
 
-白紙生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。
+新規生成の `pptx_create_visual_deck` はAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
 
 企業テンプレートを使いつつ同じ視覚表現が必要な場合は `pptx_create_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、Visual Deckを生成した後、プレースホルダーのない白紙レイアウトへ各スライドを接続します。これにより企業マスターのロゴ・フッターと、カード、工程、マトリクス、編集可能グラフ等を両立します。既存プレースホルダーへの厳密な流し込みが目的の場合だけ `pptx_create_deck` を使います。
 
