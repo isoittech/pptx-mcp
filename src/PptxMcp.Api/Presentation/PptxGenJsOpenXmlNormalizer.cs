@@ -1,4 +1,6 @@
+using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using P = DocumentFormat.OpenXml.Presentation;
@@ -48,6 +50,15 @@ internal static class PptxGenJsOpenXmlNormalizer
                 presentation.Save();
             }
 
+            foreach (var slidePart in presentationPart.SlideParts)
+            {
+                var slide = slidePart.Slide;
+                if (slide is not null && NormalizeSlide(slide) > 0)
+                {
+                    slide.Save();
+                }
+            }
+
             var chartParts = presentationPart.SlideParts
                 .SelectMany(static slidePart => slidePart.Parts
                     .Select(static relationship => relationship.OpenXmlPart)
@@ -95,6 +106,25 @@ internal static class PptxGenJsOpenXmlNormalizer
         notesMasterIds.Remove();
         presentation.InsertBefore(notesMasterIds, slideIds);
         return 1;
+    }
+
+    internal static int NormalizeSlide(P.Slide slide)
+    {
+        var correctionCount = 0;
+        foreach (var tableCellProperties in slide.Descendants<A.TableCellProperties>())
+        {
+            var anchor = tableCellProperties.GetAttribute("anchor", string.Empty);
+            if (!string.Equals(anchor.Value, "mid", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            tableCellProperties.SetAttribute(
+                new OpenXmlAttribute(string.Empty, "anchor", string.Empty, "ctr"));
+            correctionCount++;
+        }
+
+        return correctionCount;
     }
 
     internal static int NormalizeChartSpace(C.ChartSpace chartSpace)

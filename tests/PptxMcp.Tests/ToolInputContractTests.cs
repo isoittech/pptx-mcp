@@ -397,6 +397,25 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void VisualDraftSchemaExposesStructuredBriefAndScorecardVocabulary()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.AddVisualSlidesToDraft),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var schema = McpServerTool.Create(method).ProtocolTool.InputSchema.GetRawText();
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.Contains("StructuredBrief", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Scorecard", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sections", schema, StringComparison.Ordinal);
+        Assert.Contains("criteria", schema, StringComparison.Ordinal);
+        Assert.Contains("structuredBrief", description, StringComparison.Ordinal);
+        Assert.Contains("評価軸×選択肢", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OneCallVisualDeckCreationToolsAreNotExposed()
     {
         var toolNames = typeof(PowerPointTools)

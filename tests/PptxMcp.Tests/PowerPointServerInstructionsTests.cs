@@ -25,6 +25,12 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);
         Assert.Contains("remaining_slide_count is zero", instructions, StringComparison.Ordinal);
         Assert.Contains("does not expose a one-call tool", instructions, StringComparison.Ordinal);
+        Assert.Contains("StructuredBrief", instructions, StringComparison.Ordinal);
+        Assert.Contains("design.density=detailed", instructions, StringComparison.Ordinal);
+        Assert.Contains("Scorecard", instructions, StringComparison.Ordinal);
+        Assert.Contains("heading sequence tells the story", instructions, StringComparison.Ordinal);
+        Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
+        Assert.Contains("below 9 pt", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

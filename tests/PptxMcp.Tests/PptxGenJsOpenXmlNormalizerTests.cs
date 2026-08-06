@@ -1,4 +1,6 @@
+using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
+using DocumentFormat.OpenXml;
 using P = DocumentFormat.OpenXml.Presentation;
 using PptxMcp.Presentation;
 
@@ -25,6 +27,20 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
         Assert.True(
             children.IndexOf(notesMasterIds)
             < children.IndexOf(slideIds));
+    }
+
+    [Fact]
+    public void NormalizesInvalidPptxGenJsTableCellMiddleAnchor()
+    {
+        var cellProperties = new A.TableCellProperties();
+        cellProperties.SetAttribute(
+            new OpenXmlAttribute(string.Empty, "anchor", string.Empty, "mid"));
+        var slide = new P.Slide(cellProperties);
+
+        var correctionCount = PptxGenJsOpenXmlNormalizer.NormalizeSlide(slide);
+
+        Assert.Equal(1, correctionCount);
+        Assert.Equal("ctr", cellProperties.GetAttribute("anchor", string.Empty).Value);
     }
 
     [Fact]

@@ -27,6 +27,7 @@ public sealed class PowerPointTools
             "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はVisual Deckドラフトをpptx_finish_branded_visual_deckで生成する",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
             "新規資料はpptx_start_visual_deck、pptx_add_visual_slides_to_draft、pptx_finish_visual_deckの順で小分けに構成し、明示的に不要と言われない限り既定テンプレートを使う",
+            "文字量が多い説明はstructured_brief、複数案を評価軸で比べる場合はscorecardを使い、小さい文字へ一括縮小しない",
             "成功したVisual Deckへページを追加する場合はpptx_insert_visual_slidesへ追加分だけを渡し、既存ページを再送しない",
             "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
             "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡して最大2巡まで再生成する",
@@ -45,7 +46,7 @@ public sealed class PowerPointTools
             "通常シェイプとSmartArt内部テキストの置換",
             "名前付きシェイプを持つ企業テンプレートへのテキスト流し込み",
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
-            "白紙からKPI・カード・比較・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
+            "白紙からKPI・カード・比較・構造化ブリーフ・編集可能スコアカード・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
             "企業テンプレートの空白レイアウトと自動抽出したテーマをVisual Deckへ合成し、ブランド要素と編集可能な視覚表現を両立",
             "成功したVisual DeckまたはブランドVisual Deckへの1〜49ページの追加（末尾追加または指定ページ直後への挿入）",
             "LibreOfficeによる全スライドPNGプレビュー",
@@ -207,7 +208,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
-     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは直前の応答が返したnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは直前の応答が返したnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/structuredBrief/scorecard/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。文字量が多い説明は2〜3個のsectionsへ分けるstructuredBrief、評価軸×選択肢はscorecardを使います。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
     public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
@@ -215,7 +216,7 @@ public sealed class PowerPointTools
         string draftId,
         [Required, Description("このバッチの先頭ページ番号。直前の応答にあるnext_slide_numberをそのまま使います。")]
         int startSlideNumber,
-        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。metric/cardのtoneは意味語または#RRGGBB、iconは組み込み業務アイコンを使えます。")]
+        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。metric/card/section/scorecard cellのtoneは意味語または#RRGGBB、iconは組み込み業務アイコンを使えます。")]
         IReadOnlyList<VisualSlideSpec> slides)
     {
         try
@@ -463,7 +464,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
-     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・重なり・可読性に加え、単調な構図、文字中心、弱い視覚階層、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大2巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
+     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大2巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
     public static async Task<CallToolResult> GetPreviewImagesAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -487,7 +488,7 @@ public sealed class PowerPointTools
 
         content.Add(new TextContentBlock
         {
-            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck prefer pptx_refine_visual_slide with one complete replacement slide at a time. Never resend the complete deck.",
+            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck prefer pptx_refine_visual_slide with one complete replacement slide at a time. Never resend the complete deck.",
         });
         return new CallToolResult
         {

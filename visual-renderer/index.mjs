@@ -126,12 +126,56 @@ const design = {
   density: String(designInput.density ?? "balanced").toLowerCase(),
   motif: String(designInput.motif ?? "geometric").toLowerCase(),
 };
-const densityScale = design.density === "airy" ? 1.05 : design.density === "detailed" ? 0.93 : 1;
+const densityProfiles = {
+  airy: {
+    fontScale: 1.05,
+    outerX: 0.82,
+    contentTop: 2.12,
+    contentBottom: 6.5,
+    gap: 0.28,
+    panelPadding: 0.38,
+    titleY: 0.52,
+    titleHeight: 0.74,
+    subtitleY: 1.54,
+    cardBorderWidth: 0.65,
+    cardShadow: true,
+  },
+  balanced: {
+    fontScale: 1,
+    outerX: 0.7,
+    contentTop: 2.02,
+    contentBottom: 6.62,
+    gap: 0.22,
+    panelPadding: 0.3,
+    titleY: 0.46,
+    titleHeight: 0.7,
+    subtitleY: 1.48,
+    cardBorderWidth: 0.7,
+    cardShadow: true,
+  },
+  detailed: {
+    // Detailed is a distinct information-design system, not a global font shrink.
+    // It uses more of the canvas, tighter rhythm, thin rules, and no card shadows.
+    fontScale: 0.98,
+    outerX: 0.52,
+    contentTop: 1.62,
+    contentBottom: 6.9,
+    gap: 0.12,
+    panelPadding: 0.22,
+    titleY: 0.31,
+    titleHeight: 0.6,
+    subtitleY: 1.18,
+    cardBorderWidth: 0.5,
+    cardShadow: false,
+  },
+};
+const density = densityProfiles[design.density] ?? densityProfiles.balanced;
+const densityScale = density.fontScale;
 
 const pptx = new pptxgen();
 pptx.layout = "LAYOUT_WIDE";
 pptx.author = "pptx-mcp";
-pptx.company = "MSI";
+pptx.company = "pptx-mcp";
 pptx.subject = spec.subject ?? "";
 pptx.title = spec.title;
 pptx.lang = spec.language ?? "ja-JP";
@@ -201,6 +245,13 @@ for (const [index, slideSpec] of spec.slides.entries()) {
       break;
     case "closing":
       renderClosing(slide, slideSpec, index);
+      break;
+    case "structuredbrief":
+    case "structured_brief":
+      renderStructuredBrief(slide, slideSpec, index);
+      break;
+    case "scorecard":
+      renderScorecard(slide, slideSpec, index);
       break;
     default:
       throw new Error(`Unsupported slide kind: ${kind}`);
@@ -426,6 +477,312 @@ function renderComparison(slide, data, index) {
       });
     });
   });
+}
+
+function renderStructuredBrief(slide, data, index) {
+  contentBase(slide, data, index);
+  const sections = data.sections ?? [];
+  const x = density.outerX;
+  const y = density.contentTop;
+  const width = W - density.outerX * 2;
+  const height = density.contentBottom - density.contentTop;
+  const totalCharacters = sections.reduce((sum, section) => sum + briefSectionCharacterCount(section), 0);
+  const variant = String(data.variant ?? "auto").toLowerCase();
+  const useMosaic = sections.length === 3
+    && (variant === "editorial" || (variant === "auto" && totalCharacters < 600));
+
+  if (useMosaic) {
+    const leadHeight = 1.82;
+    renderBriefLeadPanel(slide, sections[0], x, y, width, leadHeight, 0);
+    const lowerY = y + leadHeight + density.gap;
+    const lowerHeight = height - leadHeight - density.gap;
+    const lowerWidth = (width - density.gap) / 2;
+    renderBriefPanel(slide, sections[1], x, lowerY, lowerWidth, lowerHeight, 1);
+    renderBriefPanel(slide, sections[2], x + lowerWidth + density.gap, lowerY, lowerWidth, lowerHeight, 2);
+  } else {
+    const panelWidth = (width - density.gap * (sections.length - 1)) / sections.length;
+    sections.forEach((section, sectionIndex) => {
+      renderBriefPanel(
+        slide,
+        section,
+        x + sectionIndex * (panelWidth + density.gap),
+        y,
+        panelWidth,
+        height,
+        sectionIndex,
+      );
+    });
+  }
+
+  if (data.takeaway) {
+    slide.addText(data.takeaway, {
+      x: density.outerX,
+      y: 6.93,
+      w: W - density.outerX * 2,
+      h: 0.22,
+      fontFace: theme.font,
+      fontSize: 9.5,
+      bold: true,
+      color: theme.secondary,
+      margin: 0,
+      align: "center",
+      fit: "shrink",
+    });
+  }
+}
+
+function renderBriefLeadPanel(slide, section, x, y, width, height, sectionIndex) {
+  const tone = toneColor(section.tone, sectionIndex);
+  const padding = density.panelPadding;
+  const bullets = section.bullets ?? [];
+  const hasBullets = bullets.length > 0;
+  const headingWidth = 2.45;
+  card(slide, x, y, width, height, "FFFFFF");
+  slide.addShape(pptx.ShapeType.rect, {
+    x, y, w: 0.08, h: height,
+    fill: { color: tone },
+    line: { color: tone, transparency: 100 },
+  });
+  slide.addText(section.heading, {
+    x: x + padding + 0.08, y: y + 0.25, w: headingWidth - padding, h: 0.48,
+    fontFace: theme.font, fontSize: 15.5, bold: true,
+    color: theme.text, margin: 0, valign: "mid", fit: "shrink",
+  });
+  if (section.highlight) {
+    slide.addText(section.highlight, {
+      x: x + padding + 0.08, y: y + 0.88, w: headingWidth - padding, h: 0.32,
+      fontFace: theme.font, fontSize: 10.5, bold: true,
+      color: tone, margin: 0, fit: "shrink",
+    });
+  }
+  slide.addText(String(sectionIndex + 1).padStart(2, "0"), {
+    x: x + padding + 0.08, y: y + height - 0.43, w: 0.5, h: 0.2,
+    fontFace: theme.font, fontSize: 8.5, bold: true,
+    color: tone, transparency: 20, margin: 0,
+  });
+  const dividerX = x + headingWidth + 0.15;
+  slide.addShape(pptx.ShapeType.line, {
+    x: dividerX, y: y + 0.22, w: 0, h: height - 0.44,
+    line: { color: tone, transparency: 62, width: 0.75 },
+  });
+  const contentX = dividerX + 0.28;
+  const contentWidth = width - (contentX - x) - padding;
+  const bodyWidth = hasBullets ? contentWidth * 0.64 : contentWidth;
+  if (section.body) {
+    slide.addText(section.body, {
+      x: contentX, y: y + 0.28, w: bodyWidth, h: height - 0.56,
+      fontFace: theme.font, fontSize: briefBodyFontSize(section, 12.8),
+      color: theme.text, margin: 0, valign: "mid", fit: "shrink",
+    });
+  }
+  if (hasBullets) {
+    const bulletX = contentX + bodyWidth + 0.3;
+    slide.addShape(pptx.ShapeType.line, {
+      x: bulletX - 0.16, y: y + 0.3, w: 0, h: height - 0.6,
+      line: { color: "D9E0E8", width: 0.55 },
+    });
+    addNativeBulletList(
+      slide,
+      bullets,
+      bulletX,
+      y + 0.3,
+      x + width - padding - bulletX,
+      height - 0.6,
+      briefBulletFontSize(section, 11.2),
+      "mid",
+    );
+  }
+}
+
+function renderBriefPanel(slide, section, x, y, width, height, sectionIndex) {
+  const tone = toneColor(section.tone, sectionIndex);
+  const padding = density.panelPadding;
+  const bullets = section.bullets ?? [];
+  const sectionCharacters = briefSectionCharacterCount(section);
+  const headingFontSize = sectionCharacters < 190 ? 15 : sectionCharacters < 270 ? 14 : 13;
+  card(slide, x, y, width, height, "FFFFFF");
+  slide.addShape(pptx.ShapeType.rect, {
+    x, y, w: width, h: design.density === "detailed" ? 0.07 : 0.1,
+    fill: { color: tone },
+    line: { color: tone, transparency: 100 },
+  });
+  slide.addText(section.heading, {
+    x: x + padding, y: y + 0.2, w: width - padding * 2 - 0.45, h: 0.52,
+    fontFace: theme.font, fontSize: headingFontSize, bold: true,
+    color: theme.text, margin: 0, valign: "mid", fit: "shrink",
+  });
+  slide.addText(String(sectionIndex + 1).padStart(2, "0"), {
+    x: x + width - padding - 0.36, y: y + 0.27, w: 0.36, h: 0.2,
+    fontFace: theme.font, fontSize: 8.5, bold: true,
+    color: tone, transparency: 20, margin: 0, align: "right",
+  });
+  const highlightY = y + 0.77;
+  if (section.highlight) {
+    slide.addText(section.highlight, {
+      x: x + padding, y: highlightY, w: width - padding * 2, h: 0.32,
+      fontFace: theme.font, fontSize: 10.5, bold: true,
+      color: tone, margin: 0, fit: "shrink",
+    });
+  }
+  const ruleY = section.highlight ? y + 1.15 : y + 0.88;
+  slide.addShape(pptx.ShapeType.line, {
+    x: x + padding, y: ruleY, w: width - padding * 2, h: 0,
+    line: { color: tone, transparency: 58, width: 0.75 },
+  });
+  const textTop = ruleY + 0.16;
+  const textBottom = y + height - padding;
+  const availableHeight = textBottom - textTop;
+  const hasBody = Boolean(section.body);
+  const hasBullets = bullets.length > 0;
+  const bodyFontSize = briefBodyFontSize(section, design.density === "detailed" ? 11.2 : 11.8);
+  const bodyCharactersPerLine = Math.max(16, Math.floor((width - padding * 2) * 7.2));
+  const estimatedBodyLines = hasBody ? Math.ceil([...section.body].length / bodyCharactersPerLine) : 0;
+  const estimatedBodyHeight = Math.max(0.7, estimatedBodyLines * bodyFontSize / 48 + 0.1);
+  const bodyHeight = hasBody
+    ? hasBullets ? Math.min(availableHeight - 0.68, estimatedBodyHeight) : availableHeight
+    : 0;
+  if (hasBody) {
+    slide.addText(section.body, {
+      x: x + padding, y: textTop, w: width - padding * 2, h: bodyHeight,
+      fontFace: theme.font, fontSize: bodyFontSize,
+      color: theme.text, margin: 0, valign: "top", fit: "shrink",
+    });
+  }
+  if (hasBullets) {
+    const bulletTop = hasBody ? textTop + bodyHeight + 0.1 : textTop;
+    addNativeBulletList(
+      slide,
+      bullets,
+      x + padding,
+      bulletTop,
+      width - padding * 2,
+      Math.max(0.5, textBottom - bulletTop),
+      briefBulletFontSize(section, design.density === "detailed" ? 10.2 : 11),
+      "top",
+    );
+  }
+}
+
+function briefSectionCharacterCount(section) {
+  return [...String(section.body ?? "")].length
+    + (section.bullets ?? []).reduce((sum, item) => sum + [...String(item)].length, 0);
+}
+
+function briefBodyFontSize(section, fallback) {
+  const characters = briefSectionCharacterCount(section);
+  if (characters < 150) return Math.max(fallback, 13.5);
+  if (characters < 230) return Math.max(fallback, 12.2);
+  return fallback;
+}
+
+function briefBulletFontSize(section, fallback) {
+  const characters = briefSectionCharacterCount(section);
+  if (characters < 150) return Math.max(fallback, 12.2);
+  if (characters < 230) return Math.max(fallback, 11.2);
+  return fallback;
+}
+
+function renderScorecard(slide, data, index) {
+  contentBase(slide, data, index);
+  const scorecard = data.scorecard;
+  const options = scorecard.options ?? [];
+  const criteria = scorecard.criteria ?? [];
+  const x = density.outerX;
+  const y = density.contentTop;
+  const width = W - density.outerX * 2;
+  const tableBottom = data.takeaway ? 6.6 : density.contentBottom;
+  const height = tableBottom - y;
+  const criterionWidth = design.density === "detailed" ? 1.72 : 1.92;
+  const optionWidth = (width - criterionWidth) / options.length;
+  const headerHeight = design.density === "detailed" ? 0.68 : 0.78;
+  const rowHeight = (height - headerHeight) / criteria.length;
+  const tableRows = [
+    [
+      {
+        text: "評価軸",
+        options: {
+          bold: true,
+          color: theme.onPrimary,
+          fill: { color: theme.primary },
+          align: "center",
+        },
+      },
+      ...options.map((option) => ({
+        text: option.subtitle
+          ? [
+              { text: option.title, options: { bold: true, breakLine: true, color: theme.onPrimary } },
+              { text: option.subtitle, options: { fontSize: 9, color: theme.onPrimary } },
+            ]
+          : option.title,
+        options: {
+          bold: true,
+          color: theme.onPrimary,
+          fill: { color: theme.primary },
+          align: "center",
+        },
+      })),
+    ],
+    ...criteria.map((row, rowIndex) => [
+      {
+        text: row.criterion,
+        options: {
+          bold: true,
+          color: theme.text,
+          fill: { color: rowIndex % 2 === 0 ? "EEF2F7" : "F7F9FC" },
+          align: "left",
+        },
+      },
+      ...row.cells.map((cell, cellIndex) => {
+        const tone = toneColor(cell.tone, cellIndex);
+        return {
+          text: cell.detail
+            ? [
+                { text: `● ${cell.rating}`, options: { bold: true, breakLine: true, color: tone } },
+                { text: cell.detail, options: { fontSize: design.density === "detailed" ? 9 : 9.5, color: theme.muted } },
+              ]
+            : `● ${cell.rating}`,
+          options: {
+            bold: !cell.detail,
+            color: tone,
+            fill: { color: tone, transparency: 92 },
+            align: "left",
+          },
+        };
+      }),
+    ]),
+  ];
+
+  slide.addTable(tableRows, {
+    x, y, w: width, h: height,
+    colW: [criterionWidth, ...options.map(() => optionWidth)],
+    rowH: [headerHeight, ...criteria.map(() => rowHeight)],
+    fontFace: theme.font,
+    fontSize: design.density === "detailed" ? 9.5 : 10.5,
+    color: theme.text,
+    margin: design.density === "detailed" ? 0.08 : 0.11,
+    // PptxGenJS serializes table-level "mid" literally as anchor="mid",
+    // which is not a valid DrawingML value. "middle" is normalized to "ctr".
+    valign: "middle",
+    border: { type: "solid", color: "D9E0E8", width: 0.55 },
+    autoFit: false,
+    autoPage: false,
+  });
+
+  if (data.takeaway) {
+    slide.addText(data.takeaway, {
+      x,
+      y: 6.72,
+      w: width,
+      h: 0.28,
+      fontFace: theme.font,
+      fontSize: 10,
+      bold: true,
+      color: theme.secondary,
+      margin: 0,
+      align: "center",
+      fit: "shrink",
+    });
+  }
 }
 
 function renderProcess(slide, data, index) {
@@ -888,16 +1245,19 @@ function contentBase(slide, data, index) {
   background(slide, theme.background);
   addMotif(slide, index, false, true);
   if (data.eyebrow) {
-    pill(slide, data.eyebrow.toUpperCase(), 0.7, 0.28, Math.min(3.4, 0.9 + data.eyebrow.length * 0.115), theme.secondary, "FFFFFF");
+    pill(slide, data.eyebrow.toUpperCase(), density.outerX, design.density === "detailed" ? 0.16 : 0.28, Math.min(3.4, 0.9 + data.eyebrow.length * 0.115), theme.secondary, "FFFFFF");
   }
   slide.addText(data.title, {
-    x: 0.7, y: data.eyebrow ? 0.84 : 0.46, w: 10.9, h: 0.7,
+    x: density.outerX,
+    y: data.eyebrow ? (design.density === "detailed" ? 0.68 : 0.84) : density.titleY,
+    w: W - density.outerX * 2 - 0.95,
+    h: density.titleHeight,
     fontFace: theme.font, fontSize: scaled(titleSize(data.title, 25, 20)), bold: true,
     color: theme.text, margin: 0, valign: "mid", fit: "shrink",
   });
   if (data.subtitle) {
     slide.addText(data.subtitle, {
-      x: 0.7, y: 1.48, w: 11.55, h: 0.34,
+      x: density.outerX, y: density.subtitleY, w: W - density.outerX * 2, h: 0.34,
       fontFace: theme.font, fontSize: scaled(12), color: theme.muted,
       margin: 0, fit: "shrink",
     });
@@ -934,13 +1294,15 @@ function footer(slide, index, inverse) {
 }
 
 function card(slide, x, y, w, h, color) {
-  const shape = design.style === "technical" ? pptx.ShapeType.rect : pptx.ShapeType.roundRect;
+  const shape = design.style === "technical" || design.density === "detailed"
+    ? pptx.ShapeType.rect
+    : pptx.ShapeType.roundRect;
   slide.addShape(shape, {
     x, y, w, h,
     rectRadius: 0.08,
     fill: { color },
-    line: { color: "E1E6EE", width: 0.7 },
-    shadow: design.style === "editorial"
+    line: { color: "D9E0E8", width: density.cardBorderWidth },
+    shadow: design.style === "editorial" || !density.cardShadow
       ? undefined
       : { type: "outer", color: "182230", opacity: design.style === "bold" ? 0.16 : 0.09, blur: 2, angle: 45, distance: 1 },
   });
@@ -1068,7 +1430,7 @@ function smallMetricCard(slide, metric, x, y, w, h, index) {
   if (metric.detail) {
     slide.addText(metric.detail, {
       x: x + 0.24, y: y + 1.08, w: w - 0.48, h: 0.18,
-      fontFace: theme.font, fontSize: scaled(7.5), color: theme.muted,
+      fontFace: theme.font, fontSize: 9, color: theme.muted,
       margin: 0, fit: "shrink",
     });
   }
@@ -1117,20 +1479,20 @@ function renderVisualCard(slide, item, x, y, w, h, index) {
   }
 }
 
-function addNativeBulletList(slide, items, x, y, w, h, fontSize) {
+function addNativeBulletList(slide, items, x, y, w, h, fontSize, verticalAlign = "mid") {
   slide.addText((items ?? []).map((item, itemIndex) => ({
     text: item,
     options: {
       bullet: true,
       breakLine: itemIndex < items.length - 1,
-      paraSpaceAfter: 7,
+      paraSpaceAfter: design.density === "detailed" ? 4 : 7,
       fontSize: scaled(fontSize),
       color: theme.text,
     },
   })), {
     x, y, w, h,
     fontFace: theme.font, color: theme.text,
-    margin: 0.03, valign: "mid", fit: "shrink",
+    margin: 0.03, valign: verticalAlign, fit: "shrink",
   });
 }
 
@@ -1189,6 +1551,7 @@ function renderIcon(slide, iconName, x, y, size, color, inverse) {
 
 function addMotif(slide, index, inverse, subtle) {
   if (design.motif === "none") return;
+  if (design.density === "detailed" && subtle) return;
   const foreground = inverse ? theme.onPrimary : theme.secondary;
   const transparency = subtle ? 90 : 72;
   const offset = (index % 3) * 0.16;

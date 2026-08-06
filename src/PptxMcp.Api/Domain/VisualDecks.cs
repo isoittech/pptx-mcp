@@ -25,6 +25,8 @@ public enum VisualSlideKind
     Dashboard,
     Quote,
     Closing,
+    StructuredBrief,
+    Scorecard,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<VisualChartKind>))]
@@ -87,7 +89,46 @@ public sealed record VisualSlideSpec(
     string? Takeaway = null,
     IReadOnlyList<VisualCardSpec>? Cards = null,
     VisualMatrixSpec? Matrix = null,
+    [property: Description("Two or three titled content columns for a text-rich but scannable structured_brief slide. Use sections instead of one long body.")]
+    IReadOnlyList<VisualBriefSectionSpec>? Sections = null,
+    [property: Description("Editable comparison table for a scorecard slide. Each criterion must have exactly one cell per option.")]
+    VisualScorecardSpec? Scorecard = null,
     string Variant = "auto");
+
+public sealed record VisualBriefSectionSpec(
+    [property: Description("Short heading that lets readers understand this block while scanning headings only.")]
+    string Heading,
+    [property: Description("Concise explanatory prose for this block. Keep one main point per section.")]
+    string? Body = null,
+    [property: Description("Optional native bullet list when parallel facts are clearer than prose.")]
+    IReadOnlyList<string>? Bullets = null,
+    [property: Description("Optional short label for the single most important fact in this section.")]
+    string? Highlight = null,
+    [property: Description("Semantic tone for the section rule or highlight. Prefer neutral for most sections and emphasize only exceptions.")]
+    string Tone = "neutral");
+
+public sealed record VisualScorecardSpec(
+    [property: Description("Two to four options shown as editable table columns, in reading order.")]
+    IReadOnlyList<VisualScorecardOptionSpec> Options,
+    [property: Description("Two to six evaluation criteria shown as editable table rows.")]
+    IReadOnlyList<VisualScorecardRowSpec> Criteria);
+
+public sealed record VisualScorecardOptionSpec(
+    string Title,
+    string? Subtitle = null);
+
+public sealed record VisualScorecardRowSpec(
+    string Criterion,
+    [property: Description("One assessment cell per option, in exactly the same order as scorecard.options.")]
+    IReadOnlyList<VisualScorecardCellSpec> Cells);
+
+public sealed record VisualScorecardCellSpec(
+    [property: Description("Short assessment such as Recommended, Good, Conditional, or Poor.")]
+    string Rating,
+    [property: Description("Short evidence or rationale supporting the rating.")]
+    string? Detail = null,
+    [property: Description("Semantic tone such as positive, warning, critical, neutral, or a custom #RRGGBB color.")]
+    string Tone = "neutral");
 
 public sealed record VisualMetricSpec(
     string Value,
@@ -330,8 +371,76 @@ public static partial class VisualDeckValidator
             }
         }
 
+        var duplicateTitles = deck.Slides
+            .GroupBy(static slide => slide.Title.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Where(static group => group.Count() > 1)
+            .Select(static group => group.Key)
+            .ToArray();
+        if (duplicateTitles.Length > 0)
+        {
+            warnings.Add("Some slide titles are duplicated; make the heading sequence communicate the story without reading body text.");
+        }
+
+        var usesDetailedDensity = string.Equals(
+            deck.Design?.Density,
+            "detailed",
+            StringComparison.OrdinalIgnoreCase);
+        for (var index = 0; index < deck.Slides.Count; index++)
+        {
+            var slide = deck.Slides[index];
+            if (GetTextCharacterCount(slide) >= 500 && !usesDetailedDensity)
+            {
+                warnings.Add($"Slide {index + 1} is text-rich; use design.density=detailed and a structured_brief or scorecard layout instead of shrinking text.");
+            }
+
+            if (slide.Kind == VisualSlideKind.StructuredBrief
+                && slide.Sections is { Count: > 1 }
+                && slide.Sections.All(static section =>
+                    !string.IsNullOrWhiteSpace(section.Highlight)
+                    || IsStrongEmphasisTone(section.Tone)))
+            {
+                warnings.Add($"Slide {index + 1} emphasizes every section; reserve strong color or highlight labels for the few items that need attention.");
+            }
+        }
+
         return warnings;
     }
+
+    private static int GetTextCharacterCount(VisualSlideSpec slide)
+    {
+        var count = slide.Title.Length
+            + (slide.Subtitle?.Length ?? 0)
+            + (slide.Eyebrow?.Length ?? 0)
+            + (slide.Body?.Length ?? 0)
+            + (slide.Attribution?.Length ?? 0)
+            + (slide.Takeaway?.Length ?? 0)
+            + (slide.Bullets?.Sum(static item => item.Length) ?? 0)
+            + (slide.Metrics?.Sum(static item => item.Value.Length + item.Label.Length + (item.Detail?.Length ?? 0)) ?? 0)
+            + (slide.Panels?.Sum(static item => item.Title.Length + (item.Highlight?.Length ?? 0) + item.Bullets.Sum(static bullet => bullet.Length)) ?? 0)
+            + (slide.Steps?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Label?.Length ?? 0)) ?? 0)
+            + (slide.Cards?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Value?.Length ?? 0)) ?? 0)
+            + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0);
+
+        if (slide.Scorecard is not null)
+        {
+            count += slide.Scorecard.Options.Sum(static option => option.Title.Length + (option.Subtitle?.Length ?? 0));
+            count += slide.Scorecard.Criteria.Sum(static row =>
+                row.Criterion.Length
+                + row.Cells.Sum(static cell => cell.Rating.Length + (cell.Detail?.Length ?? 0)));
+        }
+
+        return count;
+    }
+
+    private static bool IsStrongEmphasisTone(string tone) =>
+        tone.Equals("positive", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("success", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("warning", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("critical", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("danger", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("negative", StringComparison.OrdinalIgnoreCase)
+        || tone.Equals("risk", StringComparison.OrdinalIgnoreCase)
+        || HexColorRegex().IsMatch(tone);
 
     private static void ValidateDesign(VisualDesignSpec? design)
     {
@@ -475,6 +584,8 @@ public static partial class VisualDeckValidator
             }
         }
 
+        ValidateBriefSections(slide.Sections, prefix);
+        ValidateScorecard(slide.Scorecard, prefix);
         ValidateMatrix(slide.Matrix, prefix);
 
         ValidateChart(slide.Chart, prefix);
@@ -517,6 +628,120 @@ public static partial class VisualDeckValidator
                 break;
             case VisualSlideKind.Quote when string.IsNullOrWhiteSpace(slide.Body):
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.body is required for a quote slide.");
+            case VisualSlideKind.StructuredBrief:
+                RequireCount(slide.Sections, prefix, "sections", 2, 3);
+                break;
+            case VisualSlideKind.Scorecard when slide.Scorecard is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.scorecard is required for a scorecard slide.");
+        }
+    }
+
+    private static void ValidateBriefSections(
+        IReadOnlyList<VisualBriefSectionSpec>? sections,
+        string prefix)
+    {
+        if (sections is null)
+        {
+            return;
+        }
+
+        if (sections.Count > 3)
+        {
+            ThrowDensity(prefix, "sections", 3);
+        }
+
+        var totalCharacters = 0;
+        for (var index = 0; index < sections.Count; index++)
+        {
+            var section = sections[index];
+            var path = $"{prefix}.sections[{index}]";
+            ValidateText(section.Heading, $"{path}.heading", 1, 72);
+            ValidateOptionalText(section.Body, $"{path}.body", 320);
+            ValidateList(section.Bullets, $"{path}.bullets", 5, 100);
+            ValidateOptionalText(section.Highlight, $"{path}.highlight", 48);
+            if (string.IsNullOrWhiteSpace(section.Body)
+                && (section.Bullets is null || section.Bullets.Count == 0))
+            {
+                throw new PptxValidationException(
+                    "visual_content_missing",
+                    $"{path} requires body or at least one bullet.");
+            }
+
+            if (!IsSupportedTone(section.Tone))
+            {
+                throw new PptxValidationException(
+                    "visual_brief_section_tone_invalid",
+                    $"{path}.tone must be a supported semantic tone or a #RRGGBB color.");
+            }
+
+            totalCharacters += section.Heading.Length
+                + (section.Body?.Length ?? 0)
+                + (section.Highlight?.Length ?? 0)
+                + (section.Bullets?.Sum(static item => item.Length) ?? 0);
+        }
+
+        if (totalCharacters > 900)
+        {
+            throw new PptxValidationException(
+                "visual_content_density_invalid",
+                $"{prefix}.sections must not exceed 900 total characters; split the content across slides.");
+        }
+    }
+
+    private static void ValidateScorecard(VisualScorecardSpec? scorecard, string prefix)
+    {
+        if (scorecard is null)
+        {
+            return;
+        }
+
+        if (scorecard.Options is null || scorecard.Options.Count is < 2 or > 4)
+        {
+            throw new PptxValidationException(
+                "visual_scorecard_options_out_of_range",
+                $"{prefix}.scorecard.options must contain between 2 and 4 options.");
+        }
+
+        if (scorecard.Criteria is null || scorecard.Criteria.Count is < 2 or > 6)
+        {
+            throw new PptxValidationException(
+                "visual_scorecard_criteria_out_of_range",
+                $"{prefix}.scorecard.criteria must contain between 2 and 6 rows.");
+        }
+
+        for (var optionIndex = 0; optionIndex < scorecard.Options.Count; optionIndex++)
+        {
+            var option = scorecard.Options[optionIndex];
+            var path = $"{prefix}.scorecard.options[{optionIndex}]";
+            ValidateText(option.Title, $"{path}.title", 1, 48);
+            ValidateOptionalText(option.Subtitle, $"{path}.subtitle", 72);
+        }
+
+        for (var rowIndex = 0; rowIndex < scorecard.Criteria.Count; rowIndex++)
+        {
+            var row = scorecard.Criteria[rowIndex];
+            var path = $"{prefix}.scorecard.criteria[{rowIndex}]";
+            ValidateText(row.Criterion, $"{path}.criterion", 1, 48);
+            if (row.Cells is null || row.Cells.Count != scorecard.Options.Count)
+            {
+                throw new PptxValidationException(
+                    "visual_scorecard_cells_mismatch",
+                    $"{path}.cells must contain exactly one cell per scorecard option.");
+            }
+
+            for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+            {
+                var cell = row.Cells[cellIndex];
+                var cellPath = $"{path}.cells[{cellIndex}]";
+                ValidateText(cell.Rating, $"{cellPath}.rating", 1, 24);
+                ValidateOptionalText(cell.Detail, $"{cellPath}.detail", 100);
+                if (!IsSupportedTone(cell.Tone))
+                {
+                    throw new PptxValidationException(
+                        "visual_scorecard_tone_invalid",
+                        $"{cellPath}.tone must be a supported semantic tone or a #RRGGBB color.");
+                }
+            }
         }
     }
 

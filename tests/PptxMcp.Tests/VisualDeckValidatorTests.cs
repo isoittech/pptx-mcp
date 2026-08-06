@@ -334,4 +334,130 @@ public sealed class VisualDeckValidatorTests
         Assert.Contains(warnings, warning => warning.Contains("text-led", StringComparison.Ordinal));
         Assert.Contains(warnings, warning => warning.Contains("repeat the same layout", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void AcceptsDetailedStructuredBriefAndEditableScorecard()
+    {
+        var deck = new VisualDeckSpec(
+            "データセンター投資判断",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.StructuredBrief,
+                    "需要増と電力制約を同時に解く",
+                    Sections:
+                    [
+                        new VisualBriefSectionSpec(
+                            "市場環境",
+                            "生成AI需要により高密度ラックへの移行が進む一方、受電容量が拡張速度を制約している。",
+                            ["推論需要が継続", "系統接続に長期化リスク"]),
+                        new VisualBriefSectionSpec(
+                            "経営論点",
+                            "設備効率だけでなく、電源調達、立地、冷却方式を一体で設計する必要がある。",
+                            Highlight: "統合設計が必要",
+                            Tone: "accent"),
+                        new VisualBriefSectionSpec(
+                            "推奨アクション",
+                            Bullets: ["候補地を電力制約で再評価", "液冷対応を標準化", "段階投資で需要変動を吸収"],
+                            Tone: "positive"),
+                    ],
+                    Takeaway: "電力を設備条件ではなく事業ポートフォリオの制約として管理する"),
+                new VisualSlideSpec(
+                    VisualSlideKind.Scorecard,
+                    "候補地を4つの軸で比較",
+                    Scorecard: new VisualScorecardSpec(
+                        [
+                            new VisualScorecardOptionSpec("既存拠点増床", "短期案"),
+                            new VisualScorecardOptionSpec("郊外新設", "中期案"),
+                            new VisualScorecardOptionSpec("共同利用", "柔軟案"),
+                        ],
+                        [
+                            new VisualScorecardRowSpec("立上げ速度", [
+                                new VisualScorecardCellSpec("良", "既存設備を流用", "positive"),
+                                new VisualScorecardCellSpec("弱", "許認可を含む", "critical"),
+                                new VisualScorecardCellSpec("最良", "契約後に利用可能", "positive"),
+                            ]),
+                            new VisualScorecardRowSpec("電力余力", [
+                                new VisualScorecardCellSpec("条件付", "追加受電が必要", "warning"),
+                                new VisualScorecardCellSpec("良", "候補地で確保", "positive"),
+                                new VisualScorecardCellSpec("条件付", "事業者に依存", "warning"),
+                            ]),
+                        ])),
+            ],
+            Design: new VisualDesignSpec("technical", "detailed", "none"));
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void RejectsStructuredBriefThatExceedsItsReadableTextBudget()
+    {
+        var deck = new VisualDeckSpec(
+            "詳細説明",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.StructuredBrief,
+                    "一枚で読める量を守る",
+                    Sections:
+                    [
+                        new VisualBriefSectionSpec("論点A", new string('あ', 320)),
+                        new VisualBriefSectionSpec("論点B", new string('い', 320)),
+                        new VisualBriefSectionSpec("論点C", new string('う', 320)),
+                    ]),
+            ],
+            Design: new VisualDesignSpec(Density: "detailed"));
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_content_density_invalid", error.Code);
+        Assert.Contains("900 total characters", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsScorecardRowsThatDoNotMatchTheOptionCount()
+    {
+        var deck = new VisualDeckSpec(
+            "比較",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Scorecard,
+                    "候補比較",
+                    Scorecard: new VisualScorecardSpec(
+                        [new VisualScorecardOptionSpec("案A"), new VisualScorecardOptionSpec("案B")],
+                        [
+                            new VisualScorecardRowSpec(
+                                "コスト",
+                                [new VisualScorecardCellSpec("良")]),
+                            new VisualScorecardRowSpec(
+                                "速度",
+                                [new VisualScorecardCellSpec("良"), new VisualScorecardCellSpec("弱")]),
+                        ])),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_scorecard_cells_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void WarnsWhenTextRichContentDoesNotUseDetailedDensity()
+    {
+        var deck = new VisualDeckSpec(
+            "説明資料",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.StructuredBrief,
+                    "情報量に合わせて構造を変える",
+                    Sections:
+                    [
+                        new VisualBriefSectionSpec("論点A", new string('あ', 240)),
+                        new VisualBriefSectionSpec("論点B", new string('い', 240)),
+                        new VisualBriefSectionSpec("論点C", new string('う', 120)),
+                    ]),
+            ]);
+
+        VisualDeckValidator.Validate(deck, 50);
+        var warnings = VisualDeckValidator.GetDesignWarnings(deck);
+
+        Assert.Contains(warnings, warning => warning.Contains("design.density=detailed", StringComparison.Ordinal));
+    }
 }
