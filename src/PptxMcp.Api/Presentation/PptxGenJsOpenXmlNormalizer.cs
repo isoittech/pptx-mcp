@@ -3,6 +3,7 @@ using C = DocumentFormat.OpenXml.Drawing.Charts;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
+using System.IO.Compression;
 using P = DocumentFormat.OpenXml.Presentation;
 using PptxMcp.Storage;
 
@@ -45,7 +46,9 @@ internal static class PptxGenJsOpenXmlNormalizer
                 ?? throw new PptxValidationException(
                     "invalid_pptx",
                     "The PPTX does not contain a presentation root.");
-            if (NormalizePresentation(presentation) > 0)
+            var presentationCorrectionCount = RemoveGeneratedNotes(presentationPart);
+            presentationCorrectionCount += NormalizePresentation(presentation);
+            if (presentationCorrectionCount > 0)
             {
                 presentation.Save();
             }
@@ -76,6 +79,8 @@ internal static class PptxGenJsOpenXmlNormalizer
             }
         }
 
+        RemovePackageDirectoryEntries(presentationPath);
+
         using var validatedDocument = PresentationDocument.Open(presentationPath, false);
         var error = new OpenXmlValidator().Validate(validatedDocument).FirstOrDefault();
         if (error is not null)
@@ -84,6 +89,54 @@ internal static class PptxGenJsOpenXmlNormalizer
                 "openxml_validation_failed",
                 $"The generated presentation is not valid Open XML: {FormatValidationError(error)}");
         }
+    }
+
+    internal static int RemoveGeneratedNotes(PresentationPart presentationPart)
+    {
+        var correctionCount = 0;
+        foreach (var slidePart in presentationPart.SlideParts.ToArray())
+        {
+            if (slidePart.NotesSlidePart is not { } notesSlidePart)
+            {
+                continue;
+            }
+
+            slidePart.DeletePart(notesSlidePart);
+            correctionCount++;
+        }
+
+        var notesMasterParts = presentationPart.Parts
+            .Select(static relationship => relationship.OpenXmlPart)
+            .OfType<NotesMasterPart>()
+            .ToArray();
+        foreach (var notesMasterPart in notesMasterParts)
+        {
+            presentationPart.DeletePart(notesMasterPart);
+            correctionCount++;
+        }
+
+        var notesMasterIds = presentationPart.Presentation?.GetFirstChild<P.NotesMasterIdList>();
+        if (notesMasterIds is not null)
+        {
+            notesMasterIds.Remove();
+            correctionCount++;
+        }
+
+        return correctionCount;
+    }
+
+    internal static int RemovePackageDirectoryEntries(string presentationPath)
+    {
+        using var archive = ZipFile.Open(presentationPath, ZipArchiveMode.Update);
+        var directoryEntries = archive.Entries
+            .Where(static entry => entry.FullName.EndsWith('/'))
+            .ToArray();
+        foreach (var directoryEntry in directoryEntries)
+        {
+            directoryEntry.Delete();
+        }
+
+        return directoryEntries.Length;
     }
 
     internal static int NormalizePresentation(P.Presentation presentation)

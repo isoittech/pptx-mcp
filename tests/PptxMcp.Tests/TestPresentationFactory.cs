@@ -42,7 +42,11 @@ internal static class TestPresentationFactory
                 FollowedHyperlink = A.ColorSchemeIndexValues.FollowedHyperlink,
             },
             new P.SlideLayoutIdList(
-                new P.SlideLayoutId { Id = 1U, RelationshipId = masterPart.GetIdOfPart(layoutPart) }),
+                new P.SlideLayoutId
+                {
+                    Id = 2_147_483_649U,
+                    RelationshipId = masterPart.GetIdOfPart(layoutPart),
+                }),
             new P.TextStyles(new P.TitleStyle(), new P.BodyStyle(), new P.OtherStyle()));
 
         var slidePart = presentationPart.AddNewPart<SlidePart>();

@@ -1,6 +1,8 @@
 using A = DocumentFormat.OpenXml.Drawing;
 using C = DocumentFormat.OpenXml.Drawing.Charts;
 using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using System.IO.Compression;
 using P = DocumentFormat.OpenXml.Presentation;
 using PptxMcp.Presentation;
 
@@ -8,6 +10,68 @@ namespace PptxMcp.Tests;
 
 public sealed class PptxGenJsOpenXmlNormalizerTests
 {
+    [Fact]
+    public void RemovesGeneratedNotesAndRedundantPackageDirectories()
+    {
+        var path = TestPresentationFactory.CreateWithGeneratedNotes("VISUAL CONTENT");
+        try
+        {
+            using (var document = PresentationDocument.Open(path, true))
+            {
+                var presentationPart = document.PresentationPart!;
+                var notesMasterPart = presentationPart.SlideParts.Single()
+                    .NotesSlidePart!
+                    .NotesMasterPart!;
+                presentationPart.AddPart(notesMasterPart);
+                var notesMasterRelationshipId = presentationPart.GetIdOfPart(notesMasterPart);
+                var notesMasterId = new P.NotesMasterId();
+                notesMasterId.SetAttribute(
+                    new OpenXmlAttribute(
+                        "r",
+                        "id",
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                        notesMasterRelationshipId));
+                presentationPart.Presentation!.InsertBefore(
+                    new P.NotesMasterIdList(notesMasterId),
+                    presentationPart.Presentation.GetFirstChild<P.SlideIdList>());
+                presentationPart.Presentation.Save();
+            }
+
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Update))
+            {
+                archive.CreateEntry("ppt/charts/");
+                archive.CreateEntry("ppt/embeddings/");
+            }
+
+            PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(path);
+
+            using (var document = PresentationDocument.Open(path, false))
+            {
+                var presentationPart = document.PresentationPart!;
+                Assert.Null(presentationPart.SlideParts.Single().NotesSlidePart);
+                Assert.DoesNotContain(
+                    presentationPart.Parts,
+                    relationship => relationship.OpenXmlPart is NotesMasterPart);
+                Assert.Null(
+                    presentationPart.Presentation!.GetFirstChild<P.NotesMasterIdList>());
+            }
+
+            using (var archive = ZipFile.OpenRead(path))
+            {
+                Assert.DoesNotContain(
+                    archive.Entries,
+                    static entry => entry.FullName.StartsWith("ppt/notes", StringComparison.Ordinal));
+                Assert.DoesNotContain(
+                    archive.Entries,
+                    static entry => entry.FullName.EndsWith('/'));
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void MovesNotesMasterBeforeSlideList()
     {
