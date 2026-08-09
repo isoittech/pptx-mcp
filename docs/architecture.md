@@ -57,7 +57,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。完成ページ数、次のページ番号、バッチ上限、全ページのドメイン検証をサーバー側で強制します。詳細は [ADR 0009](adr/0009-staged-visual-deck-input.md) に記録します。
 
 - title、agenda、section、statement、bullets
-- cards、metrics、comparison、structuredBrief、scorecard
+- cards、metrics、comparison、structuredBrief、scorecard、musicScore
 - process、timeline
 - matrix、funnel、roadmap、chart、dashboard
 - quote、closing
@@ -65,6 +65,8 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。入力にファイルパス、URL、画像、JavaScript、任意座標を持たせないため、表現力を上げてもコード実行境界は広げません。
 
 固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。文字量の多い説明では`structuredBrief`が本文を2〜3個の見出し付きセクションへ分け、`scorecard`が評価軸×選択肢を編集可能なPowerPoint表へ変換します。`density=detailed`は単一のフォント倍率ではなく、外周余白、見出し領域、内部間隔、罫線、カード形状、影をまとめて切り替えます。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合に加え、500文字以上のページでdetailedを使っていない場合や全セクションを強調している場合は `design_warnings` を返します。詳細は [ADR 0010](adr/0010-readable-information-density.md) に記録します。
+
+`musicScore`は音高、音価、ウクレレの弦・フレット・左手指を意味入力として受け、五線、符頭、符幹、休符、小節線、TAB線、フレット番号、指色マーカーをPowerPointネイティブの図形・線・テキストへ変換します。任意座標や任意描画命令を公開せず、音高とTABの一致、表示密度、対応調弦をドメイン層で検証します。PowerPoint内では個別要素として編集できますが、専用譜面ソフトのような移調・自動組版は行いません。詳細は [ADR 0011](adr/0011-editable-music-score-layout.md) に記録します。
 
 ## 自動視覚リフレクション
 

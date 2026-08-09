@@ -13,13 +13,14 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 名前付きシェイプを持つ企業テンプレートへのテキスト流し込み
 - 企業テンプレート内で編集可能な実箇条書き・自動採番・0〜4段階のインデントを生成
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
-- 白紙から意味ベースの19レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
+- 白紙から意味ベースの20レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
 - 文字量の多い説明を2〜3列へ構造化する `structuredBrief` と、評価軸×選択肢を編集可能なPowerPoint表にする `scorecard`
 - `density=detailed` で外周余白、見出し領域、罫線、カード影、内部間隔を一体的に切り替える高密度デザイン
 - 企業テンプレートのマスター、ロゴ、フッター、ページ設定を保ち、テーマを自動抽出して意味ベースのVisual Deckを合成
 - 外部登録された既定テンプレートの起動時検証・事前解析と、新規資料への自動適用
 - 導入環境から任意に注入できる初回assistant案内
 - PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
+- `musicScore`による編集可能な五線譜、Bravura由来の高品質な音楽記号、小節線、ウクレレTAB、指番号の色分け
 - LibreOffice と Poppler による全ページ PNG プレビュー
 - プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
 - 15分有効の署名付き成果物URL
@@ -33,6 +34,8 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 2. `docker compose build` を実行します。
 3. `docker compose up -d pptx-mcp` を実行します。
 4. `integrations/librechat/librechat.fragment.yaml` の内容を LibreChat 設定へ統合します。
+
+ローカルCodexから接続する場合、通常の`compose.yaml`は`pptx-codex-proxy`を`127.0.0.1:${PPTX_MCP_PORT:-18080}`へ公開します。MCP本体は外部通信できない内部ネットワークに残り、ローカル入口だけが`/mcp`、署名付き`/artifacts/...`、readinessを中継します。Codex側ではBearer認証に加え、`X-LibreChat-User-ID`と`X-LibreChat-Conversation-ID`へローカル用の固定識別子を設定してください。本番LibreChat統合では成果物専用プロキシを使い、`/mcp`を公開しません。
 
 `PPTX_MCP_PUBLIC_BASE_URL` は利用者のブラウザーから到達できる HTTPS URL にしてください。MCP の内部URL `http://pptx-mcp:8080/mcp` とは別です。
 
@@ -80,9 +83,11 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 
 処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。`pptx_get_job`は待たない即時確認と障害復旧用です。両ツールの `jobId=latest` は同じ利用者・会話にある直近ジョブ（待機中・実行中を含む）を選びます。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認します。問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
 
-新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
+新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
 
 長い説明を1つの本文枠へ押し込まず、見出しだけでも要点を追える2〜3個の `sections` に分ける場合は `structuredBrief` を使います。セクション合計は900文字までです。3セクション・600文字未満では上段の主論点と下段2論点からなるモザイクへ自動変更し、短い内容ほど本文と箇条書きを拡大します。600文字以上では3列を使い、情報量に合わない大きな空箱を避けます。複数案を評価軸で比べる場合は `scorecard` を使い、2〜4個の `options` と2〜6行の `criteria` を指定します。各評価セルは短い判定、根拠、意味色を持ち、成果物では編集可能なPowerPointネイティブ表になります。文字量が多い資料では `design.density=detailed` を指定すると、フォントだけを縮小せず、余白、タイトル領域、内部間隔、細い罫線、影なしカードをまとめて切り替えます。
+
+`musicScore`は1〜8小節、合計64イベントまでの五線譜とウクレレTABを上下に併記します。各イベントへ`duration`、各音へ科学的音高の`pitch`、1=A/2=E/3=C/4=Gの`string`、`fret`、任意の`finger`を指定します。`tuning`は`high-g`または`low-g`です。音高と弦・フレットの不一致は入力検証で拒否します。ト音記号、拍子数字、符頭、旗、付点、休符、臨時記号はSIL Open Font LicenseのBravura 1.392から輪郭を取得し、画像やフォントではなくPowerPointカスタム図形として生成します。その他の五線、符幹、小節線、TAB線、フレット番号、指色マーカーも個別編集できるPowerPointネイティブ要素です。PowerPoint自体に楽譜の意味モデルはないため、移調やリズム変更に伴う自動再配置は行いません。Bravuraの原本ライセンスは`visual-renderer/assets/bravura/LICENSE.txt`に同梱しています。
 
 新規Visual Deckは、タイトルと完成ページ数を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。モデルへ一度に最大50ページの巨大な`VisualDeckSpec`を要求せず、各ツールの必須入力を小さく保つためです。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。開始時に確定したページ数、次のページ番号、最大4ページのバッチ上限をサーバー側でも検証します。
 
@@ -111,3 +116,5 @@ docker compose run --rm test
 cd visual-renderer
 npm audit --omit=dev
 ```
+
+2026-08-08時点ではPptxGenJSの推移依存`image-size`に、修正版未公開のICNS/JXL/HEIF解析DoSが報告されます。Visual Deckは画像、URL、ローカルパスを入力として受け取らず、レンダラーも`addImage`を使用しないため該当パーサーへ到達しません。この境界はNodeテストで固定しています。修正版が公開されたらロックファイルを更新してください。

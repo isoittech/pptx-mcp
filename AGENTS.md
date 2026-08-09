@@ -22,7 +22,8 @@
 - PPTX 操作は `IPresentationEngine` の背後に置き、Open XML 実装と将来の商用エンジンを交換可能にする。
 - LibreOffice は表示確認用レンダリングに限定し、編集には使用しない。
 - 白紙生成は `VisualDeckSpec` を固定PptxGenJSレンダラーへ渡す。任意JavaScript、任意座標、URL、ローカルパスをツール入力へ追加しない。
-- `VisualDeckSpec` は19種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
+- `VisualDeckSpec` は20種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
+- 楽譜は`MusicScore`へ音高・音価・ウクレレ弦・フレット・指番号を渡し、PowerPointネイティブの線・図形・テキストで五線譜とTABを描く。任意座標を公開せず、音高と調弦・弦・フレットの一致を検証する。音楽記号は同梱したBravura 1.392の輪郭を`custGeom`へ変換し、手描き近似、画像貼付、閲覧側フォント依存へ戻さない。OTFとSIL OFL原文は必ず一緒に更新する。
 - 文字量の多い説明は`StructuredBrief`の2〜3セクションへ分け、評価軸×選択肢は`Scorecard`の編集可能なPowerPoint表にする。`density=detailed`はフォント縮小だけで実装せず、外周余白、見出し領域、間隔、罫線、影を一体で切り替える。
 - `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。
 - テンプレートのリストは `DeckField.paragraphs` / `TemplateField.paragraphs` を使い、1項目1段落で `Plain`、`Bullet`、`Numbered` と0〜4の `level` を指定する。本文へ `■`、`・`、`1.` 等を手入力しない。
@@ -44,6 +45,7 @@
 - ZIP bomb、パストラバーサル、マクロ、ActiveX、外部リレーション、暗号化ファイルを拒否する。
 - 成果物は生成から7日、または最初のダウンロードから24時間の早い方で削除する。
 - MCP コンテナから外部ネットワークへ接続させない。調査や情報収集は LibreChat 側のモデルが担当する。
+- ローカルCodex接続ではMCP本体の内部ネットワークを解除せず、`pptx-codex-proxy`だけを`127.0.0.1`へ公開する。本番LibreChatでは成果物専用プロキシを使い、`/mcp`を公開しない。
 - 現行ホストでは `no-new-privileges` とDocker既定seccompの併用がruncのerrno 524で失敗する。既定seccompを維持するため同オプションは設定せず、非root、read-only、`cap_drop: ALL`で補完する。
 
 ## テスト方針
@@ -60,6 +62,7 @@
 - 動作上必須の引数には`Required`属性を付け、MCPの公開JSON Schemaでも必須にする。ただしData Annotationsは実行時検証を代替せず、巨大な入力の生成自体も安定化しない。Visual Deckの新規生成は段階ドラフト、Visual Deckの自動修正は必須`revision`を持つ`pptx_refine_visual_slide`で1ページずつ逐次適用する。
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
 - PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルート、表セル、グラフを正規化し、`node_modules`を直接改変しない。
+- PptxGenJS 4.0.1が依存する`image-size` 1.2.1には2026-08-08時点で修正版のないICNS/JXL/HEIFの無限ループDoSがある。Visual Deckレンダラーは画像入力と`addImage`を公開・使用しないため脆弱な解析経路へ到達しない状態をテストで固定し、修正版公開後に更新する。画像入力を追加する場合は先にこの依存を解消する。
 - `addTable`の垂直中央揃えは`valign: "middle"`を使う。`"mid"`は表セルへ不正な`anchor="mid"`として出力されるため、正規化処理と回帰テストも維持する。
 - PptxGenJSの棒グラフは系列内の`c:dPt`を`c:dLbls`より後ろへ出力する場合がある。Open XMLの要素順に合わせて個別データ点をラベルより前へ移し、実データ点を含む回帰テストを維持する。
-- PptxGenJSのスライドを企業テンプレートへ1枚ずつ`AddPart`すると、空のノートスライド経由で共有ノートマスターがページごとに複製される。`VisualDeckSpec`は発表者ノートを扱わないため、合成時に生成側のノートスライドを削除し、企業テンプレート側のノートマスターだけを保持する。
+- PptxGenJSは空のノートスライドとPowerPointが修復を要求するノートマスターを自動生成する。`VisualDeckSpec`は発表者ノートを扱わないため、白紙生成では`PptxGenJsOpenXmlNormalizer`がノート関連パーツを完全に削除し、企業テンプレートへの合成時も生成側のノートスライドを削除してテンプレート側のノートマスターだけを保持する。
