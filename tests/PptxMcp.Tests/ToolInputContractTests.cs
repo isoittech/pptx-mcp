@@ -397,7 +397,7 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
-    public void VisualDraftSchemaExposesStructuredBriefAndScorecardVocabulary()
+    public void VisualDraftSchemaExposesStructuredBriefScorecardAndMusicScoreVocabulary()
     {
         var method = typeof(PowerPointTools).GetMethod(
             nameof(PowerPointTools.AddVisualSlidesToDraft),
@@ -409,10 +409,18 @@ public sealed class ToolInputContractTests
 
         Assert.Contains("StructuredBrief", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Scorecard", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("MusicScore", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("sections", schema, StringComparison.Ordinal);
         Assert.Contains("criteria", schema, StringComparison.Ordinal);
+        Assert.Contains("musicScore", schema, StringComparison.Ordinal);
+        Assert.Contains("measures", schema, StringComparison.Ordinal);
+        Assert.Contains("pitch", schema, StringComparison.Ordinal);
+        Assert.Contains("fret", schema, StringComparison.Ordinal);
+        Assert.Contains("finger", schema, StringComparison.Ordinal);
         Assert.Contains("structuredBrief", description, StringComparison.Ordinal);
         Assert.Contains("評価軸×選択肢", description, StringComparison.Ordinal);
+        Assert.Contains("musicScore", description, StringComparison.Ordinal);
+        Assert.Contains("五線譜", description, StringComparison.Ordinal);
     }
 
     [Fact]

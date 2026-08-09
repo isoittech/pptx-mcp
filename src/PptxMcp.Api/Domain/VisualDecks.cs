@@ -27,6 +27,7 @@ public enum VisualSlideKind
     Closing,
     StructuredBrief,
     Scorecard,
+    MusicScore,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<VisualChartKind>))]
@@ -93,7 +94,63 @@ public sealed record VisualSlideSpec(
     IReadOnlyList<VisualBriefSectionSpec>? Sections = null,
     [property: Description("Editable comparison table for a scorecard slide. Each criterion must have exactly one cell per option.")]
     VisualScorecardSpec? Scorecard = null,
-    string Variant = "auto");
+    string Variant = "auto",
+    [property: Description("Editable native standard-notation and ukulele TAB score for a music_score slide. Use semantic pitches, durations, strings, frets, and fingers instead of coordinates.")]
+    VisualMusicScoreSpec? MusicScore = null);
+
+public sealed record VisualMusicScoreSpec(
+    [property: Description("One to eight measures in reading order. A slide may contain at most 64 events in total.")]
+    IReadOnlyList<VisualMusicMeasureSpec> Measures,
+    [property: Description("Time signature such as 4/4, 3/4, or 6/8.")]
+    string TimeSignature = "4/4",
+    [property: Description("Short display label for the key, such as C, G, Am, or F#m.")]
+    string KeySignature = "C",
+    [property: Description("Only treble is supported in the first editable music-score layout.")]
+    string Clef = "treble",
+    [property: Description("Ukulele tuning: high-g or low-g. String numbers are 1=A, 2=E, 3=C, and 4=G.")]
+    string Tuning = "high-g",
+    [property: Description("Optional tempo in beats per minute, from 20 to 300.")]
+    int? TempoBpm = null,
+    [property: Description("Draw the five-line standard staff with editable noteheads, stems, rests, accidentals, and ledger lines.")]
+    bool ShowStandardNotation = true,
+    [property: Description("Draw the four-line ukulele TAB staff with editable fret-number text.")]
+    bool ShowTablature = true,
+    [property: Description("Color TAB fret markers by left-hand finger: 0=open, 1=index, 2=middle, 3=ring, 4=little.")]
+    bool ColorFingerings = true,
+    [property: Description("Optional concise explanation shown below the score.")]
+    string? Caption = null);
+
+public sealed record VisualMusicMeasureSpec(
+    [property: Description("One to twelve sequential musical events in this measure.")]
+    IReadOnlyList<VisualMusicEventSpec> Events,
+    [property: Description("Optional displayed measure number. When omitted, measures are numbered from one.")]
+    int? Number = null);
+
+public sealed record VisualMusicEventSpec(
+    [property: Description("Duration: whole, half, quarter, eighth, or sixteenth.")]
+    string Duration,
+    [property: Description("One to four simultaneous notes. Omit notes only when rest=true.")]
+    IReadOnlyList<VisualMusicNoteSpec>? Notes = null,
+    [property: Description("Draw an editable rest symbol instead of notes.")]
+    bool Rest = false,
+    [property: Description("Add an augmentation dot to the event.")]
+    bool Dotted = false,
+    [property: Description("Draw a tie toward the next event in the same measure.")]
+    bool TieToNext = false,
+    [property: Description("Optional short performance annotation above the event.")]
+    string? Annotation = null);
+
+public sealed record VisualMusicNoteSpec(
+    [property: Description("Scientific pitch notation from G3 through C6, for example C4, F#4, or Bb4.")]
+    string Pitch,
+    [property: JsonPropertyName("string"), Description("Ukulele string number: 1=A, 2=E, 3=C, 4=G.")]
+    int StringNumber,
+    [property: Description("Fret number from 0 through 24.")]
+    int Fret,
+    [property: Description("Left-hand finger: 0=open, 1=index, 2=middle, 3=ring, 4=little.")]
+    int? Finger = null,
+    [property: Description("Optional #RRGGBB override for this note's TAB marker.")]
+    string? Color = null);
 
 public sealed record VisualBriefSectionSpec(
     [property: Description("Short heading that lets readers understand this block while scanning headings only.")]
@@ -311,6 +368,21 @@ public static partial class VisualDeckValidator
         "editorial",
     };
 
+    private static readonly HashSet<string> MusicDurations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "whole",
+        "half",
+        "quarter",
+        "eighth",
+        "sixteenth",
+    };
+
+    private static readonly HashSet<string> UkuleleTunings = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "high-g",
+        "low-g",
+    };
+
     public static void Validate(VisualDeckSpec deck, int maximumSlides)
     {
         ArgumentNullException.ThrowIfNull(deck);
@@ -419,7 +491,10 @@ public static partial class VisualDeckValidator
             + (slide.Panels?.Sum(static item => item.Title.Length + (item.Highlight?.Length ?? 0) + item.Bullets.Sum(static bullet => bullet.Length)) ?? 0)
             + (slide.Steps?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Label?.Length ?? 0)) ?? 0)
             + (slide.Cards?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Value?.Length ?? 0)) ?? 0)
-            + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0);
+            + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0)
+            + (slide.MusicScore?.Caption?.Length ?? 0)
+            + (slide.MusicScore?.Measures.Sum(static measure =>
+                measure.Events.Sum(static item => item.Annotation?.Length ?? 0)) ?? 0);
 
         if (slide.Scorecard is not null)
         {
@@ -587,6 +662,7 @@ public static partial class VisualDeckValidator
         ValidateBriefSections(slide.Sections, prefix);
         ValidateScorecard(slide.Scorecard, prefix);
         ValidateMatrix(slide.Matrix, prefix);
+        ValidateMusicScore(slide.MusicScore, prefix);
 
         ValidateChart(slide.Chart, prefix);
         switch (slide.Kind)
@@ -633,7 +709,238 @@ public static partial class VisualDeckValidator
                 break;
             case VisualSlideKind.Scorecard when slide.Scorecard is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.scorecard is required for a scorecard slide.");
+            case VisualSlideKind.MusicScore when slide.MusicScore is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.musicScore is required for a musicScore slide.");
         }
+    }
+
+    private static void ValidateMusicScore(VisualMusicScoreSpec? musicScore, string prefix)
+    {
+        if (musicScore is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.musicScore";
+        if (musicScore.Measures is null || musicScore.Measures.Count is < 1 or > 8)
+        {
+            throw new PptxValidationException(
+                "visual_music_measures_out_of_range",
+                $"{path}.measures must contain between 1 and 8 measures.");
+        }
+
+        if (!MusicTimeSignatureRegex().IsMatch(musicScore.TimeSignature))
+        {
+            throw new PptxValidationException(
+                "visual_music_time_signature_invalid",
+                $"{path}.timeSignature must use a numerator from 1 to 99 and a denominator of 1, 2, 4, 8, or 16.");
+        }
+
+        ValidateText(musicScore.KeySignature, $"{path}.keySignature", 1, 16);
+        if (!musicScore.Clef.Equals("treble", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PptxValidationException(
+                "visual_music_clef_invalid",
+                $"{path}.clef must be treble.");
+        }
+
+        if (!UkuleleTunings.Contains(musicScore.Tuning))
+        {
+            throw new PptxValidationException(
+                "visual_music_tuning_invalid",
+                $"{path}.tuning must be high-g or low-g.");
+        }
+
+        if (musicScore.TempoBpm is < 20 or > 300)
+        {
+            throw new PptxValidationException(
+                "visual_music_tempo_invalid",
+                $"{path}.tempoBpm must be between 20 and 300.");
+        }
+
+        if (!musicScore.ShowStandardNotation && !musicScore.ShowTablature)
+        {
+            throw new PptxValidationException(
+                "visual_music_display_invalid",
+                $"{path} must enable standard notation, tablature, or both.");
+        }
+
+        ValidateOptionalText(musicScore.Caption, $"{path}.caption", 180);
+        var totalEventCount = 0;
+        for (var measureIndex = 0; measureIndex < musicScore.Measures.Count; measureIndex++)
+        {
+            var measure = musicScore.Measures[measureIndex];
+            var measurePath = $"{path}.measures[{measureIndex}]";
+            if (measure.Events is null || measure.Events.Count is < 1 or > 12)
+            {
+                throw new PptxValidationException(
+                    "visual_music_events_out_of_range",
+                    $"{measurePath}.events must contain between 1 and 12 events.");
+            }
+
+            if (measure.Number is < 1 or > 999)
+            {
+                throw new PptxValidationException(
+                    "visual_music_measure_number_invalid",
+                    $"{measurePath}.number must be between 1 and 999.");
+            }
+
+            totalEventCount += measure.Events.Count;
+            for (var eventIndex = 0; eventIndex < measure.Events.Count; eventIndex++)
+            {
+                ValidateMusicEvent(
+                    measure.Events[eventIndex],
+                    $"{measurePath}.events[{eventIndex}]",
+                    musicScore.Tuning,
+                    eventIndex == measure.Events.Count - 1);
+            }
+        }
+
+        if (totalEventCount > 64)
+        {
+            throw new PptxValidationException(
+                "visual_music_event_density_invalid",
+                $"{path} must not contain more than 64 events on one slide.");
+        }
+    }
+
+    private static void ValidateMusicEvent(
+        VisualMusicEventSpec musicEvent,
+        string path,
+        string tuning,
+        bool isLastEvent)
+    {
+        if (!MusicDurations.Contains(musicEvent.Duration))
+        {
+            throw new PptxValidationException(
+                "visual_music_duration_invalid",
+                $"{path}.duration must be whole, half, quarter, eighth, or sixteenth.");
+        }
+
+        ValidateOptionalText(musicEvent.Annotation, $"{path}.annotation", 32);
+        if (musicEvent.TieToNext && isLastEvent)
+        {
+            throw new PptxValidationException(
+                "visual_music_tie_invalid",
+                $"{path}.tieToNext requires another event in the same measure.");
+        }
+
+        var notes = musicEvent.Notes;
+        if (musicEvent.Rest)
+        {
+            if (notes is { Count: > 0 })
+            {
+                throw new PptxValidationException(
+                    "visual_music_rest_invalid",
+                    $"{path}.notes must be omitted or empty when rest=true.");
+            }
+
+            return;
+        }
+
+        if (notes is null || notes.Count is < 1 or > 4)
+        {
+            throw new PptxValidationException(
+                "visual_music_notes_out_of_range",
+                $"{path}.notes must contain between 1 and 4 notes when rest=false.");
+        }
+
+        if (notes.Select(static note => note.StringNumber).Distinct().Count() != notes.Count)
+        {
+            throw new PptxValidationException(
+                "visual_music_string_duplicate",
+                $"{path}.notes must use each ukulele string at most once per event.");
+        }
+
+        for (var noteIndex = 0; noteIndex < notes.Count; noteIndex++)
+        {
+            ValidateMusicNote(notes[noteIndex], $"{path}.notes[{noteIndex}]", tuning);
+        }
+    }
+
+    private static void ValidateMusicNote(VisualMusicNoteSpec note, string path, string tuning)
+    {
+        var match = MusicPitchRegex().Match(note.Pitch);
+        if (!match.Success || !TryGetMidiPitch(match, out var midiPitch) || midiPitch is < 55 or > 84)
+        {
+            throw new PptxValidationException(
+                "visual_music_pitch_invalid",
+                $"{path}.pitch must use scientific pitch notation from G3 through C6.");
+        }
+
+        if (note.StringNumber is < 1 or > 4)
+        {
+            throw new PptxValidationException(
+                "visual_music_string_invalid",
+                $"{path}.string must be between 1 and 4.");
+        }
+
+        if (note.Fret is < 0 or > 24)
+        {
+            throw new PptxValidationException(
+                "visual_music_fret_invalid",
+                $"{path}.fret must be between 0 and 24.");
+        }
+
+        if (note.Finger is < 0 or > 4)
+        {
+            throw new PptxValidationException(
+                "visual_music_finger_invalid",
+                $"{path}.finger must be between 0 and 4.");
+        }
+
+        if (note.Fret == 0 && note.Finger is > 0)
+        {
+            throw new PptxValidationException(
+                "visual_music_finger_invalid",
+                $"{path}.finger must be 0 or omitted for an open string.");
+        }
+
+        ValidateColor(note.Color, $"{path}.color");
+        var openPitch = note.StringNumber switch
+        {
+            1 => 69,
+            2 => 64,
+            3 => 60,
+            4 when tuning.Equals("low-g", StringComparison.OrdinalIgnoreCase) => 55,
+            4 => 67,
+            _ => throw new InvalidOperationException("The ukulele string was validated before pitch comparison."),
+        };
+        if (openPitch + note.Fret != midiPitch)
+        {
+            throw new PptxValidationException(
+                "visual_music_pitch_tab_mismatch",
+                $"{path}.pitch does not match its string and fret for {tuning} tuning.");
+        }
+    }
+
+    private static bool TryGetMidiPitch(Match match, out int midiPitch)
+    {
+        var semitone = char.ToUpperInvariant(match.Groups[1].Value[0]) switch
+        {
+            'C' => 0,
+            'D' => 2,
+            'E' => 4,
+            'F' => 5,
+            'G' => 7,
+            'A' => 9,
+            'B' => 11,
+            _ => -100,
+        };
+        var accidental = match.Groups[2].Value switch
+        {
+            "#" => 1,
+            "b" => -1,
+            _ => 0,
+        };
+        if (!int.TryParse(match.Groups[3].Value, out var octave) || semitone < 0)
+        {
+            midiPitch = 0;
+            return false;
+        }
+
+        midiPitch = (octave + 1) * 12 + semitone + accidental;
+        return true;
     }
 
     private static void ValidateBriefSections(
@@ -893,4 +1200,10 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("^#?[0-9A-Fa-f]{6}$", RegexOptions.CultureInvariant)]
     private static partial Regex HexColorRegex();
+
+    [GeneratedRegex("^(?:[1-9][0-9]?)/(?:1|2|4|8|16)$", RegexOptions.CultureInvariant)]
+    private static partial Regex MusicTimeSignatureRegex();
+
+    [GeneratedRegex("^([A-Ga-g])([#b]?)([0-8])$", RegexOptions.CultureInvariant)]
+    private static partial Regex MusicPitchRegex();
 }

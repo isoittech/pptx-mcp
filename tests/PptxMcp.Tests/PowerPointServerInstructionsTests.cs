@@ -28,6 +28,8 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("StructuredBrief", instructions, StringComparison.Ordinal);
         Assert.Contains("design.density=detailed", instructions, StringComparison.Ordinal);
         Assert.Contains("Scorecard", instructions, StringComparison.Ordinal);
+        Assert.Contains("MusicScore", instructions, StringComparison.Ordinal);
+        Assert.Contains("matching pitch, string, and fret", instructions, StringComparison.Ordinal);
         Assert.Contains("heading sequence tells the story", instructions, StringComparison.Ordinal);
         Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
         Assert.Contains("below 9 pt", instructions, StringComparison.Ordinal);

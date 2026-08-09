@@ -460,4 +460,104 @@ public sealed class VisualDeckValidatorTests
 
         Assert.Contains(warnings, warning => warning.Contains("design.density=detailed", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void AcceptsEditableUkuleleMusicScoreWithFingerColors()
+    {
+        var deck = new VisualDeckSpec(
+            "ウクレレ入門",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.MusicScore,
+                    "メロディーとTABを対応させる",
+                    MusicScore: new VisualMusicScoreSpec(
+                        [
+                            new VisualMusicMeasureSpec(
+                                [
+                                    new VisualMusicEventSpec(
+                                        "quarter",
+                                        [new VisualMusicNoteSpec("C4", 3, 0, 0)]),
+                                    new VisualMusicEventSpec(
+                                        "eighth",
+                                        [new VisualMusicNoteSpec("D4", 3, 2, 2)],
+                                        Dotted: true),
+                                    new VisualMusicEventSpec(
+                                        "eighth",
+                                        [new VisualMusicNoteSpec("E4", 2, 0, 0)]),
+                                    new VisualMusicEventSpec("quarter", Rest: true),
+                                ]),
+                            new VisualMusicMeasureSpec(
+                                [
+                                    new VisualMusicEventSpec(
+                                        "half",
+                                        [
+                                            new VisualMusicNoteSpec("C4", 3, 0, 0),
+                                            new VisualMusicNoteSpec("E4", 2, 0, 0),
+                                            new VisualMusicNoteSpec("G4", 4, 0, 0),
+                                            new VisualMusicNoteSpec("C5", 1, 3, 3),
+                                        ]),
+                                    new VisualMusicEventSpec(
+                                        "quarter",
+                                        [new VisualMusicNoteSpec("F4", 2, 1, 1, "#E5484D")]),
+                                ],
+                                Number: 8),
+                        ],
+                        TempoBpm: 84,
+                        Caption: "色は左手の指番号を示します。")),
+            ]);
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void RejectsMusicScoreWhenPitchDoesNotMatchUkuleleTab()
+    {
+        var deck = new VisualDeckSpec(
+            "ウクレレ入門",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.MusicScore,
+                    "音とフレットを照合する",
+                    MusicScore: new VisualMusicScoreSpec(
+                        [
+                            new VisualMusicMeasureSpec(
+                                [
+                                    new VisualMusicEventSpec(
+                                        "quarter",
+                                        [new VisualMusicNoteSpec("D4", 3, 0, 0)]),
+                                ]),
+                        ])),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_music_pitch_tab_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void RejectsMusicScoreWithoutStandardNotationOrTablature()
+    {
+        var deck = new VisualDeckSpec(
+            "ウクレレ入門",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.MusicScore,
+                    "表示対象を必ず選ぶ",
+                    MusicScore: new VisualMusicScoreSpec(
+                        [
+                            new VisualMusicMeasureSpec(
+                                [
+                                    new VisualMusicEventSpec(
+                                        "quarter",
+                                        [new VisualMusicNoteSpec("C4", 3, 0, 0)]),
+                                ]),
+                        ],
+                        ShowStandardNotation: false,
+                        ShowTablature: false)),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_music_display_invalid", error.Code);
+    }
 }
