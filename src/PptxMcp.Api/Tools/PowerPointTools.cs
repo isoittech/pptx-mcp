@@ -26,12 +26,14 @@ public sealed class PowerPointTools
             "企業テンプレートから新規作成する場合は、解析結果のlayout_idとshape_idをそのまま使い、全ページ分のslidesを1回のpptx_create_deckへ渡す",
             "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はVisual Deckドラフトをpptx_finish_branded_visual_deckで生成する",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
-            "新規資料はpptx_start_visual_deck、pptx_add_visual_slides_to_draft、pptx_finish_visual_deckの順で小分けに構成し、明示的に不要と言われない限り既定テンプレートを使う",
+            "新規資料はpptx_start_visual_deckでテンプレート・theme・designを固定し、pptx_add_visual_slides_to_draft、pptx_finish_visual_deckの順で小分けに構成する",
+            "pptx_add_visual_slides_to_draftのstartSlideNumberは省略し、サーバー側で現在の末尾から自動計算する",
             "文字量が多い説明はstructured_brief、複数案を評価軸で比べる場合はscorecardを使い、小さい文字へ一括縮小しない",
             "五線譜とウクレレTABを編集可能なPowerPoint図形で併記する場合はmusicScoreを使い、音高、音価、弦、フレット、指番号を指定する",
             "成功したVisual Deckへページを追加する場合はpptx_insert_visual_slidesへ追加分だけを渡し、既存ページを再送しない",
             "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
-            "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡して最大2巡まで再生成する",
+            "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡してサーバー強制の最大2巡で収束させる",
+            "Visual Deck生成が一度成功したら全体生成を再開始せず、問題ページの差分修正または追加ページだけの挿入を使う",
             "視覚確認後にのみPPTXのダウンロードリンクを提示する",
         },
         limits = new
@@ -175,33 +177,49 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_start_visual_deck", Destructive = true),
-     Description("新規Visual Deckの小さなサーバー側ドラフトを開始します。新規資料では必ず最初に1回だけ呼び、資料タイトル、最終ページ数、全体のthemeとdesignだけを指定します。この段階でスライド本文やPPTXは生成しません。返されたdraft_idへpptx_add_visual_slides_to_draftで1〜4ページずつ順番に追加してください。空引数で呼ばないでください。")]
-    public static object StartVisualDeck(
+     Description("新規Visual Deckの小さなサーバー側ドラフトを開始します。新規資料では最初に1回だけ呼び、資料タイトル、最終ページ数、全体のtheme/design、テンプレート選択をここで確定します。確定後は完成まで変更できません。成功済みデッキがある場合は再開始せず、問題ページだけをpptx_refine_visual_slideで直します。明示的に別資料を作るようユーザーが依頼した場合だけuserRequestedNewWorkflow=trueを指定します。この段階でスライド本文やPPTXは生成しません。空引数で呼ばないでください。")]
+    public static async Task<object> StartVisualDeck(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
+        JobService jobs,
         [Required, Description("資料全体のタイトル。1〜160文字。")]
         string title,
         [Required, Description("完成時の総ページ数。1〜50。後から変更しないため、構成を決めてから指定します。")]
         int expectedSlideCount,
-        [Description("任意の全体テーマ。presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyber。")]
+        [Description("任意の全体テーマ。presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyber。明示した色とfontFaceはテンプレートから抽出した値より優先され、未指定項目だけテンプレートで補完されます。")]
         VisualThemeSpec? theme = null,
         [Description("任意の資料サブジェクト。最大240文字。")]
         string? subject = null,
         [Description("言語コード。省略時ja-JP。")]
         string language = "ja-JP",
         [Description("任意の全体デザイン。style、density、motifを指定します。")]
-        VisualDesignSpec? design = null)
+        VisualDesignSpec? design = null,
+        [Description("生成前に固定するテンプレート。既定はdefault、テンプレートなしはnone、添付はlatestまたはfile_id。完成時に変更できません。")]
+        string templateSourceFileId = "default",
+        [Description("通常はauto。添付テンプレートの特定レイアウトを使う場合だけpptx_analyzeの正確なlayout_id。生成前に固定されます。")]
+        string templateLayoutId = "auto",
+        [Description("既に成功したデッキとは別の新しい資料を、ユーザーが明示的に依頼した場合だけtrue。見た目の修正や自動リトライではfalseのままにします。")]
+        bool userRequestedNewWorkflow = false,
+        CancellationToken cancellationToken = default)
     {
         try
         {
+            var caller = callerContext.GetRequired();
+            var permission = await jobs.AuthorizeVisualDeckStartAsync(
+                caller,
+                userRequestedNewWorkflow,
+                cancellationToken).ConfigureAwait(false);
             return drafts.Begin(
-                callerContext.GetRequired(),
+                caller,
                 title,
                 expectedSlideCount,
                 theme,
                 subject,
                 language,
-                design);
+                design,
+                templateSourceFileId,
+                templateLayoutId,
+                permission.AllowSubmittedReplacement);
         }
         catch (PptxValidationException exception)
         {
@@ -210,16 +228,16 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
-     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは直前の応答が返したnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/structuredBrief/scorecard/musicScore/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。文字量が多い説明は2〜3個のsectionsへ分けるstructuredBrief、評価軸×選択肢はscorecard、編集可能な五線譜とウクレレTABの併記はmusicScoreを使います。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。明示する場合だけ直前のnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/structuredBrief/scorecard/musicScore/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。文字量が多い説明は2〜3個のsectionsへ分けるstructuredBrief、評価軸×選択肢はscorecard、編集可能な五線譜とウクレレTABの併記はmusicScoreを使います。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
     public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         [Required, Description("pptx_start_visual_deckが返したdraft_id。")]
         string draftId,
-        [Required, Description("このバッチの先頭ページ番号。直前の応答にあるnext_slide_numberをそのまま使います。")]
-        int startSlideNumber,
         [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定し、各音符のpitchとukulele string/fretを一致させて五線譜と色分けTABを生成します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。metric/card/section/scorecard cellのtoneは意味語または#RRGGBB、iconは組み込み業務アイコンを使えます。")]
-        IReadOnlyList<VisualSlideSpec> slides)
+        IReadOnlyList<VisualSlideSpec> slides,
+        [Description("省略推奨。明示する場合はこのバッチの先頭ページ番号で、直前のnext_slide_numberと一致させます。")]
+        int? startSlideNumber = null)
     {
         try
         {
@@ -236,15 +254,15 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_finish_visual_deck", Destructive = true),
-     Description("全ページを追加済みのVisual DeckドラフトをPPTXとして生成します。pptx_start_visual_deckとpptx_add_visual_slides_to_draftを完了し、remaining_slide_count=0になった後にdraftId付きで1回だけ呼びます。導入環境に既定テンプレートがあれば自動的にマスター、ロゴ、フッター、テーマを適用します。ユーザーがテンプレート不要と明示した場合だけuseDefaultTemplate=falseにします。生成後はpptx_wait_for_jobで完了を待ち、全ページを視覚確認してください。")]
+     Description("全ページを追加済みのVisual DeckドラフトをPPTXとして生成します。remaining_slide_count=0になった後にdraftId付きで1回だけ呼びます。テンプレート、theme、designはpptx_start_visual_deckで固定済みなので、この段階では変更しません。生成成功後はこのツールやpptx_start_visual_deckを再実行せず、全ページを視覚確認して問題ページだけをpptx_refine_visual_slideで直してください。")]
     public static Task<object> FinishVisualDeckAsync(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         JobService jobs,
         [Required, Description("全ページ追加後のVisual DeckドラフトID。")]
         string draftId,
-        [Description("省略時true。導入環境の既定テンプレートを適用します。ユーザーがテンプレート不要と明示した場合だけfalse。")]
-        bool useDefaultTemplate = true,
+        [Description("互換用。通常は省略します。指定した場合は開始時に固定したtemplateSourceFileId（true=default、false=none）と一致しなければエラーになります。")]
+        bool? useDefaultTemplate = null,
         CancellationToken cancellationToken = default) =>
         FinishVisualDraftAsync(
             "pptx_finish_visual_deck",
@@ -252,7 +270,8 @@ public sealed class PowerPointTools
             drafts,
             jobs,
             draftId,
-            (caller, deck, token) => jobs.SubmitVisualDeckAsync(caller, deck, useDefaultTemplate, token),
+            useDefaultTemplate.HasValue ? (useDefaultTemplate.Value ? "default" : "none") : null,
+            null,
             cancellationToken);
 
     [McpServerTool(Name = "pptx_finish_branded_visual_deck", Destructive = true),
@@ -263,10 +282,10 @@ public sealed class PowerPointTools
         JobService jobs,
         [Required, Description("全ページ追加後のVisual DeckドラフトID。")]
         string draftId,
-        [Description("通常はauto。明示する場合はpptx_analyzeが返したプレースホルダー0個の白紙layout_idを一字も変更せず指定します。")]
-        string templateLayoutId = "auto",
-        [Description("既定テンプレートはdefault。添付した別テンプレートはLibreChatのfile_id、識別子が見えない場合はlatest。省略時はdefault。")]
-        string sourceFileId = "default",
+        [Description("通常は省略し、開始時に固定したautoまたは正確なtemplateLayoutIdを使います。指定する場合は開始時の値と完全一致させます。")]
+        string? templateLayoutId = null,
+        [Description("通常は省略。指定する場合は開始時に固定したtemplateSourceFileIdと一致させます。")]
+        string? sourceFileId = null,
         CancellationToken cancellationToken = default) =>
         FinishVisualDraftAsync(
             "pptx_finish_branded_visual_deck",
@@ -274,12 +293,8 @@ public sealed class PowerPointTools
             drafts,
             jobs,
             draftId,
-            (caller, deck, token) => jobs.SubmitBrandedVisualDeckAsync(
-                caller,
-                sourceFileId,
-                deck,
-                templateLayoutId,
-                token),
+            sourceFileId,
+            templateLayoutId,
             cancellationToken);
 
     [McpServerTool(Name = "pptx_insert_visual_slides", Destructive = true),
@@ -332,14 +347,14 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_deck", Destructive = true),
-     Description("成功したpptx_finish_visual_deckまたはpptx_finish_branded_visual_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトも自動的に維持します。資料全体を再送せず、変更ページの完全なVisualSlideSpecだけをrevisionsへ指定してください。jobIdまたはrevisionsが欠けた場合はinput_requiredを返します。")]
+     Description("互換用のVisual Deck差分修正ツールです。サーバーは1回につき問題ページ1枚だけを受理し、最大2巡を強制します。通常はjobId=latestを自動解決して30秒待機するpptx_refine_visual_slideを優先してください。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトを維持します。資料全体を再送してはいけません。")]
     public static async Task<object> RefineVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
         [Required, Description("動作上必須。直前の成功したpptx_finish_visual_deckまたはpptx_finish_branded_visual_deckが返したjob_id。")]
         string jobId = "",
-        [Required, Description("動作上必須。変更ページだけの配列。各要素は1始まりのslide_numberと、差し替え後の完全なslideを含めます。")]
+        [Required, Description("動作上必須。要素数を正確に1件とし、1始まりのslide_numberと差し替え後の完全なslideを含めます。")]
         IReadOnlyList<VisualSlideRevision>? revisions = null)
     {
         var missing = new List<string>(2);
@@ -378,7 +393,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションでは、大きなrevisions配列を作るpptx_refine_visual_deckよりこのツールを優先してください。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。全ページを最大2巡までに収束させてください。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大2巡に制限します。上限後は全体を再作成しません。")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -490,7 +505,7 @@ public sealed class PowerPointTools
 
         content.Add(new TextContentBlock
         {
-            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck prefer pptx_refine_visual_slide with one complete replacement slide at a time. Never resend the complete deck.",
+            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck use pptx_refine_visual_slide with one complete replacement slide at a time. Never resend, restart, or rebuild the complete deck after a successful generation. The server permits at most two visual refinement rounds.",
         });
         return new CallToolResult
         {
@@ -519,21 +534,30 @@ public sealed class PowerPointTools
         VisualDeckDraftService drafts,
         JobService jobs,
         string draftId,
-        Func<CallerContext, VisualDeckSpec, CancellationToken, Task<JobReceipt>> submit,
+        string? requestedTemplateSourceFileId,
+        string? requestedTemplateLayoutId,
         CancellationToken cancellationToken)
     {
         var caller = callerContext.GetRequired();
         var acquired = false;
         try
         {
-            var submission = drafts.AcquireForSubmission(caller, draftId);
+            var submission = drafts.AcquireForSubmission(
+                caller,
+                draftId,
+                requestedTemplateSourceFileId,
+                requestedTemplateLayoutId);
             if (submission.ExistingJobId is not null)
             {
                 return await jobs.GetAsync(caller, submission.ExistingJobId, cancellationToken).ConfigureAwait(false);
             }
 
             acquired = true;
-            var receipt = await submit(caller, submission.Deck!, cancellationToken).ConfigureAwait(false);
+            var receipt = await SubmitLockedVisualDeckAsync(
+                jobs,
+                caller,
+                submission,
+                cancellationToken).ConfigureAwait(false);
             drafts.MarkSubmitted(caller, draftId, receipt.JobId);
             return receipt;
         }
@@ -557,11 +581,52 @@ public sealed class PowerPointTools
         }
     }
 
-    private static ToolValidationError CreateValidationError(string tool, PptxValidationException exception) =>
-        new(
+    private static Task<JobReceipt> SubmitLockedVisualDeckAsync(
+        JobService jobs,
+        CallerContext caller,
+        VisualDeckDraftSubmission submission,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(submission.TemplateSourceFileId, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            return jobs.SubmitVisualDeckAsync(caller, submission.Deck!, false, cancellationToken);
+        }
+
+        if (string.Equals(submission.TemplateSourceFileId, "default", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(submission.TemplateLayoutId, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return jobs.SubmitVisualDeckAsync(caller, submission.Deck!, true, cancellationToken);
+        }
+
+        return jobs.SubmitBrandedVisualDeckAsync(
+            caller,
+            submission.TemplateSourceFileId,
+            submission.Deck!,
+            submission.TemplateLayoutId,
+            cancellationToken);
+    }
+
+    private static ToolValidationError CreateValidationError(string tool, PptxValidationException exception)
+    {
+        var instruction = exception.Code switch
+        {
+            "visual_deck_already_completed" =>
+                "Do not call pptx_start_visual_deck again. Use pptx_get_preview_images, pptx_refine_visual_slide, or pptx_insert_visual_slides. Set userRequestedNewWorkflow=true only after an explicit user request for a separate deck.",
+            "visual_deck_generation_in_progress" or "visual_deck_operation_in_progress" =>
+                "Wait for the existing job with pptx_wait_for_job. Do not start or branch another full-deck job.",
+            "visual_deck_recovery_limit_reached" or "visual_refinement_limit_reached" =>
+                "Stop calling PowerPoint mutation tools and report the latest successful result or failure to the user.",
+            "visual_deck_job_superseded" =>
+                "Call the same page-level operation once with jobId=latest so all accepted changes are preserved.",
+            "visual_creative_direction_locked" =>
+                "Finish the existing draft with its locked template, theme, and design. Do not restart the whole deck to change appearance.",
+            _ => $"Correct the field named in message and call {tool} again. Do not repeat the same invalid input.",
+        };
+        return new(
             "invalid_input",
             tool,
             exception.Code,
             exception.Message,
-            $"Correct the field named in message and call {tool} again. Do not repeat the same invalid input.");
+            instruction);
+    }
 }

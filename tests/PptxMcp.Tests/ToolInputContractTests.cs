@@ -209,6 +209,9 @@ public sealed class ToolInputContractTests
     [Fact]
     public void NewDeckToolsDefaultToDeploymentTemplate()
     {
+        var startMethod = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.StartVisualDeck),
+            BindingFlags.Public | BindingFlags.Static);
         var visualMethod = typeof(PowerPointTools).GetMethod(
             nameof(PowerPointTools.FinishVisualDeckAsync),
             BindingFlags.Public | BindingFlags.Static);
@@ -219,15 +222,16 @@ public sealed class ToolInputContractTests
             nameof(PowerPointTools.CreateDeckAsync),
             BindingFlags.Public | BindingFlags.Static);
 
+        Assert.NotNull(startMethod);
         Assert.NotNull(visualMethod);
         Assert.NotNull(brandedMethod);
         Assert.NotNull(strictMethod);
         Assert.Equal(
-            true,
-            visualMethod.GetParameters().Single(parameter => parameter.Name == "useDefaultTemplate").DefaultValue);
-        Assert.Equal(
             "default",
-            brandedMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
+            startMethod.GetParameters().Single(parameter => parameter.Name == "templateSourceFileId").DefaultValue);
+        Assert.Null(
+            visualMethod.GetParameters().Single(parameter => parameter.Name == "useDefaultTemplate").DefaultValue);
+        Assert.Null(brandedMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
         Assert.Equal(
             "default",
             strictMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
@@ -238,7 +242,6 @@ public sealed class ToolInputContractTests
     [InlineData(nameof(PowerPointTools.StartVisualDeck), "title")]
     [InlineData(nameof(PowerPointTools.StartVisualDeck), "expectedSlideCount")]
     [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "draftId")]
-    [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "startSlideNumber")]
     [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "slides")]
     [InlineData(nameof(PowerPointTools.FinishVisualDeckAsync), "draftId")]
     [InlineData(nameof(PowerPointTools.FinishBrandedVisualDeckAsync), "draftId")]
@@ -262,6 +265,25 @@ public sealed class ToolInputContractTests
             .ToArray();
 
         Assert.Contains(argumentName, required);
+    }
+
+    [Fact]
+    public void VisualDraftAppendPositionIsOptionalInMcpSchema()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.AddVisualSlidesToDraft),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var tool = McpServerTool.Create(method);
+        var required = tool.ProtocolTool.InputSchema
+            .GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToArray();
+
+        Assert.DoesNotContain("startSlideNumber", required);
+        Assert.Null(method.GetParameters().Single(parameter => parameter.Name == "startSlideNumber").DefaultValue);
     }
 
     [Fact]

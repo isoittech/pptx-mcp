@@ -23,7 +23,10 @@ public sealed class VisualDeckDraftService(
         VisualThemeSpec? theme,
         string? subject,
         string language,
-        VisualDesignSpec? design)
+        VisualDesignSpec? design,
+        string templateSourceFileId = "default",
+        string templateLayoutId = "auto",
+        bool allowSubmittedReplacement = false)
     {
         VisualDeckValidator.ValidateMetadata(title, subject, language, theme, design);
         if (expectedSlideCount is < 1 || expectedSlideCount > options.MaxSlides)
@@ -33,7 +36,27 @@ public sealed class VisualDeckDraftService(
                 $"expectedSlideCount must be between 1 and {options.MaxSlides}.");
         }
 
+        ValidateTemplateSelection(templateSourceFileId, templateLayoutId);
+
         PruneExpired();
+        var active = drafts.Values
+            .Where(draft =>
+                string.Equals(draft.UserScope, caller.UserScope, StringComparison.Ordinal)
+                && string.Equals(draft.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
+            .OrderByDescending(static draft => draft.CreatedAt)
+            .FirstOrDefault();
+        if (active is not null && active.Status is DraftStatus.Collecting or DraftStatus.Submitting)
+        {
+            return CreateView(active);
+        }
+
+        if (active is not null && !allowSubmittedReplacement)
+        {
+            throw new PptxValidationException(
+                "visual_draft_already_submitted",
+                $"This conversation already submitted visual deck job {active.JobId}. Do not start the deck again.");
+        }
+
         if (drafts.Count >= MaximumActiveDrafts)
         {
             throw new PptxValidationException(
@@ -55,8 +78,11 @@ public sealed class VisualDeckDraftService(
                 subject,
                 language,
                 design,
+                NormalizeTemplateSource(templateSourceFileId),
+                NormalizeTemplateLayout(templateSourceFileId, templateLayoutId),
                 DraftStatus.Collecting,
                 null,
+                now,
                 now.Add(DraftLifetime));
             if (drafts.TryAdd(draft.Id, draft))
             {
@@ -68,7 +94,7 @@ public sealed class VisualDeckDraftService(
     public VisualDeckDraftView AddSlides(
         CallerContext caller,
         string draftId,
-        int startSlideNumber,
+        int? startSlideNumber,
         IReadOnlyList<VisualSlideSpec> slides)
     {
         if (slides is null || slides.Count is < 1 or > MaximumBatchSlides || slides.Any(static slide => slide is null))
@@ -83,7 +109,7 @@ public sealed class VisualDeckDraftService(
             var current = GetOwned(caller, draftId);
             EnsureCollecting(current);
             var expectedStart = current.Slides.Count + 1;
-            if (startSlideNumber != expectedStart)
+            if (startSlideNumber.HasValue && startSlideNumber.Value != expectedStart)
             {
                 throw new PptxValidationException(
                     "visual_draft_position_invalid",
@@ -107,14 +133,26 @@ public sealed class VisualDeckDraftService(
         }
     }
 
-    public VisualDeckDraftSubmission AcquireForSubmission(CallerContext caller, string draftId)
+    public VisualDeckDraftSubmission AcquireForSubmission(
+        CallerContext caller,
+        string draftId,
+        string? requestedTemplateSourceFileId = null,
+        string? requestedTemplateLayoutId = null)
     {
         while (true)
         {
             var current = GetOwned(caller, draftId);
+            EnsureTemplateSelectionMatches(
+                current,
+                requestedTemplateSourceFileId,
+                requestedTemplateLayoutId);
             if (current.Status == DraftStatus.Submitted && current.JobId is not null)
             {
-                return new VisualDeckDraftSubmission(null, current.JobId);
+                return new VisualDeckDraftSubmission(
+                    null,
+                    current.JobId,
+                    current.TemplateSourceFileId,
+                    current.TemplateLayoutId);
             }
 
             if (current.Status == DraftStatus.Submitting)
@@ -136,7 +174,11 @@ public sealed class VisualDeckDraftService(
             var submitting = current with { Status = DraftStatus.Submitting };
             if (drafts.TryUpdate(current.Id, submitting, current))
             {
-                return new VisualDeckDraftSubmission(deck, null);
+                return new VisualDeckDraftSubmission(
+                    deck,
+                    null,
+                    current.TemplateSourceFileId,
+                    current.TemplateLayoutId);
             }
         }
     }
@@ -229,7 +271,7 @@ public sealed class VisualDeckDraftService(
         var remaining = draft.ExpectedSlideCount - accepted;
         var instruction = remaining == 0
             ? "All requested slides are accepted. Call the appropriate pptx_finish_* tool once with this draft_id."
-            : $"Call pptx_add_visual_slides_to_draft with startSlideNumber={accepted + 1} and the next 1-{Math.Min(MaximumBatchSlides, remaining)} slides.";
+            : $"Call pptx_add_visual_slides_to_draft with this draft_id and the next 1-{Math.Min(MaximumBatchSlides, remaining)} slides. Omit startSlideNumber; the server will append at slide {accepted + 1}.";
         return new VisualDeckDraftView(
             draft.Id,
             "draft",
@@ -238,8 +280,56 @@ public sealed class VisualDeckDraftService(
             accepted + 1,
             remaining,
             MaximumBatchSlides,
+            draft.TemplateSourceFileId,
+            draft.TemplateLayoutId,
+            true,
             instruction);
     }
+
+    private static void ValidateTemplateSelection(string sourceFileId, string layoutId)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFileId) || sourceFileId.Length > 512)
+        {
+            throw new PptxValidationException(
+                "visual_template_source_invalid",
+                "templateSourceFileId must be default, none, latest, or an uploaded PPTX file_id.");
+        }
+
+        if (string.IsNullOrWhiteSpace(layoutId) || layoutId.Length > 512)
+        {
+            throw new PptxValidationException(
+                "visual_template_layout_invalid",
+                "templateLayoutId must be auto or an exact blank layout_id returned by pptx_analyze.");
+        }
+    }
+
+    private static void EnsureTemplateSelectionMatches(
+        DraftState draft,
+        string? requestedSourceFileId,
+        string? requestedLayoutId)
+    {
+        var requestedSource = requestedSourceFileId is null
+            ? draft.TemplateSourceFileId
+            : NormalizeTemplateSource(requestedSourceFileId);
+        var requestedLayout = requestedLayoutId is null
+            ? draft.TemplateLayoutId
+            : NormalizeTemplateLayout(requestedSource, requestedLayoutId);
+        if (!string.Equals(requestedSource, draft.TemplateSourceFileId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(requestedLayout, draft.TemplateLayoutId, StringComparison.Ordinal))
+        {
+            throw new PptxValidationException(
+                "visual_creative_direction_locked",
+                "Template and theme choices are locked when pptx_start_visual_deck succeeds. Finish this draft with the locked choices; do not rebuild the whole deck.");
+        }
+    }
+
+    private static string NormalizeTemplateSource(string sourceFileId) =>
+        sourceFileId.Trim();
+
+    private static string NormalizeTemplateLayout(string sourceFileId, string layoutId) =>
+        string.Equals(sourceFileId, "none", StringComparison.OrdinalIgnoreCase)
+            ? "auto"
+            : layoutId.Trim();
 
     private void PruneExpired()
     {
@@ -276,9 +366,16 @@ public sealed class VisualDeckDraftService(
         string? Subject,
         string Language,
         VisualDesignSpec? Design,
+        string TemplateSourceFileId,
+        string TemplateLayoutId,
         DraftStatus Status,
         string? JobId,
+        DateTimeOffset CreatedAt,
         DateTimeOffset ExpiresAt);
 }
 
-public sealed record VisualDeckDraftSubmission(VisualDeckSpec? Deck, string? ExistingJobId);
+public sealed record VisualDeckDraftSubmission(
+    VisualDeckSpec? Deck,
+    string? ExistingJobId,
+    string TemplateSourceFileId,
+    string TemplateLayoutId);

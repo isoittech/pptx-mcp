@@ -14,25 +14,28 @@ public sealed class PowerPointServerInstructionsTests
         });
 
         Assert.Contains("without pptx_analyze", instructions, StringComparison.Ordinal);
-        Assert.Contains("useDefaultTemplate=false", instructions, StringComparison.Ordinal);
-        Assert.Contains("explicit alternate template overrides", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("templateSourceFileId=none", instructions, StringComparison.Ordinal);
+        Assert.Contains("Template selection is locked at start", instructions, StringComparison.Ordinal);
         Assert.Contains("call pptx_wait_for_job once", instructions, StringComparison.Ordinal);
         Assert.Contains("instead of repeatedly calling pptx_get_job", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_insert_visual_slides with jobId=latest and only the new slides", instructions, StringComparison.Ordinal);
         Assert.Contains("Never reconstruct or resend the existing slides", instructions, StringComparison.Ordinal);
         Assert.Contains("never start a new draft for this operation", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_start_visual_deck exactly once", instructions, StringComparison.Ordinal);
+        Assert.Contains("Omit startSlideNumber", instructions, StringComparison.Ordinal);
         Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);
         Assert.Contains("remaining_slide_count is zero", instructions, StringComparison.Ordinal);
-        Assert.Contains("does not expose a one-call tool", instructions, StringComparison.Ordinal);
+        Assert.Contains("only one recovery restart", instructions, StringComparison.Ordinal);
+        Assert.Contains("userRequestedNewWorkflow=true", instructions, StringComparison.Ordinal);
         Assert.Contains("StructuredBrief", instructions, StringComparison.Ordinal);
         Assert.Contains("design.density=detailed", instructions, StringComparison.Ordinal);
         Assert.Contains("Scorecard", instructions, StringComparison.Ordinal);
         Assert.Contains("MusicScore", instructions, StringComparison.Ordinal);
         Assert.Contains("matching pitch, string, and fret", instructions, StringComparison.Ordinal);
-        Assert.Contains("heading sequence tells the story", instructions, StringComparison.Ordinal);
+        Assert.Contains("headings alone tell the story", instructions, StringComparison.Ordinal);
         Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
         Assert.Contains("below 9 pt", instructions, StringComparison.Ordinal);
+        Assert.Contains("enforces at most two rounds", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

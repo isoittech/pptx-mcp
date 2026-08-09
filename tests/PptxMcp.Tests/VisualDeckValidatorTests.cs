@@ -28,7 +28,7 @@ public sealed class VisualDeckValidatorTests
         Assert.Equal("aurora", result.Theme!.Preset);
         Assert.Equal("#112233", result.Theme.PrimaryColor);
         Assert.Equal("#445566", result.Theme.SecondaryColor);
-        Assert.Equal("#778899", result.Theme.AccentColor);
+        Assert.Equal("#ABCDEF", result.Theme.AccentColor);
         Assert.Equal("#FFFFFF", result.Theme.BackgroundColor);
         Assert.Equal("#101010", result.Theme.TextColor);
         Assert.Equal("Corporate Body", result.Theme.FontFace);

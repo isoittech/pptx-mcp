@@ -55,6 +55,9 @@ public sealed record VisualDeckDraftView(
     [property: JsonPropertyName("next_slide_number")] int NextSlideNumber,
     [property: JsonPropertyName("remaining_slide_count")] int RemainingSlideCount,
     [property: JsonPropertyName("maximum_batch_slides")] int MaximumBatchSlides,
+    [property: JsonPropertyName("template_source_file_id")] string TemplateSourceFileId,
+    [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId,
+    [property: JsonPropertyName("creative_direction_locked")] bool CreativeDirectionLocked,
     [property: JsonPropertyName("instruction")] string Instruction);
 
 public sealed record BrandedVisualDeckSpec(
@@ -243,12 +246,12 @@ public static class VisualDeckBranding
         var current = deck.Theme ?? new VisualThemeSpec("minimal");
         var brandedTheme = current with
         {
-            PrimaryColor = templateTheme.PrimaryColor ?? current.PrimaryColor,
-            SecondaryColor = templateTheme.SecondaryColor ?? current.SecondaryColor,
-            AccentColor = templateTheme.AccentColor ?? current.AccentColor,
-            BackgroundColor = templateTheme.BackgroundColor ?? current.BackgroundColor,
-            TextColor = templateTheme.TextColor ?? current.TextColor,
-            FontFace = templateTheme.BodyFont ?? templateTheme.HeadingFont ?? current.FontFace,
+            PrimaryColor = current.PrimaryColor ?? templateTheme.PrimaryColor,
+            SecondaryColor = current.SecondaryColor ?? templateTheme.SecondaryColor,
+            AccentColor = current.AccentColor ?? templateTheme.AccentColor,
+            BackgroundColor = current.BackgroundColor ?? templateTheme.BackgroundColor,
+            TextColor = current.TextColor ?? templateTheme.TextColor,
+            FontFace = current.FontFace ?? templateTheme.BodyFont ?? templateTheme.HeadingFont,
         };
         return deck with { Theme = brandedTheme };
     }

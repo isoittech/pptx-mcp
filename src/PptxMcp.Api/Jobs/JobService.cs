@@ -19,6 +19,9 @@ public sealed class JobService(
     TimeProvider timeProvider)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly SemaphoreSlim[] visualMutationLocks = Enumerable.Range(0, 64)
+        .Select(static _ => new SemaphoreSlim(1, 1))
+        .ToArray();
     private readonly PptxMcpOptions options = options.Value;
 
     public Task<JobReceipt> SubmitAnalyzeAsync(
@@ -97,7 +100,12 @@ public sealed class JobService(
         VisualDeckValidator.Validate(deck, options.MaxSlides);
         if (!useDefaultTemplate || !templates.HasDefault)
         {
-            return await SubmitGeneratedAsync(caller, JobKind.CreateVisualDeck, deck, cancellationToken)
+            return await SubmitGeneratedAsync(
+                caller,
+                JobKind.CreateVisualDeck,
+                deck,
+                cancellationToken,
+                new VisualJobSubmission(IsRoot: true))
                 .ConfigureAwait(false);
         }
 
@@ -106,7 +114,8 @@ public sealed class JobService(
             "default",
             JobKind.CreateBrandedVisualDeck,
             new BrandedVisualDeckSpec(deck, "auto"),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            new VisualJobSubmission(IsRoot: true)).ConfigureAwait(false);
     }
 
     public Task<JobReceipt> SubmitBrandedVisualDeckAsync(
@@ -129,7 +138,69 @@ public sealed class JobService(
             sourceFileId,
             JobKind.CreateBrandedVisualDeck,
             new BrandedVisualDeckSpec(deck, templateLayoutId),
-            cancellationToken);
+            cancellationToken,
+            new VisualJobSubmission(IsRoot: true));
+    }
+
+    public async Task<VisualDeckStartDecision> AuthorizeVisualDeckStartAsync(
+        CallerContext caller,
+        bool userRequestedNewWorkflow,
+        CancellationToken cancellationToken)
+    {
+        var visualJobs = new List<JobRecord>();
+        await foreach (var candidate in repository.ListAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (candidate.Kind is (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck)
+                && string.Equals(candidate.UserScope, caller.UserScope, StringComparison.Ordinal)
+                && string.Equals(candidate.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
+            {
+                visualJobs.Add(candidate);
+            }
+        }
+
+        if (visualJobs.Any(static job => job.State is JobState.Queued or JobState.Running))
+        {
+            throw new PptxValidationException(
+                "visual_deck_generation_in_progress",
+                "A visual deck job is already queued or running in this conversation. Wait for it instead of starting the deck again.");
+        }
+
+        var rootAttempts = visualJobs
+            .Where(static job => job.ParentJobId is null)
+            .OrderByDescending(static job => job.CreatedAt)
+            .ThenByDescending(static job => job.Id, StringComparer.Ordinal)
+            .ToArray();
+        var latestRootAttempt = rootAttempts.FirstOrDefault();
+        if (latestRootAttempt is null)
+        {
+            return new VisualDeckStartDecision(AllowSubmittedReplacement: false, IsRecoveryRestart: false);
+        }
+
+        if (latestRootAttempt.State == JobState.Succeeded)
+        {
+            if (!userRequestedNewWorkflow)
+            {
+                throw new PptxValidationException(
+                    "visual_deck_already_completed",
+                    "A visual deck has already succeeded in this conversation. Use page-level refinement or slide insertion; do not start the whole deck again.");
+            }
+
+            return new VisualDeckStartDecision(AllowSubmittedReplacement: true, IsRecoveryRestart: false);
+        }
+
+        var failedRootAttempts = rootAttempts
+            .TakeWhile(static job => job.State is JobState.Failed or JobState.Canceled)
+            .Count();
+        if (failedRootAttempts >= 2)
+        {
+            throw new PptxValidationException(
+                "visual_deck_recovery_limit_reached",
+                "The initial visual deck generation and its single recovery attempt both failed. Stop and report the latest job error instead of starting again.");
+        }
+
+        return new VisualDeckStartDecision(
+            AllowSubmittedReplacement: failedRootAttempts == 1,
+            IsRecoveryRestart: failedRootAttempts == 1);
     }
 
     public async Task<JobReceipt> SubmitRefineVisualDeckAsync(
@@ -139,6 +210,28 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        var mutationLock = GetVisualMutationLock(sourceJob);
+        await mutationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await SubmitRefineVisualDeckCoreAsync(
+                caller,
+                sourceJob,
+                revisions,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            mutationLock.Release();
+        }
+    }
+
+    private async Task<JobReceipt> SubmitRefineVisualDeckCoreAsync(
+        CallerContext caller,
+        JobRecord sourceJob,
+        IReadOnlyList<VisualSlideRevision> revisions,
+        CancellationToken cancellationToken)
+    {
         if (sourceJob.State != JobState.Succeeded
             || sourceJob.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck))
         {
@@ -146,6 +239,19 @@ public sealed class JobService(
                 "visual_deck_job_not_refinable",
                 "Only a successful visual or branded visual deck job can be refined.");
         }
+
+        if (revisions is null || revisions.Count != 1)
+        {
+            throw new PptxValidationException(
+                "visual_refinement_must_be_single_slide",
+                "Refine exactly one problem slide per call. Do not resend multiple slides or the complete deck.");
+        }
+
+        var visualSubmission = await PrepareVisualRefinementAsync(
+            caller,
+            sourceJob,
+            revisions[0].SlideNumber,
+            cancellationToken).ConfigureAwait(false);
 
         if (sourceJob.Kind == JobKind.CreateBrandedVisualDeck)
         {
@@ -165,7 +271,8 @@ public sealed class JobService(
                 sourcePath,
                 JobKind.CreateBrandedVisualDeck,
                 branded with { Deck = refinedBrandedDeck },
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                visualSubmission).ConfigureAwait(false);
         }
 
         var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
@@ -176,7 +283,8 @@ public sealed class JobService(
             caller,
             JobKind.CreateVisualDeck,
             refinedDeck,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            visualSubmission).ConfigureAwait(false);
     }
 
     public async Task<JobReceipt> SubmitInsertVisualSlidesAsync(
@@ -187,6 +295,30 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
+        var mutationLock = GetVisualMutationLock(sourceJob);
+        await mutationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await SubmitInsertVisualSlidesCoreAsync(
+                caller,
+                sourceJob,
+                insertedSlides,
+                afterSlideNumber,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            mutationLock.Release();
+        }
+    }
+
+    private async Task<JobReceipt> SubmitInsertVisualSlidesCoreAsync(
+        CallerContext caller,
+        JobRecord sourceJob,
+        IReadOnlyList<VisualSlideSpec> insertedSlides,
+        int? afterSlideNumber,
+        CancellationToken cancellationToken)
+    {
         if (sourceJob.State != JobState.Succeeded
             || sourceJob.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck))
         {
@@ -194,6 +326,13 @@ public sealed class JobService(
                 "visual_deck_job_not_insertable",
                 "Only a successful visual or branded visual deck job can receive inserted slides.");
         }
+
+        await EnsureLatestVisualJobAsync(caller, sourceJob, cancellationToken).ConfigureAwait(false);
+        var insertionSubmission = new VisualJobSubmission(
+            RootJobId: GetVisualRootJobId(sourceJob),
+            ParentJobId: sourceJob.Id,
+            RevisionRound: 0,
+            RevisedSlidesInRound: []);
 
         if (sourceJob.Kind == JobKind.CreateBrandedVisualDeck)
         {
@@ -217,7 +356,8 @@ public sealed class JobService(
                 sourcePath,
                 JobKind.CreateBrandedVisualDeck,
                 branded with { Deck = extendedBrandedDeck },
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                insertionSubmission).ConfigureAwait(false);
         }
 
         var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
@@ -232,7 +372,8 @@ public sealed class JobService(
             caller,
             JobKind.CreateVisualDeck,
             extendedDeck,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            insertionSubmission).ConfigureAwait(false);
     }
 
     public async Task<string> GetLatestSuccessfulVisualJobIdAsync(
@@ -278,7 +419,10 @@ public sealed class JobService(
             job.Result,
             links,
             job.ErrorCode,
-            job.ErrorMessage);
+            job.ErrorMessage,
+            job.VisualRootJobId,
+            job.VisualRevisionRound,
+            job.VisualRevisedSlidesInRound);
     }
 
     public async Task<JobView?> WaitForTerminalAsync(
@@ -551,6 +695,89 @@ public sealed class JobService(
         return originalDeck with { Slides = combinedSlides };
     }
 
+    private async Task<VisualJobSubmission> PrepareVisualRefinementAsync(
+        CallerContext caller,
+        JobRecord sourceJob,
+        int slideNumber,
+        CancellationToken cancellationToken)
+    {
+        await EnsureLatestVisualJobAsync(caller, sourceJob, cancellationToken).ConfigureAwait(false);
+
+        var sourceRound = sourceJob.VisualRevisionRound;
+        var revisedInSourceRound = sourceJob.VisualRevisedSlidesInRound ?? [];
+        var nextRound = sourceRound == 0
+            ? 1
+            : revisedInSourceRound.Contains(slideNumber)
+                ? sourceRound + 1
+                : sourceRound;
+        if (nextRound > 2)
+        {
+            throw new PptxValidationException(
+                "visual_refinement_limit_reached",
+                $"Slide {slideNumber} has already been refined in both allowed visual review rounds. Stop refining and return the latest successful deck.");
+        }
+
+        var revisedSlides = nextRound == sourceRound
+            ? revisedInSourceRound.Append(slideNumber).Distinct().Order().ToArray()
+            : [slideNumber];
+        return new VisualJobSubmission(
+            RootJobId: GetVisualRootJobId(sourceJob),
+            ParentJobId: sourceJob.Id,
+            RevisionRound: nextRound,
+            RevisedSlidesInRound: revisedSlides);
+    }
+
+    private async Task EnsureLatestVisualJobAsync(
+        CallerContext caller,
+        JobRecord sourceJob,
+        CancellationToken cancellationToken)
+    {
+        var rootJobId = GetVisualRootJobId(sourceJob);
+        JobRecord? latestSucceeded = null;
+        await foreach (var candidate in repository.ListAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (candidate.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck)
+                || !string.Equals(candidate.UserScope, caller.UserScope, StringComparison.Ordinal)
+                || !string.Equals(candidate.ConversationScope, caller.ConversationScope, StringComparison.Ordinal)
+                || !string.Equals(GetVisualRootJobId(candidate), rootJobId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (candidate.Id != sourceJob.Id && candidate.State is JobState.Queued or JobState.Running)
+            {
+                throw new PptxValidationException(
+                    "visual_deck_operation_in_progress",
+                    "Another operation for this visual deck is already queued or running. Wait for it instead of branching from an older result.");
+            }
+
+            if (candidate.State == JobState.Succeeded
+                && (latestSucceeded is null
+                    || candidate.CreatedAt > latestSucceeded.CreatedAt
+                    || (candidate.CreatedAt == latestSucceeded.CreatedAt
+                        && string.CompareOrdinal(candidate.Id, latestSucceeded.Id) > 0)))
+            {
+                latestSucceeded = candidate;
+            }
+        }
+
+        if (latestSucceeded is not null && latestSucceeded.Id != sourceJob.Id)
+        {
+            throw new PptxValidationException(
+                "visual_deck_job_superseded",
+                $"Job {sourceJob.Id} is not the latest successful version of this deck. Use jobId=latest so prior page-level changes are preserved.");
+        }
+    }
+
+    private static string GetVisualRootJobId(JobRecord job) =>
+        string.IsNullOrWhiteSpace(job.VisualRootJobId) ? job.Id : job.VisualRootJobId;
+
+    private SemaphoreSlim GetVisualMutationLock(JobRecord job)
+    {
+        var hash = (uint)StringComparer.Ordinal.GetHashCode(GetVisualRootJobId(job));
+        return visualMutationLocks[hash % visualMutationLocks.Length];
+    }
+
     private async Task<JobReceipt> SubmitAsync<TPayload>(
         CallerContext caller,
         string sourceFileId,
@@ -573,7 +800,8 @@ public sealed class JobService(
         string sourceFileId,
         JobKind kind,
         TPayload? payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        VisualJobSubmission? visualSubmission = null)
     {
         var input = string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
             ? await templates.ResolveDefaultAsync(cancellationToken).ConfigureAwait(false)
@@ -584,7 +812,8 @@ public sealed class JobService(
             input.Path,
             kind,
             payload,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            visualSubmission).ConfigureAwait(false);
     }
 
     private async Task<JobReceipt> SubmitFromPathAsync<TPayload>(
@@ -593,12 +822,14 @@ public sealed class JobService(
         string sourcePath,
         JobKind kind,
         TPayload? payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        VisualJobSubmission? visualSubmission = null)
     {
         var now = timeProvider.GetUtcNow();
+        var jobId = Guid.NewGuid().ToString("N");
         var job = new JobRecord
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = jobId,
             Kind = kind,
             State = JobState.Queued,
             UserScope = caller.UserScope,
@@ -608,6 +839,12 @@ public sealed class JobService(
             ExpiresAt = now.AddDays(options.RetentionDays),
             ProgressPercent = 0,
             Payload = payload is null ? null : JsonSerializer.SerializeToElement(payload, SerializerOptions),
+            ParentJobId = visualSubmission?.ParentJobId,
+            VisualRootJobId = visualSubmission?.IsRoot == true
+                ? jobId
+                : visualSubmission?.RootJobId,
+            VisualRevisionRound = visualSubmission?.RevisionRound ?? 0,
+            VisualRevisedSlidesInRound = visualSubmission?.RevisedSlidesInRound ?? [],
         };
 
         try
@@ -634,12 +871,14 @@ public sealed class JobService(
         CallerContext caller,
         JobKind kind,
         TPayload payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        VisualJobSubmission? visualSubmission = null)
     {
         var now = timeProvider.GetUtcNow();
+        var jobId = Guid.NewGuid().ToString("N");
         var job = new JobRecord
         {
-            Id = Guid.NewGuid().ToString("N"),
+            Id = jobId,
             Kind = kind,
             State = JobState.Queued,
             UserScope = caller.UserScope,
@@ -649,6 +888,12 @@ public sealed class JobService(
             ExpiresAt = now.AddDays(options.RetentionDays),
             ProgressPercent = 0,
             Payload = JsonSerializer.SerializeToElement(payload, SerializerOptions),
+            ParentJobId = visualSubmission?.ParentJobId,
+            VisualRootJobId = visualSubmission?.IsRoot == true
+                ? jobId
+                : visualSubmission?.RootJobId,
+            VisualRevisionRound = visualSubmission?.RevisionRound ?? 0,
+            VisualRevisedSlidesInRound = visualSubmission?.RevisedSlidesInRound ?? [],
         };
 
         try
@@ -734,3 +979,14 @@ public sealed class JobService(
         }
     }
 }
+
+public sealed record VisualDeckStartDecision(
+    bool AllowSubmittedReplacement,
+    bool IsRecoveryRestart);
+
+internal sealed record VisualJobSubmission(
+    bool IsRoot = false,
+    string? RootJobId = null,
+    string? ParentJobId = null,
+    int RevisionRound = 0,
+    IReadOnlyList<int>? RevisedSlidesInRound = null);

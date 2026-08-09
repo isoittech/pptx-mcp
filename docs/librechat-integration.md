@@ -44,15 +44,15 @@ GET /artifacts/{job_id}/{file_name}?token=...
 
 - 資料編集前に `pptx_analyze` を実行する。
 - 会話に`file_id`が提示されていなければ`sourceFileId`を省略し、最新アップロードを使う。
-- 通常の新規資料は、全体構成と完成ページ数を決めてから `pptx_start_visual_deck` を1回呼び、返された`draft_id`へ `pptx_add_visual_slides_to_draft` で連続した1〜4ページずつ追加する。`remaining_slide_count=0`になったら `pptx_finish_visual_deck` を1回だけ呼ぶ。既定テンプレートが登録されていれば `useDefaultTemplate` の既定値 `true` によりマスター、ロゴ、フッター、テーマが自動適用されるため、事前解析しない。利用者がテンプレート不要と明示した場合だけ `false` にする。
-- 添付した別テンプレートを使う新規資料では、先にそのファイルを解析し、同じ段階ドラフトを完成させてから `pptx_finish_branded_visual_deck` へ明示的な `sourceFileId`（不明なら `latest`）を渡す。`templateLayoutId` は通常 `auto` とし、その処理だけ導入環境の既定テンプレートを上書きする。
+- 通常の新規資料は、全体構成、完成ページ数、テーマ、デザイン、テンプレートを決めてから `pptx_start_visual_deck` を1回呼ぶ。既定テンプレートは`templateSourceFileId=default`、テンプレートなしは`none`とし、start成功後は変更しない。返された`draft_id`へ `pptx_add_visual_slides_to_draft` で連続した1〜4ページずつ追加し、`startSlideNumber`は省略してサーバーに追番させる。`remaining_slide_count=0`になったらfinishを1回だけ呼ぶ。
+- 添付した別テンプレートを使う新規資料では、先にそのファイルを解析し、`pptx_start_visual_deck`へ`templateSourceFileId`（不明なら`latest`）と通常`templateLayoutId=auto`を指定する。finishでは選択を上書きしない。startで明示したテーマ色・フォントはテンプレート抽出値より優先される。
 - 企業テンプレートの既存プレースホルダー配置へ厳密に流し込むことが明示された場合だけ、解析結果の `layout_id` とプレースホルダー `shape_id` を一字も変更せず `pptx_create_deck` に渡す。動作上必須の`slides`へ完成版の全ページをまとめ、各要素を`layout_id`/`fields`、各フィールドを`text`または`paragraphs`のどちらか一方と`shape_id`（必要時のみ`shape_name`/`placeholder_index`）のsnake_caseで指定する。箇条書きや番号を文字として手入力しない。`sourceFileId`だけで呼ばない。Bedrockから空引数が先行した場合は`input_required`応答を受け、全`slides`付きで直ちに再実行する。
-- 新規資料では、内容ごとに意味ベースのレイアウトを選び、`design`とスライド単位の`variant`で構図を指定する。start/add/finishの各呼び出しを必須入力付きで行い、addは直前の`next_slide_number`から最大4ページだけを渡す。空呼び出しを仕様確認、初期化、ジョブ予約に使わず、受理済みバッチを再送しない。6枚以上では4種類以上の構図を使い、単純な箇条書きを補助用途に限定する。
+- 新規資料では、内容ごとに意味ベースのレイアウトを選び、`design`とスライド単位の`variant`で構図を指定する。start/add/finishを空引数で呼ばず、addは最大4ページだけを渡す。成功済みVisual Deckがある場合はstart/finishへ戻らず、問題ページの修正または追加ページの挿入を使う。初回生成失敗時の全体再試行は1回までとし、別資料の明示依頼だけ`userRequestedNewWorkflow=true`を使う。
 - 成功済みVisual Deckへスライドを追加する場合は`pptx_insert_visual_slides`へ追加分だけを渡す。`jobId=latest`とし、末尾追加なら`afterSlideNumber`を省略する。既存ページを含む完全仕様を再構築せず、作成ツールを呼び直さない。成功状態が直接返れば状態確認ツールを追加せず、全ページの視覚確認へ進む。
 - 編集対象が一意でなければ候補を列挙し、利用者の選択まで更新しない。
 - ジョブ完了後は `pptx_get_preview_images` で全スライドを1〜4枚ずつ取得し、文字切れ、重なり、可読性、余白、整列、コントラスト、情報階層、密度、バランス、一貫性を評価する。
 - 非同期ツールが`job_id`を返したら`pptx_wait_for_job`を使い、`pptx_get_job`を短間隔で反復しない。45秒以内に終わらない場合だけ、同じ`job_id`でもう一度待機する。
-- 厳密なプレースホルダー資料に問題があれば`pptx_refine_deck`を使う。白紙資料とブランドVisual Deckは`pptx_refine_visual_slide`へ完全な差し替えページを1枚だけ渡し、ジョブ成功後に次の問題ページを`jobId=latest`で直す。修正は逐次累積し、大きな`revisions`配列をBedrockへ要求しない。同ツールが`Succeeded`を直接返した場合は状態確認ツールを呼ばず次へ進み、30秒以内に完了せずジョブ受領情報だけを返した場合に限って`pptx_wait_for_job`を使う。全ページを最大2巡まで自律的に再生成し、画像を取得していない場合は視覚確認済みと述べない。
+- 厳密なプレースホルダー資料に問題があれば`pptx_refine_deck`を使う。白紙資料とブランドVisual Deckは`pptx_refine_visual_slide`へ完全な差し替えページを1枚だけ渡し、ジョブ成功後に次の問題ページを`jobId=latest`で直す。修正は逐次累積し、古いジョブからの分岐、複数ページ一括入力、3巡目はサーバーが拒否する。全ページを最大2巡まで自律的に修正し、上限後に全体再作成へ戻らない。画像を取得していない場合は視覚確認済みと述べない。
 - 視覚評価の完了後にPPTXダウンロードリンクを提示する。
 - MCPに情報収集を依頼しない。外部情報はLibreChat側で収集し、構造化した内容だけを渡す。
 

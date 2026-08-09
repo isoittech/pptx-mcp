@@ -58,6 +58,45 @@ public sealed class VisualDeckDraftServiceTests
     }
 
     [Fact]
+    public void InfersAppendPositionWhenStartSlideNumberIsOmitted()
+    {
+        var service = CreateService();
+        var started = service.Begin(Caller, "自動追番", 3, null, null, "ja-JP", null);
+
+        var first = service.AddSlides(Caller, started.DraftId, null, CreateSlides(1, 2));
+        var second = service.AddSlides(Caller, started.DraftId, null, CreateSlides(3, 1));
+
+        Assert.Equal(3, first.NextSlideNumber);
+        Assert.Equal(0, second.RemainingSlideCount);
+    }
+
+    [Fact]
+    public void RepeatedStartReturnsActiveDraftAndLocksCreativeDirection()
+    {
+        var service = CreateService();
+        var started = service.Begin(
+            Caller,
+            "固定テスト",
+            1,
+            new VisualThemeSpec("cyber", AccentColor: "#FF00AA"),
+            null,
+            "ja-JP",
+            new VisualDesignSpec("bold", "balanced", "nodes"),
+            "latest",
+            "auto");
+
+        var repeated = service.Begin(Caller, "別タイトル", 3, null, null, "ja-JP", null);
+        service.AddSlides(Caller, started.DraftId, null, CreateSlides(1, 1));
+        var mismatch = Assert.Throws<PptxValidationException>(() =>
+            service.AcquireForSubmission(Caller, started.DraftId, "default", "auto"));
+
+        Assert.Equal(started.DraftId, repeated.DraftId);
+        Assert.Equal("latest", started.TemplateSourceFileId);
+        Assert.True(started.CreativeDirectionLocked);
+        Assert.Equal("visual_creative_direction_locked", mismatch.Code);
+    }
+
+    [Fact]
     public void RejectsFinishUntilExpectedSlideCountIsComplete()
     {
         var service = CreateService();

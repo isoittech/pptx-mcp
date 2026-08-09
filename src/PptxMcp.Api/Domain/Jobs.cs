@@ -302,6 +302,14 @@ public sealed record JobRecord
     public string? ErrorCode { get; init; }
 
     public string? ErrorMessage { get; init; }
+
+    public string? ParentJobId { get; init; }
+
+    public string? VisualRootJobId { get; init; }
+
+    public int VisualRevisionRound { get; init; }
+
+    public IReadOnlyList<int> VisualRevisedSlidesInRound { get; init; } = [];
 }
 
 public sealed record ArtifactRecord(
@@ -337,4 +345,7 @@ public sealed record JobView(
     [property: JsonPropertyName("result")] JsonElement? Result,
     [property: JsonPropertyName("artifacts")] IReadOnlyList<ArtifactLink> Artifacts,
     [property: JsonPropertyName("error_code")] string? ErrorCode,
-    [property: JsonPropertyName("error_message")] string? ErrorMessage);
+    [property: JsonPropertyName("error_message")] string? ErrorMessage,
+    [property: JsonPropertyName("visual_root_job_id")] string? VisualRootJobId,
+    [property: JsonPropertyName("visual_revision_round")] int VisualRevisionRound,
+    [property: JsonPropertyName("visual_revised_slides_in_round")] IReadOnlyList<int> VisualRevisedSlidesInRound);

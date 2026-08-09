@@ -28,8 +28,8 @@ LibreChat uploads            ├─ Open XML SDK: Visual Deckと企業マスタ�
                          │                    │
                          ▼                    ▼
                     Claude視覚評価          利用者
-                         │ 問題時は仕様修正
-                         └────最大2回再生成
+                         │ 問題ページだけ仕様修正
+                         └────最大2巡の差分再生成
 ```
 
 ## 処理モデル
@@ -42,9 +42,9 @@ MCP の通常応答には30MBのPPTXや最大50枚の画像を一括で埋め込
 
 OSS本体は企業固有テンプレートを保持せず、外部マウントされた `<template-id>.pptx` と導入環境の `DefaultTemplateId` だけを扱います。既定テンプレートは起動時に安全性検査と解析を完了し、欠落・不正時はfail-closedで起動を失敗させます。解析はPPTX内容のSHA-256単位でメモリキャッシュし、ジョブ領域へコピーした同一ファイルや同じ添付ファイルの再解析を避けます。
 
-新規Visual Deckは、`pptx_start_visual_deck`で概要と完成ページ数を登録し、`pptx_add_visual_slides_to_draft`で最大4ページずつ仕様を蓄積して、finishツールでジョブ化します。`pptx_finish_visual_deck` は、既定テンプレートが設定され、`useDefaultTemplate` が `true` の場合に内部でブランドVisual Deckジョブへ切り替わります。テンプレート選択をモデルのツール選択だけに依存させません。利用者が明示した添付テンプレートは `pptx_finish_branded_visual_deck` でその処理だけ既定値を上書きし、明示的な `useDefaultTemplate=false` は白紙生成を選択します。既定テンプレートの判断は [ADR 0006](adr/0006-deployment-default-template.md)、段階入力は [ADR 0009](adr/0009-staged-visual-deck-input.md) に記録します。
+新規Visual Deckは、`pptx_start_visual_deck`で概要、完成ページ数、テンプレート、テーマ、デザインを固定し、`pptx_add_visual_slides_to_draft`で最大4ページずつ仕様を蓄積して、finishツールでジョブ化します。テンプレートは`default`、`none`、`latest`または添付`file_id`からstart時に選択し、finishでの変更を拒否します。既定テンプレートの判断は [ADR 0006](adr/0006-deployment-default-template.md)、段階入力は [ADR 0009](adr/0009-staged-visual-deck-input.md)、生成・修正ループの停止条件は [ADR 0012](adr/0012-visual-deck-workflow-guardrails.md) に記録します。
 
-華やかさとブランド保持を両立する場合は、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。MCPが `pptx_analyze` と同じ処理でaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、Visual Deckのテーマへ適用します。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、Open XMLでテンプレートの既存スライドだけを除去し、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。`templateLayoutId=auto` は「白紙（フッター有）」を優先し、写真背景は避けます。テンプレートのマスター、ロゴ、フッター、ページ設定は成果物側に残ります。
+華やかさとブランド保持を両立する場合は、startで企業テンプレートを選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。MCPがaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、startで未指定のテーマ項目だけを補完します。明示色とfontFaceは抽出値より優先されます。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。
 
 テンプレートとVisual Deckの縦横比が一致しない場合や、白紙レイアウトがない場合は合成を拒否します。Visual Deck側の独自フッターは合成時だけ抑制し、企業フッターとの二重表示を防ぎます。詳細な判断は [ADR 0004](adr/0004-branded-visual-composition.md) に記録します。
 
@@ -54,7 +54,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 
 新規Visual Deckの段階ワークフローでは、Claudeがスライドの意味に応じて次の固定レイアウトを選びます。既定テンプレートがない場合、または利用者が明示的に不要とした場合は白紙へ描画します。
 
-最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。完成ページ数、次のページ番号、バッチ上限、全ページのドメイン検証をサーバー側で強制します。詳細は [ADR 0009](adr/0009-staged-visual-deck-input.md) に記録します。
+最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。addの`startSlideNumber`は任意とし、省略時は受理済み末尾からサーバーが算出します。明示値がある場合は正しい次番号との一致を検証します。
 
 - title、agenda、section、statement、bullets
 - cards、metrics、comparison、structuredBrief、scorecard、musicScore
@@ -76,9 +76,9 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 2. 全スライドを1〜4枚ずつMCP画像ブロックとして取得する。
 3. Claudeが文字切れ、はみ出し、重なり、文字サイズ、余白、整列、コントラスト、情報階層、密度、バランス、全体一貫性を確認する。さらに、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。
 4. 問題があれば厳密なプレースホルダー資料は `pptx_refine_deck`、白紙資料とブランドVisual Deckは `pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡して再生成する。
-5. 最大2回で収束させ、視覚確認後にダウンロードリンクを提示する。
+5. 最大2巡で収束させ、視覚確認後にダウンロードリンクを提示する。
 
-`pptx_refine_visual_slide` は `jobId=latest` で同じ利用者・会話の最新成功Visual Deckだけを解決します。複数ページは各ジョブの成功後に1枚ずつ適用するため、修正済み仕様と企業テンプレートが次のジョブへ累積します。Bedrockが大きな `revisions` 配列を省略する問題を避けつつ、会話境界を越えたジョブ参照は許しません。単一ページ修正は最大30秒だけサーバー内で完了を待ち、最終状態を返せた場合は追加ポーリングを不要にします。一括入力が安定したクライアント向けには `pptx_refine_visual_deck` も維持します。
+`pptx_refine_visual_slide` は `jobId=latest` で同じ利用者・会話の最新成功Visual Deckだけを解決します。各Visual DeckジョブはルートID、親ID、修正巡、同巡の修正済みページを永続化します。これにより複数ページの逐次修正を累積しつつ、古い成功ジョブからの分岐、複数ページ一括修正、同一ページの3回目の修正を拒否します。`pptx_refine_visual_deck`は互換用に維持しますが、同じ1ページ制約を適用します。成功後の全体startは拒否し、初回生成が失敗した場合の全体再試行は1回だけ許可します。
 
 ページ数を増やす場合は `pptx_refine_visual_slide` ではなく `pptx_insert_visual_slides` を使います。同ツールは追加する `VisualSlideSpec` だけを受け取り、同じ利用者・会話にある成功済みVisual Deckの仕様へサーバー側で挿入します。`afterSlideNumber` は既存ページを基準とし、省略時は末尾へ追加します。ブランドVisual Deckでは元ジョブのテンプレートファイルと `templateLayoutId` も再利用します。第1段階では完成版の `VisualDeckSpec` をPptxGenJSへ再投入するためファイル生成・Open XML検証・プレビュー生成は全ページ分行いますが、モデルが既存ページを再構築・再送する必要はありません。
 

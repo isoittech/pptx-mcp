@@ -50,7 +50,7 @@ PPTX_MCP_DEFAULT_TEMPLATE_ID=organization-default
 
 テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。
 
-通常の新規資料は `pptx_start_visual_deck` で概要を登録し、`pptx_add_visual_slides_to_draft` で最大4ページずつ追加した後、`pptx_finish_visual_deck` で生成します。finishは既定で `useDefaultTemplate=true` として動作し、既定テンプレートがあればブランドVisual Deckを生成します。利用者がテンプレート不要と明示した場合だけ `false` にします。添付した別テンプレートは `pptx_finish_branded_visual_deck` の `sourceFileId` で明示し、その処理だけ既定値を上書きします。
+通常の新規資料は `pptx_start_visual_deck` で概要、完成ページ数、テンプレート、テーマ、デザインを確定し、`pptx_add_visual_slides_to_draft` で最大4ページずつ追加した後、`pptx_finish_visual_deck` で生成します。`templateSourceFileId` の既定値は `default` です。テンプレート不要は `none`、添付した別テンプレートは解析後に `latest` または `file_id` をstartへ指定します。選択内容はstart成功時に固定され、finishでは変更しません。
 
 導入環境固有の初回案内が必要な場合は、任意の文言を次へ設定できます。
 
@@ -81,23 +81,23 @@ PPTX_MCP_FIRST_ASSISTANT_NOTICE=PowerPoint資料には導入環境の既定テ�
 - `pptx_get_preview_images`
 - `pptx_cancel_job`
 
-処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。`pptx_get_job`は待たない即時確認と障害復旧用です。両ツールの `jobId=latest` は同じ利用者・会話にある直近ジョブ（待機中・実行中を含む）を選びます。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認します。問題があれば宣言型仕様を修正して最大2回まで再生成し、その後にPPTXリンクを提示します。
+処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大2巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
 
-新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば同じVisual Deckを企業マスターへ自動合成し、未登録または `useDefaultTemplate=false` の場合だけ白紙生成になります。
+新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none` の場合だけ白紙生成になります。
 
 長い説明を1つの本文枠へ押し込まず、見出しだけでも要点を追える2〜3個の `sections` に分ける場合は `structuredBrief` を使います。セクション合計は900文字までです。3セクション・600文字未満では上段の主論点と下段2論点からなるモザイクへ自動変更し、短い内容ほど本文と箇条書きを拡大します。600文字以上では3列を使い、情報量に合わない大きな空箱を避けます。複数案を評価軸で比べる場合は `scorecard` を使い、2〜4個の `options` と2〜6行の `criteria` を指定します。各評価セルは短い判定、根拠、意味色を持ち、成果物では編集可能なPowerPointネイティブ表になります。文字量が多い資料では `design.density=detailed` を指定すると、フォントだけを縮小せず、余白、タイトル領域、内部間隔、細い罫線、影なしカードをまとめて切り替えます。
 
 `musicScore`は1〜8小節、合計64イベントまでの五線譜とウクレレTABを上下に併記します。各イベントへ`duration`、各音へ科学的音高の`pitch`、1=A/2=E/3=C/4=Gの`string`、`fret`、任意の`finger`を指定します。`tuning`は`high-g`または`low-g`です。音高と弦・フレットの不一致は入力検証で拒否します。ト音記号、拍子数字、符頭、旗、付点、休符、臨時記号はSIL Open Font LicenseのBravura 1.392から輪郭を取得し、画像やフォントではなくPowerPointカスタム図形として生成します。その他の五線、符幹、小節線、TAB線、フレット番号、指色マーカーも個別編集できるPowerPointネイティブ要素です。PowerPoint自体に楽譜の意味モデルはないため、移調やリズム変更に伴う自動再配置は行いません。Bravuraの原本ライセンスは`visual-renderer/assets/bravura/LICENSE.txt`に同梱しています。
 
-新規Visual Deckは、タイトルと完成ページ数を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。モデルへ一度に最大50ページの巨大な`VisualDeckSpec`を要求せず、各ツールの必須入力を小さく保つためです。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。開始時に確定したページ数、次のページ番号、最大4ページのバッチ上限をサーバー側でも検証します。
+新規Visual Deckは、完成ページ数とクリエイティブ方針を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。addの`startSlideNumber`は省略でき、サーバーが受理済み末尾から自動計算します。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。成功済みデッキがある会話では通常のstartを拒否し、初回生成が失敗した場合の全体再試行も1回に制限します。ユーザーが別資料を明示的に求めた場合だけ`userRequestedNewWorkflow=true`で新しいワークフローを開始できます。
 
-企業テンプレートを使いつつ同じ視覚表現が必要な場合は、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、Visual Deckを生成した後、プレースホルダーのない白紙レイアウトへ各スライドを接続します。これにより企業マスターのロゴ・フッターと、カード、工程、マトリクス、編集可能グラフ等を両立します。既存プレースホルダーへの厳密な流し込みが目的の場合だけ `pptx_create_deck` を使います。
+企業テンプレートを使いつつ同じ視覚表現が必要な場合は、テンプレートをstart時に選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、未指定のテーマ項目だけを補完して、プレースホルダーのない白紙レイアウトへ各スライドを接続します。startで明示した色とフォントはテンプレート抽出値より優先されます。これにより企業マスターのロゴ・フッターと、資料固有の配色、カード、工程、マトリクス、編集可能グラフ等を両立します。
 
 メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等を含む編集可能な組み込みアイコンを利用できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
 
 Visual Deckの入力検証エラーは `status=invalid_input`、エラーコード、対象フィールドを構造化して返します。モデルは推測で同じ呼び出しを繰り返さず、指摘されたフィールドだけを直せます。Closingの提言はPowerPointネイティブの箇条書きとして描画されます。
 
-6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。単独のMetricsスライドは最大6指標を3列×2段で配置できます。視覚確認後、Bedrock/Claudeでは `pptx_refine_visual_slide` へ問題ページを1枚ずつ渡します。`jobId=latest` が同じ会話の直前の成功ジョブを選ぶため、複数ページの修正は逐次累積し、大きな一括入力を避けられます。単一ページ修正はサーバー内で最大30秒完了を待ち、通常は最終状態を直接返すため、成功時の追加ポーリングとLibreChatのグラフステップ消費も抑えます。`pptx_refine_visual_deck` は一括配列を確実に送信できるクライアント向けです。
+6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。視覚確認後は `pptx_refine_visual_slide` へ問題ページを1枚ずつ渡します。`jobId=latest` が直前の成功ジョブを選ぶため、複数ページの修正は逐次累積します。各ジョブはルート、親、修正巡、同巡の修正ページを記録し、古いジョブからの分岐、一括ページ修正、3巡目を拒否します。`pptx_refine_visual_deck`も互換用に残しますが、同じ1ページ制約を適用します。
 
 成功済みVisual Deckへページを追加する場合は `pptx_insert_visual_slides` を使います。`slides` には追加分だけを渡し、既存ページを再送しません。`jobId` の既定値は `latest`、`afterSlideNumber` の省略時は末尾、`0` は先頭、正の値はそのページの直後へ挿入します。サーバーが元ジョブのタイトル、テーマ、デザイン、既存ページ、企業テンプレートとレイアウトを結合し、最大50ページの完成版を再生成します。通常はサーバー内で最大30秒待って最終状態を返します。この方式はAIの入力を追加ページ分に限定しますが、レンダラーとプレビュー生成は現段階では完成版全体を処理します。
 
