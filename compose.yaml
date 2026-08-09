@@ -13,8 +13,6 @@ services:
       PptxMcp__TemplatesRoot: /data/pptx-templates
       PptxMcp__DefaultTemplateId: ${PPTX_MCP_DEFAULT_TEMPLATE_ID:-}
       PptxMcp__FirstAssistantNotice: ${PPTX_MCP_FIRST_ASSISTANT_NOTICE:-}
-    ports:
-      - "127.0.0.1:18080:8080"
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777
@@ -34,6 +32,33 @@ services:
     networks:
       - pptx-internal
 
+  pptx-codex-proxy:
+    image: nginx:alpine@sha256:d67ea0d64d518b1bb04acde3b00f722ac3e9764b3209a9b0a98924ba35e4b779
+    depends_on:
+      pptx-mcp:
+        condition: service_healthy
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    user: "101:101"
+    networks:
+      - pptx-internal
+      - pptx-local-ingress
+    ports:
+      - "127.0.0.1:${PPTX_MCP_PORT:-18080}:8080"
+    volumes:
+      - ./integrations/codex/nginx.conf:/etc/nginx/nginx.conf:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-Y", "off", "--quiet", "--output-document=/dev/null", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   test:
     build:
       context: .
@@ -46,3 +71,4 @@ volumes:
 networks:
   pptx-internal:
     internal: true
+  pptx-local-ingress:
