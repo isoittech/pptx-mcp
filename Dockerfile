@@ -15,7 +15,10 @@ FROM node:20-bookworm-slim AS visual-renderer
 WORKDIR /visual-renderer
 COPY visual-renderer/package.json visual-renderer/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY visual-renderer/index.mjs ./
+COPY visual-renderer/index.mjs visual-renderer/music-glyphs.mjs ./
+COPY visual-renderer/assets ./assets
+COPY visual-renderer/test ./test
+RUN npm test
 
 FROM build AS test
 ENTRYPOINT ["dotnet", "test", "pptx-mcp.sln", "--configuration", "Release", "--no-build"]

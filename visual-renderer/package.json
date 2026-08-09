@@ -6,7 +6,11 @@
   "engines": {
     "node": ">=18"
   },
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
+    "opentype.js": "2.0.0",
     "pptxgenjs": "4.0.1"
   }
 }
