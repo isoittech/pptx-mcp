@@ -1,6 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
+import {
+  addBravuraGlyph,
+  loadBravuraFont,
+  MusicGlyph,
+  timeSignatureGlyph,
+} from "./music-glyphs.mjs";
 
 const require = createRequire(import.meta.url);
 const pptxgen = require("pptxgenjs");
@@ -11,6 +17,7 @@ if (!specificationPath || !outputPath) {
 }
 
 const spec = JSON.parse(await readFile(specificationPath, "utf8"));
+const bravuraFont = await loadBravuraFont();
 const templateChrome = spec.templateChrome === true;
 if (!Array.isArray(spec.slides) || spec.slides.length < 1 || spec.slides.length > 50) {
   throw new Error("The visual deck must contain between 1 and 50 slides.");
@@ -252,6 +259,10 @@ for (const [index, slideSpec] of spec.slides.entries()) {
       break;
     case "scorecard":
       renderScorecard(slide, slideSpec, index);
+      break;
+    case "musicscore":
+    case "music_score":
+      renderMusicScore(slide, slideSpec, index);
       break;
     default:
       throw new Error(`Unsupported slide kind: ${kind}`);
@@ -783,6 +794,528 @@ function renderScorecard(slide, data, index) {
       fit: "shrink",
     });
   }
+}
+
+function renderMusicScore(slide, data, index) {
+  contentBase(slide, data, index);
+  const musicScore = data.musicScore;
+  const measures = musicScore.measures ?? [];
+  const splitIndex = measures.length <= 4 ? measures.length : Math.ceil(measures.length / 2);
+  const systems = measures.length <= 4
+    ? [measures]
+    : [measures.slice(0, splitIndex), measures.slice(splitIndex)];
+  const cardY = systems.length === 1 ? 2.08 : 1.76;
+  const cardHeight = systems.length === 1 ? 4.45 : 5.02;
+  card(slide, 0.58, cardY, W - 1.16, cardHeight, "FFFFFF");
+
+  const metadata = [
+    `Key ${musicScore.keySignature}`,
+    musicScore.timeSignature,
+    musicScore.tempoBpm ? `Tempo ${musicScore.tempoBpm} BPM` : null,
+    String(musicScore.tuning).toLowerCase() === "low-g" ? "Low-G" : "High-G",
+  ].filter(Boolean).join("  ·  ");
+  slide.addText(metadata, {
+    x: 0.92,
+    y: cardY + 0.12,
+    w: W - 1.84,
+    h: 0.25,
+    fontFace: theme.font,
+    fontSize: 9.5,
+    bold: true,
+    color: theme.muted,
+    margin: 0,
+    align: "right",
+    fit: "shrink",
+  });
+
+  const systemYPositions = systems.length === 1
+    ? [cardY + 0.62]
+    : [cardY + 0.5, cardY + 2.58];
+  let measureOffset = 0;
+  systems.forEach((systemMeasures, systemIndex) => {
+    renderMusicSystem(
+      slide,
+      musicScore,
+      systemMeasures,
+      measureOffset,
+      systemYPositions[systemIndex],
+    );
+    measureOffset += systemMeasures.length;
+  });
+
+  const legendY = systems.length === 1 ? cardY + 3.18 : cardY + 4.47;
+  if (musicScore.colorFingerings && musicScore.showTablature) {
+    renderFingerLegend(slide, legendY);
+  }
+  if (musicScore.caption) {
+    slide.addText(musicScore.caption, {
+      x: musicScore.colorFingerings && musicScore.showTablature ? 5.5 : 0.92,
+      y: legendY - 0.02,
+      w: musicScore.colorFingerings && musicScore.showTablature ? 6.85 : W - 1.84,
+      h: 0.32,
+      fontFace: theme.font,
+      fontSize: 9.5,
+      color: theme.muted,
+      margin: 0,
+      align: "right",
+      fit: "shrink",
+    });
+  }
+}
+
+function renderMusicSystem(slide, musicScore, measures, measureOffset, systemY) {
+  const showStaff = musicScore.showStandardNotation;
+  const showTab = musicScore.showTablature;
+  const staffSpacing = 0.125;
+  const tabSpacing = 0.145;
+  const staffTop = systemY + (showStaff ? 0.18 : 0);
+  const staffBottom = staffTop + staffSpacing * 4;
+  const tabTop = showTab
+    ? systemY + (showStaff ? 1.08 : 0.3)
+    : null;
+  const tabBottom = showTab ? tabTop + tabSpacing * 3 : null;
+  const prefixX = 0.82;
+  const notationX = showStaff ? 1.84 : 1.52;
+  const notationRight = 12.5;
+  const notationWidth = notationRight - notationX;
+
+  if (showStaff) {
+    for (let lineIndex = 0; lineIndex < 5; lineIndex++) {
+      const lineY = staffTop + lineIndex * staffSpacing;
+      slide.addShape(pptx.ShapeType.line, {
+        x: notationX,
+        y: lineY,
+        w: notationWidth,
+        h: 0,
+        line: { color: theme.text, transparency: 12, width: 0.75 },
+      });
+    }
+    renderTrebleClef(slide, prefixX, staffTop, staffSpacing);
+    renderTimeSignature(slide, musicScore.timeSignature, 1.55, staffTop, staffSpacing);
+  }
+
+  if (showTab) {
+    for (let stringIndex = 0; stringIndex < 4; stringIndex++) {
+      const lineY = tabTop + stringIndex * tabSpacing;
+      slide.addShape(pptx.ShapeType.line, {
+        x: notationX,
+        y: lineY,
+        w: notationWidth,
+        h: 0,
+        line: { color: theme.muted, transparency: 18, width: 0.75 },
+      });
+    }
+    slide.addText("TAB", {
+      x: prefixX - 0.04,
+      y: tabTop + 0.06,
+      w: 0.72,
+      h: 0.26,
+      fontFace: theme.font,
+      fontSize: 10,
+      bold: true,
+      color: theme.secondary,
+      margin: 0,
+      align: "center",
+      valign: "mid",
+      fit: "shrink",
+    });
+  }
+
+  const measureWidth = notationWidth / measures.length;
+  measures.forEach((measure, measureIndex) => {
+    const measureX = notationX + measureIndex * measureWidth;
+    const measureRight = measureX + measureWidth;
+    const displayedNumber = measure.number ?? measureOffset + measureIndex + 1;
+    const labelY = showStaff ? staffTop - 0.32 : tabTop - 0.3;
+    slide.addText(String(displayedNumber), {
+      x: measureX + 0.06,
+      y: labelY,
+      w: 0.34,
+      h: 0.2,
+      fontFace: theme.font,
+      fontSize: 7.5,
+      bold: true,
+      color: theme.muted,
+      margin: 0,
+      fit: "shrink",
+    });
+
+    if (measureIndex > 0) {
+      renderMusicBarLine(slide, measureX, staffTop, staffBottom, tabTop, tabBottom, showStaff, showTab, 0.85);
+    }
+
+    const events = measure.events ?? [];
+    const eventPositions = events.map((_, eventIndex) =>
+      measureX + measureWidth * (eventIndex + 0.5) / events.length);
+    events.forEach((musicEvent, eventIndex) => {
+      const eventX = eventPositions[eventIndex];
+      if (showStaff) {
+        renderStandardMusicEvent(
+          slide,
+          musicEvent,
+          eventX,
+          eventPositions[eventIndex + 1],
+          staffTop,
+          staffBottom,
+          staffSpacing,
+        );
+      }
+      if (showTab) {
+        renderTabMusicEvent(slide, musicScore, musicEvent, eventX, tabTop, tabSpacing);
+      }
+    });
+
+    if (measureIndex === measures.length - 1) {
+      renderMusicBarLine(slide, measureRight, staffTop, staffBottom, tabTop, tabBottom, showStaff, showTab, 1.35);
+      slide.addShape(pptx.ShapeType.line, {
+        x: measureRight - 0.055,
+        y: showStaff ? staffTop : tabTop,
+        w: 0,
+        h: showStaff && showTab ? tabBottom - staffTop : showStaff ? staffBottom - staffTop : tabBottom - tabTop,
+        line: { color: theme.text, width: 0.55, transparency: 20 },
+      });
+    }
+  });
+}
+
+function renderMusicBarLine(slide, x, staffTop, staffBottom, tabTop, tabBottom, showStaff, showTab, width) {
+  if (showStaff) {
+    slide.addShape(pptx.ShapeType.line, {
+      x, y: staffTop, w: 0, h: staffBottom - staffTop,
+      line: { color: theme.text, width },
+    });
+  }
+  if (showTab) {
+    slide.addShape(pptx.ShapeType.line, {
+      x, y: tabTop, w: 0, h: tabBottom - tabTop,
+      line: { color: theme.text, width },
+    });
+  }
+}
+
+function addMusicLine(slide, x, y, width, height, line) {
+  slide.addShape(pptx.ShapeType.line, {
+    x: x + Math.min(0, width),
+    y: y + Math.min(0, height),
+    w: Math.abs(width),
+    h: Math.abs(height),
+    flipH: width < 0,
+    flipV: height < 0,
+    line,
+  });
+}
+
+function renderTrebleClef(slide, x, staffTop, spacing) {
+  addBravuraGlyph(slide, pptx, bravuraFont, MusicGlyph.gClef, {
+    originX: x + 0.1,
+    originY: staffTop + spacing * 3,
+    scale: musicGlyphScale(spacing),
+    color: theme.secondary,
+  });
+}
+
+function renderTimeSignature(slide, timeSignature, centerX, staffTop, spacing) {
+  const [numerator, denominator] = String(timeSignature).split("/");
+  [numerator, denominator].forEach((value, rowIndex) => {
+    const digits = [...value];
+    const digitSpacing = 0.17;
+    digits.forEach((digit, digitIndex) => {
+      addBravuraGlyph(slide, pptx, bravuraFont, timeSignatureGlyph(digit), {
+        centerX: centerX + (digitIndex - (digits.length - 1) / 2) * digitSpacing,
+        centerY: staffTop + spacing * (rowIndex === 0 ? 1 : 3),
+        scale: musicGlyphScale(spacing),
+        color: theme.text,
+      });
+    });
+  });
+}
+
+function renderStandardMusicEvent(slide, musicEvent, eventX, nextEventX, staffTop, staffBottom, staffSpacing) {
+  const duration = String(musicEvent.duration).toLowerCase();
+  if (musicEvent.annotation) {
+    slide.addText(musicEvent.annotation, {
+      x: eventX - 0.38,
+      y: staffTop - 0.27,
+      w: 0.76,
+      h: 0.16,
+      fontFace: theme.font,
+      fontSize: 6.8,
+      bold: true,
+      color: theme.secondary,
+      margin: 0,
+      align: "center",
+      fit: "shrink",
+    });
+  }
+
+  if (musicEvent.rest) {
+    renderMusicRest(slide, duration, eventX, staffTop, staffSpacing, musicEvent.dotted);
+    return;
+  }
+
+  const notePositions = (musicEvent.notes ?? []).map((note) => ({
+    note,
+    step: musicPitchStep(note.pitch),
+  })).map((item) => ({
+    ...item,
+    y: staffBottom - item.step * staffSpacing / 2,
+  }));
+  notePositions.forEach(({ note, step, y }) => {
+    renderLedgerLines(slide, eventX, step, staffBottom, staffSpacing);
+    addBravuraGlyph(slide, pptx, bravuraFont, musicNoteheadGlyph(duration), {
+      centerX: eventX,
+      centerY: y,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+    const accidentalGlyph = musicAccidentalGlyph(note.pitch);
+    if (accidentalGlyph) {
+      addBravuraGlyph(slide, pptx, bravuraFont, accidentalGlyph, {
+        centerX: eventX - 0.14,
+        centerY: y,
+        scale: musicGlyphScale(staffSpacing),
+        color: theme.text,
+      });
+    }
+  });
+
+  if (duration !== "whole") {
+    renderMusicStemAndFlags(slide, duration, eventX, notePositions, staffSpacing);
+  }
+  if (musicEvent.dotted && notePositions.length > 0) {
+    const dotY = notePositions.reduce((sum, item) => sum + item.y, 0) / notePositions.length;
+    addBravuraGlyph(slide, pptx, bravuraFont, MusicGlyph.augmentationDot, {
+      centerX: eventX + 0.12,
+      centerY: dotY,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  }
+  if (musicEvent.tieToNext && nextEventX) {
+    const lowestY = Math.max(...notePositions.map((item) => item.y));
+    slide.addShape(pptx.ShapeType.arc, {
+      x: eventX + 0.04,
+      y: lowestY + 0.03,
+      w: Math.max(0.15, nextEventX - eventX - 0.08),
+      h: 0.18,
+      rotate: 180,
+      fill: { color: theme.text, transparency: 100 },
+      line: { color: theme.text, width: 0.7 },
+    });
+  }
+}
+
+function renderMusicStemAndFlags(slide, duration, eventX, notePositions, staffSpacing) {
+  const averageStep = notePositions.reduce((sum, item) => sum + item.step, 0) / notePositions.length;
+  const stemUp = averageStep < 4;
+  const minimumY = Math.min(...notePositions.map((item) => item.y));
+  const maximumY = Math.max(...notePositions.map((item) => item.y));
+  const stemX = eventX + (stemUp ? 0.066 : -0.066);
+  const stemTop = stemUp ? minimumY - 0.42 : minimumY;
+  const stemBottom = stemUp ? maximumY : maximumY + 0.42;
+  slide.addShape(pptx.ShapeType.line, {
+    x: stemX, y: stemTop, w: 0, h: stemBottom - stemTop,
+    line: { color: theme.text, width: 0.9 },
+  });
+
+  const flagGlyph = musicFlagGlyph(duration, stemUp);
+  if (flagGlyph) {
+    addBravuraGlyph(slide, pptx, bravuraFont, flagGlyph, {
+      originX: stemX,
+      originY: stemUp ? stemTop : stemBottom,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  }
+}
+
+function renderLedgerLines(slide, eventX, step, staffBottom, staffSpacing) {
+  if (step < 0) {
+    for (let ledgerStep = -2; ledgerStep >= step; ledgerStep -= 2) {
+      const lineY = staffBottom - ledgerStep * staffSpacing / 2;
+      slide.addShape(pptx.ShapeType.line, {
+        x: eventX - 0.13, y: lineY, w: 0.26, h: 0,
+        line: { color: theme.text, width: 0.7 },
+      });
+    }
+  } else if (step > 8) {
+    for (let ledgerStep = 10; ledgerStep <= step; ledgerStep += 2) {
+      const lineY = staffBottom - ledgerStep * staffSpacing / 2;
+      slide.addShape(pptx.ShapeType.line, {
+        x: eventX - 0.13, y: lineY, w: 0.26, h: 0,
+        line: { color: theme.text, width: 0.7 },
+      });
+    }
+  }
+}
+
+function renderMusicRest(slide, duration, eventX, staffTop, staffSpacing, dotted) {
+  const middleY = staffTop + staffSpacing * 2;
+  const restGlyph = musicRestGlyph(duration);
+  if (duration === "whole" || duration === "half") {
+    addBravuraGlyph(slide, pptx, bravuraFont, restGlyph, {
+      originX: eventX - 0.071,
+      originY: middleY,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  } else if (duration === "quarter") {
+    addBravuraGlyph(slide, pptx, bravuraFont, restGlyph, {
+      centerX: eventX,
+      centerY: middleY,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  } else {
+    addBravuraGlyph(slide, pptx, bravuraFont, restGlyph, {
+      centerX: eventX,
+      centerY: middleY,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  }
+  if (dotted) {
+    addBravuraGlyph(slide, pptx, bravuraFont, MusicGlyph.augmentationDot, {
+      centerX: eventX + 0.12,
+      centerY: middleY,
+      scale: musicGlyphScale(staffSpacing),
+      color: theme.text,
+    });
+  }
+}
+
+function renderTabMusicEvent(slide, musicScore, musicEvent, eventX, tabTop, tabSpacing) {
+  if (musicEvent.rest) {
+    slide.addText("rest", {
+      x: eventX - 0.18, y: tabTop + tabSpacing - 0.02, w: 0.36, h: 0.18,
+      fontFace: theme.font, fontSize: 6.5, bold: true, color: theme.muted,
+      margin: 0, align: "center", fit: "shrink",
+    });
+    return;
+  }
+
+  (musicEvent.notes ?? []).forEach((note) => {
+    const stringY = tabTop + (note.string - 1) * tabSpacing;
+    const markerColor = musicScore.colorFingerings
+      ? musicFingerColor(note)
+      : "FFFFFF";
+    const isOpenOrNeutral = !musicScore.colorFingerings || note.finger == null || note.finger === 0;
+    const outline = isOpenOrNeutral ? theme.muted : markerColor;
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: eventX - 0.095,
+      y: stringY - 0.095,
+      w: 0.19,
+      h: 0.19,
+      fill: { color: markerColor },
+      line: { color: outline, width: isOpenOrNeutral ? 0.75 : 0.4 },
+    });
+    slide.addText(String(note.fret), {
+      x: eventX - 0.095,
+      y: stringY - 0.09,
+      w: 0.19,
+      h: 0.18,
+      fontFace: theme.font,
+      fontSize: note.fret >= 10 ? 6.8 : 7.8,
+      bold: true,
+      color: isOpenOrNeutral || luminance(markerColor) > 0.56 ? theme.text : "FFFFFF",
+      margin: 0,
+      align: "center",
+      valign: "mid",
+      fit: "shrink",
+    });
+  });
+}
+
+function renderFingerLegend(slide, y) {
+  const legendItems = [
+    [0, "開放"],
+    [1, "人差し指"],
+    [2, "中指"],
+    [3, "薬指"],
+    [4, "小指"],
+  ];
+  slide.addText("左手", {
+    x: 0.92, y, w: 0.45, h: 0.22,
+    fontFace: theme.font, fontSize: 8, bold: true, color: theme.muted,
+    margin: 0, valign: "mid",
+  });
+  legendItems.forEach(([finger, label], itemIndex) => {
+    const x = 1.42 + itemIndex * 0.78;
+    const color = musicFingerColor({ finger });
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x, y: y + 0.02, w: 0.16, h: 0.16,
+      fill: { color },
+      line: { color: finger === 0 ? theme.muted : color, width: 0.6 },
+    });
+    slide.addText(label, {
+      x: x + 0.21, y, w: 0.54, h: 0.2,
+      fontFace: theme.font, fontSize: 7.2, color: theme.muted,
+      margin: 0, valign: "mid", fit: "shrink",
+    });
+  });
+}
+
+function musicFingerColor(note) {
+  if (note.color && /^#?[0-9a-f]{6}$/i.test(note.color)) {
+    return String(note.color).replace(/^#/, "").toUpperCase();
+  }
+  const colors = {
+    0: "FFFFFF",
+    1: "E5484D",
+    2: "2F6FED",
+    3: "22A06B",
+    4: "8E5AD7",
+  };
+  return colors[note.finger] ?? "FFFFFF";
+}
+
+function musicPitchStep(pitch) {
+  const match = /^([A-Ga-g])(?:#|b)?([0-8])$/.exec(String(pitch));
+  if (!match) return 0;
+  const letterSteps = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
+  const absoluteStep = Number(match[2]) * 7 + letterSteps[match[1].toUpperCase()];
+  const e4Step = 4 * 7 + letterSteps.E;
+  return absoluteStep - e4Step;
+}
+
+function musicGlyphScale(staffSpacing) {
+  // SMuFL defines one staff space as 250 font units for a 1000 UPM font.
+  return staffSpacing / 250;
+}
+
+function musicNoteheadGlyph(duration) {
+  if (duration === "whole") return MusicGlyph.noteheadWhole;
+  if (duration === "half") return MusicGlyph.noteheadHalf;
+  return MusicGlyph.noteheadBlack;
+}
+
+function musicAccidentalGlyph(pitch) {
+  if (String(pitch).includes("#")) return MusicGlyph.accidentalSharp;
+  if (String(pitch).includes("b")) return MusicGlyph.accidentalFlat;
+  return null;
+}
+
+function musicFlagGlyph(duration, stemUp) {
+  if (duration === "eighth") {
+    return stemUp ? MusicGlyph.flag8thUp : MusicGlyph.flag8thDown;
+  }
+  if (duration === "sixteenth") {
+    return stemUp ? MusicGlyph.flag16thUp : MusicGlyph.flag16thDown;
+  }
+  return null;
+}
+
+function musicRestGlyph(duration) {
+  const glyphs = {
+    whole: MusicGlyph.restWhole,
+    half: MusicGlyph.restHalf,
+    quarter: MusicGlyph.restQuarter,
+    eighth: MusicGlyph.rest8th,
+    sixteenth: MusicGlyph.rest16th,
+  };
+  const glyph = glyphs[duration];
+  if (!glyph) throw new Error(`Unsupported rest duration: ${duration}`);
+  return glyph;
 }
 
 function renderProcess(slide, data, index) {

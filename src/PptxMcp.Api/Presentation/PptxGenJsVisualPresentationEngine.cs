@@ -96,8 +96,8 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
             useTemplateChrome
-                ? "PptxGenJS 4.0.1 declarative renderer v3 + template chrome"
-                : "PptxGenJS 4.0.1 declarative renderer v3",
+                ? "PptxGenJS 4.0.1 declarative renderer v4 + template chrome"
+                : "PptxGenJS 4.0.1 declarative renderer v4",
             VisualDeckValidator.GetDesignWarnings(deck));
     }
 }

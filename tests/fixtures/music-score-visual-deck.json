@@ -1,0 +1,83 @@
+{
+  "title": "ウクレレ楽譜テスト",
+  "language": "ja-JP",
+  "theme": {
+    "preset": "minimal"
+  },
+  "design": {
+    "style": "technical",
+    "density": "balanced",
+    "motif": "none"
+  },
+  "slides": [
+    {
+      "kind": "MusicScore",
+      "title": "五線譜と色分けTAB",
+      "subtitle": "すべてPowerPointの線・図形・テキストとして生成",
+      "musicScore": {
+        "timeSignature": "4/4",
+        "keySignature": "C",
+        "clef": "treble",
+        "tuning": "high-g",
+        "tempoBpm": 84,
+        "showStandardNotation": true,
+        "showTablature": true,
+        "colorFingerings": true,
+        "caption": "赤=人差し指、青=中指、緑=薬指、紫=小指。白は開放弦です。",
+        "measures": [
+          {
+            "events": [
+              { "duration": "quarter", "notes": [{ "pitch": "C4", "string": 3, "fret": 0, "finger": 0 }] },
+              { "duration": "eighth", "notes": [{ "pitch": "D4", "string": 3, "fret": 2, "finger": 2 }], "dotted": true },
+              { "duration": "eighth", "notes": [{ "pitch": "E4", "string": 2, "fret": 0, "finger": 0 }] },
+              { "duration": "quarter", "notes": [{ "pitch": "F4", "string": 2, "fret": 1, "finger": 1 }] }
+            ]
+          },
+          {
+            "events": [
+              { "duration": "quarter", "notes": [{ "pitch": "G4", "string": 2, "fret": 3, "finger": 3 }] },
+              { "duration": "quarter", "notes": [{ "pitch": "A4", "string": 1, "fret": 0, "finger": 0 }] },
+              { "duration": "quarter", "rest": true },
+              { "duration": "quarter", "notes": [{ "pitch": "F#4", "string": 2, "fret": 2, "finger": 2 }] }
+            ]
+          },
+          {
+            "events": [
+              { "duration": "eighth", "notes": [{ "pitch": "G4", "string": 2, "fret": 3, "finger": 3 }], "tieToNext": true },
+              { "duration": "eighth", "notes": [{ "pitch": "G4", "string": 4, "fret": 0, "finger": 0 }] },
+              { "duration": "half", "notes": [{ "pitch": "E4", "string": 2, "fret": 0, "finger": 0 }], "annotation": "のばす" }
+            ]
+          },
+          {
+            "events": [
+              {
+                "duration": "whole",
+                "notes": [
+                  { "pitch": "C4", "string": 3, "fret": 0, "finger": 0 },
+                  { "pitch": "E4", "string": 2, "fret": 0, "finger": 0 },
+                  { "pitch": "G4", "string": 4, "fret": 0, "finger": 0 },
+                  { "pitch": "C5", "string": 1, "fret": 3, "finger": 3 }
+                ]
+              }
+            ]
+          },
+          {
+            "number": 9,
+            "events": [
+              { "duration": "sixteenth", "notes": [{ "pitch": "A4", "string": 1, "fret": 0, "finger": 0 }] },
+              { "duration": "sixteenth", "notes": [{ "pitch": "Bb4", "string": 1, "fret": 1, "finger": 1 }] },
+              { "duration": "eighth", "notes": [{ "pitch": "C5", "string": 1, "fret": 3, "finger": 3 }] },
+              { "duration": "quarter", "notes": [{ "pitch": "D5", "string": 1, "fret": 5, "finger": 4 }] }
+            ]
+          },
+          {
+            "events": [
+              { "duration": "half", "rest": true },
+              { "duration": "half", "notes": [{ "pitch": "C5", "string": 1, "fret": 3, "finger": 3 }], "dotted": true }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
