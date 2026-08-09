@@ -58,6 +58,6 @@ GET /artifacts/{job_id}/{file_name}?token=...
 
 ## BedrockでのMCP画像引き渡し
 
-LibreChat v0.8.3-rc1の `@librechat/agents` 3.1.51は、MCP画像を画面用artifactには保存しますが、Bedrockの次回モデル呼び出しには既定で渡しません。LibreChat側の `config/msi/patch-agents-bedrock-artifacts.msi.mjs` は、Anthropic以外の画像対応プロバイダーと同じ `HumanMessage` 変換をBedrockにも適用します。Bedrock変換層は `image_url` のdata URLをConverse APIの画像ブロックへ変換します。
+LibreChat v0.8.3-rc1の `@librechat/agents` 3.1.51は、MCP画像を画面用artifactには保存しますが、Bedrockの次回モデル呼び出しには既定で渡しません。導入環境固有のLibreChatパッチは、Anthropic以外の画像対応プロバイダーと同じ `HumanMessage` 変換をBedrockにも適用します。Bedrock変換層は `image_url` のdata URLをConverse APIの画像ブロックへ変換します。
 
 このパッチは通常Dockerfileと `Dockerfile.multi` の双方で `npm ci` 後に適用します。対象依存のコード形状が変わった場合はビルドを失敗させるため、`@librechat/agents` 更新時は上流実装を確認してパッチを削除または更新してください。
