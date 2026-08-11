@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
@@ -15,6 +14,9 @@ public sealed partial class BrandProfileCatalog
 {
     private const int MaximumManifestBytes = 256 * 1024;
     private const int MaximumProfiles = 32;
+    private const int MaximumCatalogThumbnailBytes = 16 * 1024 * 1024;
+    private const long MaximumCatalogThumbnailPixels = 48_000_000;
+    private const long MaximumCatalogThumbnailDecodedBytes = 128 * 1024 * 1024;
     private const int MaximumStyleDirections = 8;
     private const int MaximumRecipes = 64;
     private const int MaximumSamples = 96;
@@ -212,6 +214,9 @@ public sealed partial class BrandProfileCatalog
         }
 
         var loaded = new Dictionary<string, BrandProfileSnapshot>(StringComparer.Ordinal);
+        var loadedThumbnailBytes = 0L;
+        var loadedThumbnailPixels = 0L;
+        var loadedThumbnailDecodedBytes = 0L;
         foreach (var parent in rootDirectory
                      .EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
                      .OrderBy(static directory => directory.Name, StringComparer.Ordinal))
@@ -256,8 +261,29 @@ public sealed partial class BrandProfileCatalog
                 throw new InvalidOperationException("Brand Profile manifest is invalid JSON or contains unsupported fields.", exception);
             }
 
-            var contentHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-            var profile = ValidateAndCreateSnapshot(manifest, parent.Name, contentHash);
+            var profile = ValidateAndCreateSnapshot(manifest, parent, bytes);
+            loadedThumbnailBytes += profile.SampleThumbnails.Values.Sum(static item => item.Bytes.Length);
+            loadedThumbnailPixels += profile.SampleThumbnails.Values.Sum(
+                static item => (long)item.Width * item.Height);
+            loadedThumbnailDecodedBytes += profile.SampleThumbnails.Values.Sum(
+                static item => item.DecodedBytes);
+            if (loadedThumbnailBytes > MaximumCatalogThumbnailBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Brand Profile catalog sample thumbnails must not exceed {MaximumCatalogThumbnailBytes} bytes in total.");
+            }
+
+            if (loadedThumbnailPixels > MaximumCatalogThumbnailPixels)
+            {
+                throw new InvalidOperationException(
+                    $"Brand Profile catalog sample thumbnails must not exceed {MaximumCatalogThumbnailPixels} pixels in total.");
+            }
+            if (loadedThumbnailDecodedBytes > MaximumCatalogThumbnailDecodedBytes)
+            {
+                throw new InvalidOperationException(
+                    $"Brand Profile catalog sample thumbnails must not exceed {MaximumCatalogThumbnailDecodedBytes} decoded bytes in total.");
+            }
+
             if (!loaded.TryAdd(profile.Id, profile))
             {
                 throw new InvalidOperationException("Brand Profile IDs must be unique.");
@@ -275,8 +301,8 @@ public sealed partial class BrandProfileCatalog
 
     private BrandProfileSnapshot ValidateAndCreateSnapshot(
         BrandProfileManifest manifest,
-        string bundleId,
-        string contentHash)
+        DirectoryInfo bundleDirectory,
+        byte[] manifestBytes)
     {
         if (manifest.SchemaVersion != 1)
         {
@@ -284,7 +310,7 @@ public sealed partial class BrandProfileCatalog
         }
 
         ValidateIdentifier(manifest.Id, "id");
-        if (!string.Equals(manifest.Id, bundleId, StringComparison.Ordinal))
+        if (!string.Equals(manifest.Id, bundleDirectory.Name, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Brand Profile id must exactly match its bundle directory name.");
         }
@@ -371,6 +397,10 @@ public sealed partial class BrandProfileCatalog
             }
         }
 
+        var sampleThumbnails = BrandSampleThumbnailLoader.Load(bundleDirectory, samples);
+        var contentHash = BrandSampleThumbnailLoader.ComputeContentHash(
+            manifestBytes,
+            sampleThumbnails);
         var summary = new BrandProfileCatalogSummary(
             manifest.Id,
             manifest.Name,
@@ -389,7 +419,12 @@ public sealed partial class BrandProfileCatalog
             manifest.RequiresConfirmationRules.ToArray(),
             manifest.ApprovedAssetCollectionIds.ToArray(),
             styleDirections);
-        return new BrandProfileSnapshot(detail, manifest.TemplateId, recipes, samples);
+        return new BrandProfileSnapshot(
+            detail,
+            manifest.TemplateId,
+            recipes,
+            samples,
+            sampleThumbnails);
     }
 
     private static DesignCatalogProfileView CreateView(

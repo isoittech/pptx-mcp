@@ -27,6 +27,13 @@ public enum DesignSourcePolicy
     ApprovedOrUserProvided,
 }
 
+[JsonConverter(typeof(CamelCaseJsonStringEnumConverter<DesignBriefSelectionSource>))]
+public enum DesignBriefSelectionSource
+{
+    AgentDefault,
+    UserCard,
+}
+
 [JsonConverter(typeof(CamelCaseJsonStringEnumConverter<AssetVisualPurpose>))]
 public enum AssetVisualPurpose
 {
@@ -160,6 +167,24 @@ public sealed record AssetPlanItem(
     [property: JsonPropertyName("text_safe_area"), Description("Optional text-safe-area token: none, left, right, top, or bottom.")]
     string? TextSafeArea = null);
 
+public sealed record DesignBriefStyleAlternative(
+    [property: JsonPropertyName("style_direction_id"), Description("Alternative style direction ID from the same immutable Brand Profile.")]
+    string StyleDirectionId,
+    [property: JsonPropertyName("density"), Description("Alternative base density: airy, balanced, or detailed.")]
+    string Density,
+    [property: JsonPropertyName("recipe_ids"), Description("Exactly one recipe ID per slide, in slide order. Only the recipe IDs differ from the common Asset Plan.")]
+    IReadOnlyList<string> RecipeIds);
+
+public sealed record DesignBriefNoPhotoOverride(
+    [property: JsonPropertyName("slide_number"), Description("One-based slide number whose planned photo role is replaced by a no-image composition.")]
+    int SlideNumber,
+    [property: JsonPropertyName("recipe_id"), Description("No-image composition recipe ID for this slide from the recommended style direction.")]
+    string RecipeId,
+    [property: JsonPropertyName("preferred_medium"), Description("No-image composition medium: icon, nativeDiagram, chart, or none.")]
+    AssetPreferredMedium PreferredMedium,
+    [property: JsonPropertyName("acquisition"), Description("No-image composition acquisition: nativeDraw or none.")]
+    AssetAcquisition Acquisition);
+
 public sealed record DesignBriefValidationView(
     [property: JsonPropertyName("brief_id")] string BriefId,
     [property: JsonPropertyName("status")] string Status,
@@ -168,6 +193,10 @@ public sealed record DesignBriefValidationView(
     [property: JsonPropertyName("style_direction_id")] string StyleDirectionId,
     [property: JsonPropertyName("expected_slide_count")] int ExpectedSlideCount,
     [property: JsonPropertyName("asset_plan_summary")] AssetPlanSummary AssetPlanSummary,
+    [property: JsonPropertyName("instruction")] string Instruction);
+
+public sealed record DesignBriefSelectionCancellationView(
+    [property: JsonPropertyName("status")] string Status,
     [property: JsonPropertyName("instruction")] string Instruction);
 
 public sealed record AssetPlanSummary(
@@ -234,6 +263,14 @@ public sealed record BrandSampleSummary(
     [property: JsonPropertyName("recipe_id")] string RecipeId,
     [property: JsonPropertyName("information_level")] string InformationLevel);
 
+public sealed record BrandSampleThumbnail(
+    string SampleId,
+    string MimeType,
+    int Width,
+    int Height,
+    [property: JsonIgnore] ReadOnlyMemory<byte> Bytes,
+    [property: JsonIgnore] long DecodedBytes);
+
 public sealed record BrandVisualRuleSet(
     [property: JsonPropertyName("photography")] IReadOnlyList<string> Photography,
     [property: JsonPropertyName("illustration")] IReadOnlyList<string> Illustration,
@@ -270,7 +307,8 @@ public sealed record BrandProfileSnapshot(
     BrandProfileCatalogDetail Detail,
     string TemplateId,
     IReadOnlyList<BrandLayoutRecipe> LayoutRecipes,
-    IReadOnlyList<BrandSampleSummary> Samples)
+    IReadOnlyList<BrandSampleSummary> Samples,
+    [property: JsonIgnore] IReadOnlyDictionary<string, BrandSampleThumbnail> SampleThumbnails)
 {
     public string Id => Detail.Summary.Id;
 
@@ -289,7 +327,8 @@ public sealed record ValidatedDesignBriefBinding(
     VisualThemeSpec Theme,
     VisualDesignSpec Design,
     IReadOnlyDictionary<int, AssetPlanItem> AssetPlan,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    DesignBriefSelectionSource SelectionSource = DesignBriefSelectionSource.AgentDefault);
 
 public sealed record VisualDeckBrandProfileBinding(
     [property: JsonPropertyName("profile")] BrandProfileReference Profile,
@@ -307,7 +346,8 @@ public sealed record VisualSlideRecipeBinding(
 public sealed record VisualDeckDesignBriefAudit(
     [property: JsonPropertyName("source_policy")] DesignSourcePolicy SourcePolicy,
     [property: JsonPropertyName("assumptions")] IReadOnlyList<DesignAssumption> Assumptions,
-    [property: JsonPropertyName("slides")] IReadOnlyList<VisualSlideAssetAudit> Slides);
+    [property: JsonPropertyName("slides")] IReadOnlyList<VisualSlideAssetAudit> Slides,
+    [property: JsonPropertyName("selection_source")] DesignBriefSelectionSource SelectionSource = DesignBriefSelectionSource.AgentDefault);
 
 public sealed record VisualSlideAssetAudit(
     [property: JsonPropertyName("slide_number")] int SlideNumber,

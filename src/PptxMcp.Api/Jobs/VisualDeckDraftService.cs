@@ -332,7 +332,8 @@ public sealed class VisualDeckDraftService(
         var audit = new VisualDeckDesignBriefAudit(
             draft.DesignBrief.Brief.SourcePolicy,
             draft.DesignBrief.Brief.Assumptions.ToArray(),
-            assetAudit);
+            assetAudit,
+            draft.DesignBrief.SelectionSource);
         return new VisualDeckBrandProfileBinding(
             new BrandProfileReference(
                 draft.DesignBrief.Profile.Id,

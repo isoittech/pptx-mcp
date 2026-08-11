@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PptxMcp.Domain;
 using PptxMcp.Jobs;
 using PptxMcp.Storage;
@@ -108,6 +109,11 @@ public sealed class BrandProfileJobBindingTests
 
         Assert.NotNull(restored?.BrandProfileBinding?.DesignBriefAudit);
         Assert.DoesNotContain("brief_id", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("choiceSessionId", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("optionId", json, StringComparison.Ordinal);
+        Assert.Equal(
+            DesignBriefSelectionSource.AgentDefault,
+            restored.BrandProfileBinding.DesignBriefAudit.SelectionSource);
         Assert.Equal(
             DesignSourcePolicy.ApprovedOnly,
             restored.BrandProfileBinding.DesignBriefAudit.SourcePolicy);
@@ -132,6 +138,21 @@ public sealed class BrandProfileJobBindingTests
                 50));
 
         Assert.Equal("visual_slide_recipe_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void LegacyJobPayloadWithoutSelectionSourceDefaultsToAgentDefault()
+    {
+        var json = JsonNode.Parse(JsonSerializer.Serialize(CreateBoundDeck(), SerializerOptions))!.AsObject();
+        json["brand_profile_binding"]!["design_brief_audit"]!
+            .AsObject()
+            .Remove("selection_source");
+
+        var restored = JsonSerializer.Deserialize<VisualDeckSpec>(json.ToJsonString(), SerializerOptions);
+
+        Assert.Equal(
+            DesignBriefSelectionSource.AgentDefault,
+            restored?.BrandProfileBinding?.DesignBriefAudit?.SelectionSource);
     }
 
     private static VisualDeckSpec CreateBoundDeck()

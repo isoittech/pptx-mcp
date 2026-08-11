@@ -70,15 +70,20 @@ PPTX_MCP_BRAND_PROFILES_PATH=/absolute/path/to/pptx-brand-profiles
 PPTX_MCP_REQUIRE_DESIGN_BRIEF=false
 ```
 
-`pptx_get_design_catalog`は無引数でcompactなprofile一覧だけを返します。recipeとsample要約は、その一覧から選んだ正確なprofile IDを必ず指定し、必要に応じて用途、密度、style directionで絞った2回目の呼出しで取得します。profile IDなしの絞り込みは、全profileの詳細が一度に膨張しないよう拒否します。manifestのversionに加え、生バイト列のSHA-256を`content_hash`として返し、起動中は検証済みsnapshotを変更しません。
+`pptx_get_design_catalog`は無引数でcompactなprofile一覧だけを返します。recipeとsample要約は、その一覧から選んだ正確なprofile IDを必ず指定し、必要に応じて用途、密度、style directionで絞った2回目の呼出しで取得します。profile IDなしの絞り込みは、全profileの詳細が一度に膨張しないよう拒否します。manifest bytesと任意の検査済みsample thumbnail hashを合成したSHA-256を`content_hash`として返し、起動中は検証済みsnapshotを変更しません。
 
-`RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。第1段階は画像挿入を行わないため、`userUpload`または`approvedLibrary`を計画する場合だけ、`status=fallbackSelected`と`nativeDraw`または`noAssetLayout`のfallback、外部画像を必須としないrecipeを確定してください。任意URL、任意パス、画像バイナリはMCP入力へ渡せません。OSS既定は互換性のため`false`です。bundleの正確なschemaは[Brand Profile bundle](docs/brand-profiles.md)、判断理由は[ADR 0013](docs/adr/0013-external-brand-profiles-and-design-brief-gate.md)を参照してください。
+`RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。第2段階もPPTXへの外部画像挿入は行わないため、`userUpload`または`approvedLibrary`を計画する場合だけ、`status=fallbackSelected`と`nativeDraw`または`noAssetLayout`のfallback、外部画像を必須としないrecipeを確定してください。任意URL、任意パス、画像バイナリはMCP入力へ渡せません。OSS既定は互換性のため`false`です。
+
+方向選択が結果へ大きく影響し、実効的に異なる案が2件以上ある場合だけ、`pptx_prepare_design_brief`でDesign Briefカードを表示できます。利用者が推奨案・別案・画像を使わない別構成から選ぶと、固定intentのopaque IDを`pptx_apply_design_brief_action`がserver側で照合し、選択済み`brief_id`だけをstart可能にします。カードpending中はoptional構成でもvalidate/startを拒否します。カードが表示できない場合は、引数なしの`pptx_cancel_design_brief_selection`で未選択状態だけを破棄してsafe defaultへ戻せます。bundleの正確なschemaは[Brand Profile bundle](docs/brand-profiles.md)、基礎判断は[ADR 0013](docs/adr/0013-external-brand-profiles-and-design-brief-gate.md)、選択UIと状態境界は[ADR 0015](docs/adr/0015-design-brief-selection-ui-resource.md)を参照してください。
 
 ## MCPツール
 
 - `pptx_get_capabilities`
 - `pptx_get_design_catalog`
 - `pptx_validate_design_brief`
+- `pptx_prepare_design_brief`
+- `pptx_apply_design_brief_action`
+- `pptx_cancel_design_brief_selection`
 - `pptx_analyze`
 - `pptx_render_preview`
 - `pptx_replace_text`

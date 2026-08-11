@@ -98,6 +98,9 @@ public sealed class BrandProfileVisualDraftTests
             Assert.Equal(summary.ContentHash, submission.Deck.BrandProfileBinding.Profile.ContentHash);
             Assert.Equal(brief.SourcePolicy, submission.Deck.BrandProfileBinding.DesignBriefAudit?.SourcePolicy);
             Assert.Equal(brief.Assumptions, submission.Deck.BrandProfileBinding.DesignBriefAudit?.Assumptions);
+            Assert.Equal(
+                DesignBriefSelectionSource.AgentDefault,
+                submission.Deck.BrandProfileBinding.DesignBriefAudit?.SelectionSource);
             Assert.Equal(2, submission.Deck.BrandProfileBinding.DesignBriefAudit?.Slides.Count);
             Assert.Equal(
                 ["cover-airy", "kpi-balanced"],

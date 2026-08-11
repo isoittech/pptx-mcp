@@ -23,6 +23,10 @@ public sealed class DesignBriefInstructionsTests
         Assert.Contains("match that recipe's semantic kind, density, and implemented variant", instructions, StringComparison.Ordinal);
         Assert.Contains("spotlight only for exactly three Metrics", instructions, StringComparison.Ordinal);
         Assert.Contains("one explicit line", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx_prepare_design_brief", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx.designBrief.select", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx_cancel_design_brief_selection", instructions, StringComparison.Ordinal);
+        Assert.Contains("argument-free", instructions, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -32,6 +36,7 @@ public sealed class DesignBriefInstructionsTests
 
         Assert.Contains("does not require a Design Brief", instructions, StringComparison.Ordinal);
         Assert.Contains("existing Visual Deck callers remain compatible", instructions, StringComparison.Ordinal);
+        Assert.Contains("blocks an unbound start when RequireDesignBrief is false", instructions, StringComparison.Ordinal);
     }
 
     [Fact]
