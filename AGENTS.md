@@ -22,7 +22,7 @@
 - PPTX 操作は `IPresentationEngine` の背後に置き、Open XML 実装と将来の商用エンジンを交換可能にする。
 - LibreOffice は表示確認用レンダリングに限定し、編集には使用しない。
 - 白紙生成は `VisualDeckSpec` を固定PptxGenJSレンダラーへ渡す。任意JavaScript、任意座標、URL、ローカルパスをツール入力へ追加しない。
-- `VisualDeckSpec` は20種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
+- `VisualDeckSpec` は21種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
 - 楽譜は`MusicScore`へ音高・音価・ウクレレ弦・フレット・指番号を渡し、PowerPointネイティブの線・図形・テキストで五線譜とTABを描く。任意座標を公開せず、音高と調弦・弦・フレットの一致を検証する。音楽記号は同梱したBravura 1.392の輪郭を`custGeom`へ変換し、手描き近似、画像貼付、閲覧側フォント依存へ戻さない。OTFとSIL OFL原文は必ず一緒に更新する。
 - 文字量の多い説明は`StructuredBrief`の2〜3セクションへ分け、評価軸×選択肢は`Scorecard`の編集可能なPowerPoint表にする。`density=detailed`はフォント縮小だけで実装せず、外周余白、見出し領域、間隔、罫線、影を一体で切り替える。
 - `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。
@@ -31,6 +31,13 @@
 - 新規Visual Deckは`pptx_start_visual_deck`、最大4ページずつの`pptx_add_visual_slides_to_draft`、finishの順で作る。最大50ページの完全仕様を一度に要求する公開ツールへ戻さない。`startSlideNumber`は省略可能とし、サーバーが受理済み末尾から追番する。明示値は順序検証にだけ使う。
 - start時にテンプレート、テーマ、デザインを固定し、finishでの変更を拒否する。テンプレート抽出値は未指定テーマ項目だけを補完し、明示色・フォントを上書きしない。`pptx_create_deck` は既存プレースホルダー配置への厳密な流し込みが明示された場合だけ使う。
 - 導入環境の既定テンプレートは外部マウントと`DefaultTemplateId`で指定し、実PPTX・会社名・ロゴ・固有文言をOSSへ含めない。起動時に検証・解析し、startの`templateSourceFileId=default`で自動適用する。添付テンプレートはstartで`latest`または`file_id`、テンプレートなしは`none`を選ぶ。
+- Brand Profileは`BrandProfilesRoot/<profile-id>/brand-profile.json`から読み取り専用で起動時に検証し、会社固有値、URL、パスをOSSコードへ含めない。`pptx_get_design_catalog`は絞り込み式のcompact catalog、`pptx_validate_design_brief`はuser・conversation・profile version/hashへ束縛した期限付き`brief_id`を担当する。`RequireDesignBrief`はOSS既定offとし、導入環境で有効化した場合だけstart前に必須化する。詳細はADR 0013を参照する。
+- デザイン方向が結果へ大きく影響し、実効renderer fingerprintが異なる案を2件以上出せる場合だけ、`pptx_prepare_design_brief`→UI Resourceでturn終了→固定`pptx.designBrief.select` intent→`pptx_apply_design_brief_action`の順にする。候補は最大3件、clientからは`choiceSessionId`と`optionId`だけを受け、pending中はoptional構成でもvalidate/startを拒否する。明確な依頼や1案だけなら従来のvalidateへ直行する。カード非表示または利用者がsafe defaultを明示した場合だけ、引数なしの`pptx_cancel_design_brief_selection`で未選択pendingを破棄する。選択済みは取消不可とする。詳細はADR 0015を参照する。
+- Brand sample thumbnailは`sample-thumbnails/<sample-id>.png`の検査済みnon-interlaced PNGだけをUI確認用に任意読込する。model/renderer入力やPPTX素材へ使わず、任意URL・JPEG・path・symlink・metadata chunkを拒否する。profile単位ACLはないため、対象deploymentの全利用者へ配布承認済み・非機密・権利確認済みのderivativeだけを登録する。技術検査を権利承認と呼ばない。
+- 複数のBrand sample thumbnailは16:9なら960x540程度を基準にする。1profile全体の6Mpx上限は各画像の上限とは別に適用され、1280x720を9枚置く構成は起動時検証で拒否される。
+- Design Briefを使うdraftは全ページのAsset Planとlayout recipeを固定し、add時に`recipeId`、意味layout、密度、実装済みvariantを照合する。画像挿入未実装の段階では`userUpload`や`approvedLibrary`を完成素材として扱わず、nativeDrawまたは画像なしlayoutのfallbackと外部素材を必須としないrecipeを確定する。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`の組合せにし、`noAssetLayout`は`userUpload`または`approvedLibrary`の`fallbackSelected`にだけ使う。
+- 完成したprofile-bound deckには秘密を含まないDesign Brief監査snapshotとページrecipe契約を保存する。refineでは元ページの`recipeId`、kind、実効density、variantと監査snapshotを保持し、第1段階のinsertは新規Asset Planを検証できないため拒否する。期限付き`brief_id`はjob payloadへ保存しない。
+- Design Brief監査には`selection_source=agentDefault|userCard`だけを保存し、choice session、option、nonce、brief IDをjob payloadへ残さない。旧payloadでfieldが欠落する場合は`agentDefault`として読む。
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。通常の欠け・重なりに加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。
 - Bedrockから白紙資料とブランドVisual Deckを視覚修正する場合は、`pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡し、各成功後に `jobId=latest` で次ページを直す。ジョブへルート・親・修正巡を保存し、古い版からの分岐、一括ページ修正、3巡目をサーバー側で拒否する。成功後のstart再実行も拒否し、初回生成失敗時の全体再試行だけ1回許可する。
 - 成功済みVisual Deckへページを増やす場合は`pptx_insert_visual_slides`へ追加ページだけを渡す。新規ドラフトを開始せず、既存ページも再送しない。サーバー側で元仕様へ挿入し、ブランド資料では元テンプレートとレイアウトを継承する。第1段階では完成版全体を再レンダリングするため、物理的な差分編集とは区別する。
@@ -38,9 +45,11 @@
 - 非同期ジョブの通常フローは`pptx_wait_for_job`で最大45秒サーバー内待機し、`pptx_get_job`の短間隔反復でLibreChatの再帰上限を消費しない。`pptx_get_job`は障害復旧や待たない即時確認に使う。
 - Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。
 - PptxGenJSを含む外部レンダラーの生成物は、LibreOfficeで表示できてもPowerPoint互換とは限らない。生成直後と企業テンプレートへの合成後にOpenXmlValidatorを通し、新規検証エラーがある成果物は配布しない。
+- rendererの色role、surface、style profileを拡張するときは`visual-v5`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。dark surface、明色role、v4代表XMLのNode回帰テストを維持する。
 
 ## セキュリティと制約
 
+- `rm`による削除は作業途中で繰り返さず、削除対象を記録して作業終盤に一覧を提示し、ユーザー承認後にまとめて実行する。承認前に実行しない。
 - 入力上限は30MB、50スライド、ジョブ実行上限は10分、同時実行数は3とする。
 - ZIP bomb、パストラバーサル、マクロ、ActiveX、外部リレーション、暗号化ファイルを拒否する。
 - 成果物は生成から7日、または最初のダウンロードから24時間の早い方で削除する。

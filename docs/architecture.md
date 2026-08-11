@@ -57,7 +57,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。addの`startSlideNumber`は任意とし、省略時は受理済み末尾からサーバーが算出します。明示値がある場合は正しい次番号との一致を検証します。
 
 - title、agenda、section、statement、bullets
-- cards、metrics、comparison、structuredBrief、scorecard、musicScore
+- cards、metrics、comparison、structuredBrief、scorecard、dataTable、musicScore
 - process、timeline
 - matrix、funnel、roadmap、chart、dashboard
 - quote、closing

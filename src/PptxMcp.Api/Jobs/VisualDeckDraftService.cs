@@ -14,6 +14,7 @@ public sealed class VisualDeckDraftService(
     private const int MaximumActiveDrafts = 128;
     private static readonly TimeSpan DraftLifetime = TimeSpan.FromHours(1);
     private readonly ConcurrentDictionary<string, DraftState> drafts = new(StringComparer.Ordinal);
+    private readonly object beginLock = new();
     private readonly PptxMcpOptions options = options.Value;
 
     public VisualDeckDraftView Begin(
@@ -26,7 +27,8 @@ public sealed class VisualDeckDraftService(
         VisualDesignSpec? design,
         string templateSourceFileId = "default",
         string templateLayoutId = "auto",
-        bool allowSubmittedReplacement = false)
+        bool allowSubmittedReplacement = false,
+        ValidatedDesignBriefBinding? designBrief = null)
     {
         VisualDeckValidator.ValidateMetadata(title, subject, language, theme, design);
         if (expectedSlideCount is < 1 || expectedSlideCount > options.MaxSlides)
@@ -38,55 +40,76 @@ public sealed class VisualDeckDraftService(
 
         ValidateTemplateSelection(templateSourceFileId, templateLayoutId);
 
-        PruneExpired();
-        var active = drafts.Values
-            .Where(draft =>
-                string.Equals(draft.UserScope, caller.UserScope, StringComparison.Ordinal)
-                && string.Equals(draft.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
-            .OrderByDescending(static draft => draft.CreatedAt)
-            .FirstOrDefault();
-        if (active is not null && active.Status is DraftStatus.Collecting or DraftStatus.Submitting)
+        lock (beginLock)
         {
-            return CreateView(active);
-        }
-
-        if (active is not null && !allowSubmittedReplacement)
-        {
-            throw new PptxValidationException(
-                "visual_draft_already_submitted",
-                $"This conversation already submitted visual deck job {active.JobId}. Do not start the deck again.");
-        }
-
-        if (drafts.Count >= MaximumActiveDrafts)
-        {
-            throw new PptxValidationException(
-                "visual_draft_capacity_reached",
-                "Too many visual deck drafts are active. Retry later.");
-        }
-
-        var now = timeProvider.GetUtcNow();
-        while (true)
-        {
-            var draft = new DraftState(
-                Guid.NewGuid().ToString("N"),
-                caller.UserScope,
-                caller.ConversationScope,
-                title,
-                expectedSlideCount,
-                [],
-                theme,
-                subject,
-                language,
-                design,
-                NormalizeTemplateSource(templateSourceFileId),
-                NormalizeTemplateLayout(templateSourceFileId, templateLayoutId),
-                DraftStatus.Collecting,
-                null,
-                now,
-                now.Add(DraftLifetime));
-            if (drafts.TryAdd(draft.Id, draft))
+            PruneExpired();
+            var active = drafts.Values
+                .Where(draft =>
+                    string.Equals(draft.UserScope, caller.UserScope, StringComparison.Ordinal)
+                    && string.Equals(draft.ConversationScope, caller.ConversationScope, StringComparison.Ordinal))
+                .OrderByDescending(static draft => draft.CreatedAt)
+                .FirstOrDefault();
+            if (active is not null && active.Status is DraftStatus.Collecting or DraftStatus.Submitting)
             {
-                return CreateView(draft);
+                if (MatchesActiveDraft(
+                        active,
+                        title,
+                        expectedSlideCount,
+                        theme,
+                        subject,
+                        language,
+                        design,
+                        templateSourceFileId,
+                        templateLayoutId,
+                        designBrief))
+                {
+                    return CreateView(active);
+                }
+
+                throw new PptxValidationException(
+                    "visual_draft_already_active",
+                    "A different Visual Deck draft is already active in this conversation. Continue it with the returned draft_id; do not replace its locked title, slide count, theme, design, template, or Design Brief.");
+            }
+
+            if (active is not null && !allowSubmittedReplacement)
+            {
+                throw new PptxValidationException(
+                    "visual_draft_already_submitted",
+                    $"This conversation already submitted visual deck job {active.JobId}. Do not start the deck again.");
+            }
+
+            if (drafts.Count >= MaximumActiveDrafts)
+            {
+                throw new PptxValidationException(
+                    "visual_draft_capacity_reached",
+                    "Too many visual deck drafts are active. Retry later.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            while (true)
+            {
+                var draft = new DraftState(
+                    Guid.NewGuid().ToString("N"),
+                    caller.UserScope,
+                    caller.ConversationScope,
+                    title,
+                    expectedSlideCount,
+                    [],
+                    theme,
+                    subject,
+                    language,
+                    design,
+                    NormalizeTemplateSource(templateSourceFileId),
+                    NormalizeTemplateLayout(templateSourceFileId, templateLayoutId),
+                    designBrief,
+                    DraftStatus.Collecting,
+                    null,
+                    now,
+                    now.Add(DraftLifetime));
+                if (drafts.TryAdd(draft.Id, draft))
+                {
+                    return CreateView(draft);
+                }
             }
         }
     }
@@ -115,6 +138,8 @@ public sealed class VisualDeckDraftService(
                     "visual_draft_position_invalid",
                     $"startSlideNumber must be {expectedStart} for this draft. Do not resend an accepted batch.");
             }
+
+            ValidateBrandRecipes(current, slides, expectedStart);
 
             var combined = current.Slides.Concat(slides).ToArray();
             if (combined.Length > current.ExpectedSlideCount)
@@ -263,7 +288,179 @@ public sealed class VisualDeckDraftService(
             draft.Theme,
             draft.Subject,
             draft.Language,
-            draft.Design);
+            draft.Design,
+            "visual-v5",
+            CreatePersistedBrandBinding(draft));
+
+    private static VisualDeckBrandProfileBinding? CreatePersistedBrandBinding(DraftState draft)
+    {
+        if (draft.DesignBrief is null)
+        {
+            return null;
+        }
+
+        var slideBindings = draft.DesignBrief.AssetPlan
+            .OrderBy(static pair => pair.Key)
+            .Select(pair =>
+            {
+                var recipe = draft.DesignBrief.Profile.LayoutRecipes.Single(item =>
+                    string.Equals(item.Id, pair.Value.RecipeId, StringComparison.Ordinal));
+                return new VisualSlideRecipeBinding(
+                    pair.Key,
+                    recipe.Id,
+                    recipe.SemanticKind,
+                    recipe.Density,
+                    recipe.Variant);
+            })
+            .ToArray();
+        var assetAudit = draft.DesignBrief.AssetPlan
+            .OrderBy(static pair => pair.Key)
+            .Select(pair => new VisualSlideAssetAudit(
+                pair.Key,
+                pair.Value.VisualPurpose,
+                pair.Value.PreferredMedium,
+                pair.Value.Acquisition,
+                pair.Value.Fallback,
+                pair.Value.Status,
+                pair.Value.LicenseStatus,
+                pair.Value.ApprovedAssetCollectionId,
+                pair.Value.AttributionRef,
+                pair.Value.CropIntent,
+                pair.Value.AspectRatio,
+                pair.Value.TextSafeArea))
+            .ToArray();
+        var audit = new VisualDeckDesignBriefAudit(
+            draft.DesignBrief.Brief.SourcePolicy,
+            draft.DesignBrief.Brief.Assumptions.ToArray(),
+            assetAudit,
+            draft.DesignBrief.SelectionSource);
+        return new VisualDeckBrandProfileBinding(
+            new BrandProfileReference(
+                draft.DesignBrief.Profile.Id,
+                draft.DesignBrief.Profile.Version,
+                draft.DesignBrief.Profile.ContentHash),
+            draft.DesignBrief.StyleDirection.Id,
+            slideBindings,
+            audit);
+    }
+
+    private static bool MatchesActiveDraft(
+        DraftState active,
+        string title,
+        int expectedSlideCount,
+        VisualThemeSpec? theme,
+        string? subject,
+        string language,
+        VisualDesignSpec? design,
+        string templateSourceFileId,
+        string templateLayoutId,
+        ValidatedDesignBriefBinding? designBrief) =>
+        string.Equals(active.Title, title, StringComparison.Ordinal)
+        && active.ExpectedSlideCount == expectedSlideCount
+        && ThemesEqual(active.Theme, theme)
+        && string.Equals(active.Subject, subject, StringComparison.Ordinal)
+        && string.Equals(active.Language, language, StringComparison.Ordinal)
+        && Equals(active.Design, design)
+        && string.Equals(
+            active.TemplateSourceFileId,
+            NormalizeTemplateSource(templateSourceFileId),
+            StringComparison.OrdinalIgnoreCase)
+        && string.Equals(
+            active.TemplateLayoutId,
+            NormalizeTemplateLayout(templateSourceFileId, templateLayoutId),
+            StringComparison.Ordinal)
+        && string.Equals(active.DesignBrief?.BriefId, designBrief?.BriefId, StringComparison.Ordinal)
+        && string.Equals(
+            active.DesignBrief?.Profile.ContentHash,
+            designBrief?.Profile.ContentHash,
+            StringComparison.Ordinal);
+
+    private static bool ThemesEqual(VisualThemeSpec? first, VisualThemeSpec? second)
+    {
+        if (ReferenceEquals(first, second))
+        {
+            return true;
+        }
+
+        if (first is null || second is null)
+        {
+            return false;
+        }
+
+        return string.Equals(first.Preset, second.Preset, StringComparison.Ordinal)
+            && string.Equals(first.PrimaryColor, second.PrimaryColor, StringComparison.Ordinal)
+            && string.Equals(first.SecondaryColor, second.SecondaryColor, StringComparison.Ordinal)
+            && string.Equals(first.AccentColor, second.AccentColor, StringComparison.Ordinal)
+            && string.Equals(first.BackgroundColor, second.BackgroundColor, StringComparison.Ordinal)
+            && string.Equals(first.TextColor, second.TextColor, StringComparison.Ordinal)
+            && string.Equals(first.FontFace, second.FontFace, StringComparison.Ordinal)
+            && string.Equals(first.HeadingFontFace, second.HeadingFontFace, StringComparison.Ordinal)
+            && string.Equals(first.BodyFontFace, second.BodyFontFace, StringComparison.Ordinal)
+            && string.Equals(first.SurfaceColor, second.SurfaceColor, StringComparison.Ordinal)
+            && string.Equals(first.MutedTextColor, second.MutedTextColor, StringComparison.Ordinal)
+            && string.Equals(first.PositiveColor, second.PositiveColor, StringComparison.Ordinal)
+            && string.Equals(first.WarningColor, second.WarningColor, StringComparison.Ordinal)
+            && string.Equals(first.CriticalColor, second.CriticalColor, StringComparison.Ordinal)
+            && (first.DataSeriesColors ?? []).SequenceEqual(
+                second.DataSeriesColors ?? [],
+                StringComparer.Ordinal);
+    }
+
+    private static void ValidateBrandRecipes(
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides,
+        int startSlideNumber)
+    {
+        if (draft.DesignBrief is null)
+        {
+            return;
+        }
+
+        for (var index = 0; index < slides.Count; index++)
+        {
+            var slideNumber = startSlideNumber + index;
+            var slide = slides[index];
+            if (!draft.DesignBrief.AssetPlan.TryGetValue(slideNumber, out var plan))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_asset_plan_missing",
+                    $"Slide {slideNumber} has no entry in the validated Asset Plan.");
+            }
+
+            if (!string.Equals(slide.RecipeId, plan.RecipeId, StringComparison.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_mismatch",
+                    $"Slide {slideNumber}.recipeId must be {plan.RecipeId}, as fixed by the validated Design Brief.");
+            }
+
+            var recipe = draft.DesignBrief.Profile.LayoutRecipes.Single(item =>
+                string.Equals(item.Id, plan.RecipeId, StringComparison.Ordinal));
+            if (slide.Kind != recipe.SemanticKind)
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_kind_mismatch",
+                    $"Slide {slideNumber}.kind must be {recipe.SemanticKind} for recipe {recipe.Id}.");
+            }
+
+            var effectiveDensity = slide.Density
+                ?? draft.Design?.Density
+                ?? "balanced";
+            if (!string.Equals(effectiveDensity, recipe.Density, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_density_mismatch",
+                    $"Slide {slideNumber} effective density must be {recipe.Density} for recipe {recipe.Id}. Set the slide density explicitly when it differs from the brief base density.");
+            }
+
+            if (!string.Equals(slide.Variant, recipe.Variant, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_variant_mismatch",
+                    $"Slide {slideNumber}.variant must be {recipe.Variant} for recipe {recipe.Id}.");
+            }
+        }
+    }
 
     private static VisualDeckDraftView CreateView(DraftState draft)
     {
@@ -368,6 +565,7 @@ public sealed class VisualDeckDraftService(
         VisualDesignSpec? Design,
         string TemplateSourceFileId,
         string TemplateLayoutId,
+        ValidatedDesignBriefBinding? DesignBrief,
         DraftStatus Status,
         string? JobId,
         DateTimeOffset CreatedAt,

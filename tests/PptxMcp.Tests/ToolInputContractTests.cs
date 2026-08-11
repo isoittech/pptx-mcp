@@ -419,7 +419,7 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
-    public void VisualDraftSchemaExposesStructuredBriefScorecardAndMusicScoreVocabulary()
+    public void VisualDraftSchemaExposesCurrentStructuredAndEditableVocabulary()
     {
         var method = typeof(PowerPointTools).GetMethod(
             nameof(PowerPointTools.AddVisualSlidesToDraft),
@@ -432,9 +432,13 @@ public sealed class ToolInputContractTests
         Assert.Contains("StructuredBrief", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Scorecard", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MusicScore", schema, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DataTable", schema, StringComparison.Ordinal);
         Assert.Contains("sections", schema, StringComparison.Ordinal);
         Assert.Contains("criteria", schema, StringComparison.Ordinal);
         Assert.Contains("musicScore", schema, StringComparison.Ordinal);
+        Assert.Contains("dataTable", schema, StringComparison.Ordinal);
+        Assert.Contains("recipeId", schema, StringComparison.Ordinal);
+        Assert.Contains("density", schema, StringComparison.Ordinal);
         Assert.Contains("measures", schema, StringComparison.Ordinal);
         Assert.Contains("pitch", schema, StringComparison.Ordinal);
         Assert.Contains("fret", schema, StringComparison.Ordinal);
@@ -443,6 +447,13 @@ public sealed class ToolInputContractTests
         Assert.Contains("評価軸×選択肢", description, StringComparison.Ordinal);
         Assert.Contains("musicScore", description, StringComparison.Ordinal);
         Assert.Contains("五線譜", description, StringComparison.Ordinal);
+        Assert.Contains("DataTable", description, StringComparison.Ordinal);
+        Assert.Contains("dataTable", description, StringComparison.Ordinal);
+        Assert.Contains("明示改行なし", description, StringComparison.Ordinal);
+        Assert.Contains("recipeId", description, StringComparison.Ordinal);
+        Assert.Contains("density", description, StringComparison.Ordinal);
+        Assert.Contains("spotlight", description, StringComparison.Ordinal);
+        Assert.Contains("Metrics正確に3件", description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -510,5 +521,14 @@ public sealed class ToolInputContractTests
         Assert.Equal("latest", jobId.DefaultValue);
         Assert.Contains("1枚", toolDescription, StringComparison.Ordinal);
         Assert.Contains("累積", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("recipeId", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("実効density", toolDescription, StringComparison.Ordinal);
+
+        var legacyMethod = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.RefineVisualDeckAsync),
+            BindingFlags.Public | BindingFlags.Static);
+        var legacyDescription = legacyMethod?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+        Assert.Contains("recipeId", legacyDescription, StringComparison.Ordinal);
+        Assert.Contains("実効density", legacyDescription, StringComparison.Ordinal);
     }
 }

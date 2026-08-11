@@ -650,6 +650,7 @@ public sealed class JobService(
                 "Provide 1 or more distinct visual slide revisions within the source deck slide range.");
         }
 
+        ValidateBrandProfileRevisions(originalDeck, revisions);
         var revisionsBySlide = revisions.ToDictionary(static revision => revision.SlideNumber);
         var slides = originalDeck.Slides
             .Select((slide, index) => revisionsBySlide.TryGetValue(index + 1, out var revision)
@@ -679,6 +680,13 @@ public sealed class JobService(
                 $"Provide 1 or more visual slides while keeping the combined deck within {maximumSlides} slides.");
         }
 
+        if (originalDeck.BrandProfileBinding is not null)
+        {
+            throw new PptxValidationException(
+                "brand_profile_insert_requires_design_brief",
+                "Slide insertion into a Brand Profile-bound deck is unavailable in phase 1 because the new slides have no validated Asset Plan or immutable recipe binding. Create a separately validated workflow when insertion support is added; do not bypass the existing profile contract.");
+        }
+
         var insertionIndex = afterSlideNumber ?? originalDeck.Slides.Count;
         if (insertionIndex < 0 || insertionIndex > originalDeck.Slides.Count)
         {
@@ -693,6 +701,88 @@ public sealed class JobService(
             .Concat(originalDeck.Slides.Skip(insertionIndex))
             .ToArray();
         return originalDeck with { Slides = combinedSlides };
+    }
+
+    private static void ValidateBrandProfileRevisions(
+        VisualDeckSpec originalDeck,
+        IReadOnlyList<VisualSlideRevision> revisions)
+    {
+        var brandBinding = originalDeck.BrandProfileBinding;
+        if (brandBinding is null)
+        {
+            return;
+        }
+
+        if (brandBinding.Profile is null
+            || brandBinding.Slides is null
+            || brandBinding.Slides.Count != originalDeck.Slides.Count
+            || brandBinding.Slides.Select(static slide => slide.SlideNumber).Distinct().Count()
+                != brandBinding.Slides.Count)
+        {
+            throw new PptxValidationException(
+                "invalid_job_payload",
+                "The stored Brand Profile recipe binding is incomplete or invalid.");
+        }
+
+        if (brandBinding.DesignBriefAudit is { } audit
+            && (audit.Assumptions is null
+                || audit.Assumptions.Any(static assumption =>
+                    assumption is null || assumption.Status == DesignAssumptionStatus.NeedsConfirmation)
+                || audit.Slides is null
+                || audit.Slides.Count != originalDeck.Slides.Count
+                || audit.Slides.Select(static slide => slide.SlideNumber).Distinct().Count()
+                    != audit.Slides.Count
+                || audit.Slides.Any(slide =>
+                    slide is null || slide.SlideNumber < 1 || slide.SlideNumber > originalDeck.Slides.Count)))
+        {
+            throw new PptxValidationException(
+                "invalid_job_payload",
+                "The stored Design Brief audit snapshot is incomplete or invalid.");
+        }
+
+        foreach (var revision in revisions)
+        {
+            var recipe = brandBinding.Slides.SingleOrDefault(binding =>
+                binding.SlideNumber == revision.SlideNumber);
+            if (recipe is null)
+            {
+                throw new PptxValidationException(
+                    "invalid_job_payload",
+                    $"The stored Brand Profile recipe binding is missing slide {revision.SlideNumber}.");
+            }
+
+            var slide = revision.Slide;
+            if (!string.Equals(slide.RecipeId, recipe.RecipeId, StringComparison.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_mismatch",
+                    $"Slide {revision.SlideNumber}.recipeId must remain {recipe.RecipeId} during refinement.");
+            }
+
+            if (slide.Kind != recipe.SemanticKind)
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_kind_mismatch",
+                    $"Slide {revision.SlideNumber}.kind must remain {recipe.SemanticKind} during refinement.");
+            }
+
+            var effectiveDensity = slide.Density
+                ?? originalDeck.Design?.Density
+                ?? "balanced";
+            if (!string.Equals(effectiveDensity, recipe.Density, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_density_mismatch",
+                    $"Slide {revision.SlideNumber} effective density must remain {recipe.Density} during refinement.");
+            }
+
+            if (!string.Equals(slide.Variant, recipe.Variant, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PptxValidationException(
+                    "visual_slide_recipe_variant_mismatch",
+                    $"Slide {revision.SlideNumber}.variant must remain {recipe.Variant} during refinement.");
+            }
+        }
     }
 
     private async Task<VisualJobSubmission> PrepareVisualRefinementAsync(

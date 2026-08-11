@@ -41,6 +41,7 @@ public sealed class VisualDeckDraftServiceTests
         Assert.NotNull(submission.Deck);
         Assert.Equal("段階生成テスト", submission.Deck.Title);
         Assert.Equal("forest", submission.Deck.Theme?.Preset);
+        Assert.Equal("visual-v5", submission.Deck.RendererContract);
         Assert.Equal(Enumerable.Range(1, 6).Select(number => $"Slide {number}"), submission.Deck.Slides.Select(slide => slide.Title));
     }
 
@@ -71,7 +72,7 @@ public sealed class VisualDeckDraftServiceTests
     }
 
     [Fact]
-    public void RepeatedStartReturnsActiveDraftAndLocksCreativeDirection()
+    public void RepeatedIdenticalStartIsIdempotentAndDifferentStartIsRejected()
     {
         var service = CreateService();
         var started = service.Begin(
@@ -85,12 +86,24 @@ public sealed class VisualDeckDraftServiceTests
             "latest",
             "auto");
 
-        var repeated = service.Begin(Caller, "別タイトル", 3, null, null, "ja-JP", null);
+        var repeated = service.Begin(
+            Caller,
+            "固定テスト",
+            1,
+            new VisualThemeSpec("cyber", AccentColor: "#FF00AA"),
+            null,
+            "ja-JP",
+            new VisualDesignSpec("bold", "balanced", "nodes"),
+            "latest",
+            "auto");
+        var activeError = Assert.Throws<PptxValidationException>(() =>
+            service.Begin(Caller, "別タイトル", 3, null, null, "ja-JP", null));
         service.AddSlides(Caller, started.DraftId, null, CreateSlides(1, 1));
         var mismatch = Assert.Throws<PptxValidationException>(() =>
             service.AcquireForSubmission(Caller, started.DraftId, "default", "auto"));
 
         Assert.Equal(started.DraftId, repeated.DraftId);
+        Assert.Equal("visual_draft_already_active", activeError.Code);
         Assert.Equal("latest", started.TemplateSourceFileId);
         Assert.True(started.CreativeDirectionLocked);
         Assert.Equal("visual_creative_direction_locked", mismatch.Code);

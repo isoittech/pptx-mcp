@@ -27,6 +27,7 @@ public enum VisualSlideKind
     Closing,
     StructuredBrief,
     Scorecard,
+    DataTable,
     MusicScore,
 }
 
@@ -45,7 +46,11 @@ public sealed record VisualDeckSpec(
     VisualThemeSpec? Theme = null,
     string? Subject = null,
     string Language = "ja-JP",
-    VisualDesignSpec? Design = null);
+    VisualDesignSpec? Design = null,
+    [property: Description("Server-owned renderer contract. New staged decks use visual-v5; omitted legacy payloads retain visual-v4 behavior during their stored lineage.")]
+    string? RendererContract = null,
+    [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
+    VisualDeckBrandProfileBinding? BrandProfileBinding = null);
 
 public sealed record VisualDeckDraftView(
     [property: JsonPropertyName("draft_id")] string DraftId,
@@ -76,7 +81,24 @@ public sealed record VisualThemeSpec(
     string? AccentColor = null,
     string? BackgroundColor = null,
     string? TextColor = null,
-    string? FontFace = null);
+    [property: Description("Legacy single font for headings and body. Brand Profile workflows should prefer headingFontFace and bodyFontFace; omitted role-specific values fall back to this value.")]
+    string? FontFace = null,
+    [property: Description("Optional approved heading font. Omit to inherit fontFace or the renderer default.")]
+    string? HeadingFontFace = null,
+    [property: Description("Optional approved body font. Omit to inherit fontFace or the renderer default.")]
+    string? BodyFontFace = null,
+    [property: Description("Optional surface color for cards and tables as #RRGGBB.")]
+    string? SurfaceColor = null,
+    [property: Description("Optional muted text color as #RRGGBB.")]
+    string? MutedTextColor = null,
+    [property: Description("Optional positive semantic color as #RRGGBB.")]
+    string? PositiveColor = null,
+    [property: Description("Optional warning semantic color as #RRGGBB.")]
+    string? WarningColor = null,
+    [property: Description("Optional critical semantic color as #RRGGBB.")]
+    string? CriticalColor = null,
+    [property: Description("Optional ordered series palette of one to eight #RRGGBB colors for native charts.")]
+    IReadOnlyList<string>? DataSeriesColors = null);
 
 public sealed record VisualSlideSpec(
     VisualSlideKind Kind,
@@ -97,9 +119,16 @@ public sealed record VisualSlideSpec(
     IReadOnlyList<VisualBriefSectionSpec>? Sections = null,
     [property: Description("Editable comparison table for a scorecard slide. Each criterion must have exactly one cell per option.")]
     VisualScorecardSpec? Scorecard = null,
+    [property: Description("Implemented layout variant. Use auto normally; split only for Bullets with at least four bullets and no takeaway; spotlight only for Metrics with exactly three metrics or Cards with three to four cards; editorial only for StructuredBrief with exactly three sections.")]
     string Variant = "auto",
     [property: Description("Editable native standard-notation and ukulele TAB score for a music_score slide. Use semantic pitches, durations, strings, frets, and fingers instead of coordinates.")]
-    VisualMusicScoreSpec? MusicScore = null);
+    VisualMusicScoreSpec? MusicScore = null,
+    [property: Description("Editable general-purpose table for a data_table slide. Column headers and every row must use the same cell count.")]
+    VisualDataTableSpec? DataTable = null,
+    [property: Description("Optional per-slide information density override: airy, balanced, or detailed. Omit to inherit deck design.density.")]
+    string? Density = null,
+    [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
+    string? RecipeId = null);
 
 public sealed record VisualMusicScoreSpec(
     [property: Description("One to eight measures in reading order. A slide may contain at most 64 events in total.")]
@@ -190,6 +219,34 @@ public sealed record VisualScorecardCellSpec(
     [property: Description("Semantic tone such as positive, warning, critical, neutral, or a custom #RRGGBB color.")]
     string Tone = "neutral");
 
+public sealed record VisualDataTableSpec(
+    [property: Description("Two to six editable table columns in reading order.")]
+    IReadOnlyList<VisualDataTableColumnSpec> Columns,
+    [property: Description("One to ten editable table rows. Every row must have exactly one cell per column.")]
+    IReadOnlyList<VisualDataTableRowSpec> Rows,
+    [property: Description("Style the first column as row headings. Enabled by default for scannable business tables.")]
+    bool FirstColumnIsHeader = true);
+
+public sealed record VisualDataTableColumnSpec(
+    [property: Description("Short visible column heading.")]
+    string Header,
+    [property: Description("Cell alignment for this column: left, center, or right.")]
+    string Align = "left",
+    [property: Description("Relative width from 0.5 through 4.0. Values are normalized across the available table width.")]
+    double WidthWeight = 1);
+
+public sealed record VisualDataTableRowSpec(
+    [property: Description("One cell per table column, in exactly the same order as dataTable.columns.")]
+    IReadOnlyList<VisualDataTableCellSpec> Cells);
+
+public sealed record VisualDataTableCellSpec(
+    [property: Description("Concise visible cell text.")]
+    string Text,
+    [property: Description("Semantic tone such as positive, warning, critical, neutral, or a custom #RRGGBB color.")]
+    string Tone = "neutral",
+    [property: Description("Use restrained bold emphasis for this cell.")]
+    bool Emphasize = false);
+
 public sealed record VisualMetricSpec(
     string Value,
     string Label,
@@ -252,6 +309,14 @@ public static class VisualDeckBranding
             BackgroundColor = current.BackgroundColor ?? templateTheme.BackgroundColor,
             TextColor = current.TextColor ?? templateTheme.TextColor,
             FontFace = current.FontFace ?? templateTheme.BodyFont ?? templateTheme.HeadingFont,
+            HeadingFontFace = current.HeadingFontFace
+                ?? current.FontFace
+                ?? templateTheme.HeadingFont
+                ?? templateTheme.BodyFont,
+            BodyFontFace = current.BodyFontFace
+                ?? current.FontFace
+                ?? templateTheme.BodyFont
+                ?? templateTheme.HeadingFont,
         };
         return deck with { Theme = brandedTheme };
     }
@@ -364,11 +429,26 @@ public static partial class VisualDeckValidator
     private static readonly HashSet<string> SlideVariants = new(StringComparer.OrdinalIgnoreCase)
     {
         "auto",
+        "spotlight",
+        "split",
+        "editorial",
+    };
+
+    private static readonly HashSet<string> LegacySlideVariants = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto",
         "grid",
         "spotlight",
         "split",
         "cascade",
         "editorial",
+    };
+
+    private static readonly HashSet<string> TableAlignments = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "left",
+        "center",
+        "right",
     };
 
     private static readonly HashSet<string> MusicDurations = new(StringComparer.OrdinalIgnoreCase)
@@ -390,6 +470,13 @@ public static partial class VisualDeckValidator
     {
         ArgumentNullException.ThrowIfNull(deck);
         ValidateMetadata(deck.Title, deck.Subject, deck.Language, deck.Theme, deck.Design);
+        var rendererContract = deck.RendererContract?.ToLowerInvariant() ?? "visual-v4";
+        if (rendererContract is not ("visual-v4" or "visual-v5"))
+        {
+            throw new PptxValidationException(
+                "visual_renderer_contract_invalid",
+                "rendererContract is server-owned and must be visual-v4 or visual-v5.");
+        }
 
         if (deck.Slides is null || deck.Slides.Count is < 1 || deck.Slides.Count > maximumSlides)
         {
@@ -400,7 +487,11 @@ public static partial class VisualDeckValidator
 
         for (var index = 0; index < deck.Slides.Count; index++)
         {
-            ValidateSlide(deck.Slides[index], index + 1);
+            ValidateSlide(
+                deck.Slides[index],
+                index + 1,
+                deck.Design?.Density,
+                rendererContract == "visual-v5");
         }
     }
 
@@ -456,16 +547,16 @@ public static partial class VisualDeckValidator
             warnings.Add("Some slide titles are duplicated; make the heading sequence communicate the story without reading body text.");
         }
 
-        var usesDetailedDensity = string.Equals(
-            deck.Design?.Density,
-            "detailed",
-            StringComparison.OrdinalIgnoreCase);
         for (var index = 0; index < deck.Slides.Count; index++)
         {
             var slide = deck.Slides[index];
+            var usesDetailedDensity = string.Equals(
+                slide.Density ?? deck.Design?.Density,
+                "detailed",
+                StringComparison.OrdinalIgnoreCase);
             if (GetTextCharacterCount(slide) >= 500 && !usesDetailedDensity)
             {
-                warnings.Add($"Slide {index + 1} is text-rich; use design.density=detailed and a structured_brief or scorecard layout instead of shrinking text.");
+                warnings.Add($"Slide {index + 1} is text-rich; use slide density=detailed or deck design.density=detailed and a structured_brief, scorecard, or data_table layout instead of shrinking text.");
             }
 
             if (slide.Kind == VisualSlideKind.StructuredBrief
@@ -505,6 +596,13 @@ public static partial class VisualDeckValidator
             count += slide.Scorecard.Criteria.Sum(static row =>
                 row.Criterion.Length
                 + row.Cells.Sum(static cell => cell.Rating.Length + (cell.Detail?.Length ?? 0)));
+        }
+
+        if (slide.DataTable is not null)
+        {
+            count += slide.DataTable.Columns.Sum(static column => column.Header.Length);
+            count += slide.DataTable.Rows.Sum(static row =>
+                row.Cells.Sum(static cell => cell.Text.Length));
         }
 
         return count;
@@ -557,9 +655,46 @@ public static partial class VisualDeckValidator
         ValidateColor(theme.BackgroundColor, "theme.backgroundColor");
         ValidateColor(theme.TextColor, "theme.textColor");
         ValidateOptionalText(theme.FontFace, "theme.fontFace", 80);
+        ValidateOptionalText(theme.HeadingFontFace, "theme.headingFontFace", 80);
+        ValidateOptionalText(theme.BodyFontFace, "theme.bodyFontFace", 80);
+        ValidateColor(theme.SurfaceColor, "theme.surfaceColor");
+        ValidateColor(theme.MutedTextColor, "theme.mutedTextColor");
+        ValidateColor(theme.PositiveColor, "theme.positiveColor");
+        ValidateColor(theme.WarningColor, "theme.warningColor");
+        ValidateColor(theme.CriticalColor, "theme.criticalColor");
+        ValidateOptionalContrast(
+            theme.TextColor,
+            theme.SurfaceColor,
+            4.5,
+            "theme.textColor",
+            "theme.surfaceColor");
+        ValidateOptionalContrast(
+            theme.MutedTextColor,
+            theme.SurfaceColor,
+            3,
+            "theme.mutedTextColor",
+            "theme.surfaceColor");
+        if (theme.DataSeriesColors is not null)
+        {
+            if (theme.DataSeriesColors.Count is < 1 or > 8)
+            {
+                throw new PptxValidationException(
+                    "visual_theme_series_invalid",
+                    "theme.dataSeriesColors must contain between one and eight colors when specified.");
+            }
+
+            for (var index = 0; index < theme.DataSeriesColors.Count; index++)
+            {
+                ValidateColor(theme.DataSeriesColors[index], $"theme.dataSeriesColors[{index}]");
+            }
+        }
     }
 
-    private static void ValidateSlide(VisualSlideSpec slide, int slideNumber)
+    private static void ValidateSlide(
+        VisualSlideSpec slide,
+        int slideNumber,
+        string? deckDensity,
+        bool usesModernRendererContract)
     {
         if (slide is null)
         {
@@ -573,11 +708,34 @@ public static partial class VisualDeckValidator
         ValidateOptionalText(slide.Body, $"{prefix}.body", 700);
         ValidateOptionalText(slide.Attribution, $"{prefix}.attribution", 120);
         ValidateOptionalText(slide.Takeaway, $"{prefix}.takeaway", 280);
-        if (!SlideVariants.Contains(slide.Variant))
+        ValidateOptionalText(slide.RecipeId, $"{prefix}.recipeId", 128);
+        if (slide.RecipeId is not null && !OpaqueIdentifierRegex().IsMatch(slide.RecipeId))
+        {
+            throw new PptxValidationException(
+                "visual_slide_recipe_invalid",
+                $"{prefix}.recipeId may contain only ASCII letters, digits, hyphens, and underscores.");
+        }
+
+        if (slide.Density is not null && !DesignDensities.Contains(slide.Density))
+        {
+            throw new PptxValidationException(
+                "visual_slide_density_invalid",
+                $"{prefix}.density must be airy, balanced, or detailed when specified.");
+        }
+
+        var acceptedVariants = usesModernRendererContract ? SlideVariants : LegacySlideVariants;
+        if (!acceptedVariants.Contains(slide.Variant))
         {
             throw new PptxValidationException(
                 "visual_slide_variant_invalid",
-                $"{prefix}.variant must be auto, grid, spotlight, split, cascade, or editorial.");
+                usesModernRendererContract
+                    ? $"{prefix}.variant must be auto, spotlight, split, or editorial."
+                    : $"{prefix}.variant is not recognized by the stored legacy renderer contract.");
+        }
+
+        if (usesModernRendererContract)
+        {
+            ValidateVariantForSlide(slide, prefix);
         }
 
         ValidateList(slide.Bullets, $"{prefix}.bullets", 8, 180);
@@ -664,6 +822,11 @@ public static partial class VisualDeckValidator
 
         ValidateBriefSections(slide.Sections, prefix);
         ValidateScorecard(slide.Scorecard, prefix);
+        ValidateDataTable(
+            slide.DataTable,
+            prefix,
+            slide.Density ?? deckDensity ?? "balanced",
+            !string.IsNullOrWhiteSpace(slide.Takeaway));
         ValidateMatrix(slide.Matrix, prefix);
         ValidateMusicScore(slide.MusicScore, prefix);
 
@@ -712,6 +875,8 @@ public static partial class VisualDeckValidator
                 break;
             case VisualSlideKind.Scorecard when slide.Scorecard is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.scorecard is required for a scorecard slide.");
+            case VisualSlideKind.DataTable when slide.DataTable is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.dataTable is required for a dataTable slide.");
             case VisualSlideKind.MusicScore when slide.MusicScore is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.musicScore is required for a musicScore slide.");
         }
@@ -804,6 +969,35 @@ public static partial class VisualDeckValidator
             throw new PptxValidationException(
                 "visual_music_event_density_invalid",
                 $"{path} must not contain more than 64 events on one slide.");
+        }
+    }
+
+    private static void ValidateVariantForSlide(VisualSlideSpec slide, string prefix)
+    {
+        var variant = slide.Variant;
+        if (variant.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var supported = variant.ToLowerInvariant() switch
+        {
+            "split" => slide.Kind == VisualSlideKind.Bullets
+                && slide.Bullets?.Count >= 4
+                && string.IsNullOrWhiteSpace(slide.Takeaway),
+            "spotlight" => slide.Kind == VisualSlideKind.Metrics
+                && slide.Metrics?.Count == 3
+                || slide.Kind == VisualSlideKind.Cards
+                && slide.Cards?.Count is >= 3 and <= 4,
+            "editorial" => slide.Kind == VisualSlideKind.StructuredBrief
+                && slide.Sections?.Count == 3,
+            _ => false,
+        };
+        if (!supported)
+        {
+            throw new PptxValidationException(
+                "visual_slide_variant_kind_mismatch",
+                $"{prefix}.variant={variant} is not implemented for this slide's kind, content count, or takeaway state; use auto or satisfy the documented variant conditions.");
         }
     }
 
@@ -1055,6 +1249,225 @@ public static partial class VisualDeckValidator
         }
     }
 
+    private static void ValidateDataTable(
+        VisualDataTableSpec? dataTable,
+        string prefix,
+        string density,
+        bool hasTakeaway)
+    {
+        if (dataTable is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.dataTable";
+        var normalizedDensity = density.ToLowerInvariant();
+        var maximumColumns = normalizedDensity switch
+        {
+            "airy" => 4,
+            "detailed" => 6,
+            _ => 5,
+        };
+        var maximumRows = normalizedDensity switch
+        {
+            "airy" => 6,
+            "detailed" => 10,
+            _ => 8,
+        };
+        var maximumCharacters = normalizedDensity switch
+        {
+            "airy" => 700,
+            "detailed" => 1_600,
+            _ => 1_100,
+        };
+
+        if (dataTable.Columns is null || dataTable.Columns.Count is < 2 || dataTable.Columns.Count > maximumColumns)
+        {
+            throw new PptxValidationException(
+                "visual_data_table_columns_out_of_range",
+                $"{path}.columns must contain between 2 and {maximumColumns} columns for {normalizedDensity} density.");
+        }
+
+        if (dataTable.Rows is null || dataTable.Rows.Count is < 1 || dataTable.Rows.Count > maximumRows)
+        {
+            throw new PptxValidationException(
+                "visual_data_table_rows_out_of_range",
+                $"{path}.rows must contain between 1 and {maximumRows} rows for {normalizedDensity} density.");
+        }
+
+        var totalCharacters = 0;
+        for (var columnIndex = 0; columnIndex < dataTable.Columns.Count; columnIndex++)
+        {
+            var column = dataTable.Columns[columnIndex];
+            var columnPath = $"{path}.columns[{columnIndex}]";
+            if (column is null)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_column_invalid",
+                    $"{columnPath} must not be null.");
+            }
+
+            ValidateSingleLineText(column.Header, $"{columnPath}.header", 1, 64);
+            totalCharacters += column.Header.Length;
+            if (!TableAlignments.Contains(column.Align))
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_alignment_invalid",
+                    $"{columnPath}.align must be left, center, or right.");
+            }
+
+            if (!double.IsFinite(column.WidthWeight) || column.WidthWeight is < 0.5 or > 4)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_width_invalid",
+                $"{columnPath}.widthWeight must be between 0.5 and 4.0.");
+            }
+        }
+
+        var geometry = GetDataTableGeometry(normalizedDensity, dataTable.Rows.Count, hasTakeaway);
+        var totalWeight = dataTable.Columns.Sum(static column => column.WidthWeight);
+        var columnWidths = dataTable.Columns
+            .Select(column => geometry.TableWidth * column.WidthWeight / totalWeight)
+            .ToArray();
+        var minimumColumnWidth = normalizedDensity == "detailed" ? 0.85 : 1.0;
+        for (var columnIndex = 0; columnIndex < dataTable.Columns.Count; columnIndex++)
+        {
+            var effectiveWidth = columnWidths[columnIndex];
+            var columnPath = $"{path}.columns[{columnIndex}]";
+            if (effectiveWidth < minimumColumnWidth)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_column_too_narrow",
+                    $"{columnPath}.widthWeight produces a {effectiveWidth:F2}-inch column; rebalance weights so every {normalizedDensity} column is at least {minimumColumnWidth:F2} inches wide.");
+            }
+
+            var maximumHeaderCharacters = EstimateTableCellCharacterCapacity(
+                effectiveWidth,
+                geometry.HeaderHeight,
+                geometry.FontSize,
+                geometry.Margin,
+                64);
+            if (dataTable.Columns[columnIndex].Header.Length > maximumHeaderCharacters)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_header_overflow_risk",
+                    $"{columnPath}.header exceeds the safe capacity of {maximumHeaderCharacters} characters for its effective width; shorten the heading or widen the column.");
+            }
+        }
+
+        for (var rowIndex = 0; rowIndex < dataTable.Rows.Count; rowIndex++)
+        {
+            var row = dataTable.Rows[rowIndex];
+            var rowPath = $"{path}.rows[{rowIndex}]";
+            if (row is null)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_row_invalid",
+                    $"{rowPath} must not be null.");
+            }
+
+            if (row.Cells is null || row.Cells.Count != dataTable.Columns.Count)
+            {
+                throw new PptxValidationException(
+                    "visual_data_table_cells_mismatch",
+                    $"{rowPath}.cells must contain exactly one cell per dataTable column.");
+            }
+
+            for (var cellIndex = 0; cellIndex < row.Cells.Count; cellIndex++)
+            {
+                var cell = row.Cells[cellIndex];
+                var cellPath = $"{rowPath}.cells[{cellIndex}]";
+                if (cell is null)
+                {
+                    throw new PptxValidationException(
+                        "visual_data_table_cell_invalid",
+                        $"{cellPath} must not be null.");
+                }
+
+                var maximumCellCharacters = EstimateTableCellCharacterCapacity(
+                    columnWidths[cellIndex],
+                    geometry.RowHeight,
+                    geometry.FontSize,
+                    geometry.Margin,
+                    100);
+                ValidateSingleLineText(cell.Text, $"{cellPath}.text", 1, 100);
+                if (cell.Text.Length > maximumCellCharacters)
+                {
+                    throw new PptxValidationException(
+                        "visual_data_table_cell_overflow_risk",
+                        $"{cellPath}.text exceeds the safe capacity of {maximumCellCharacters} characters for its rendered row and column; shorten it, widen the column, reduce rows, or split the table.");
+                }
+                totalCharacters += cell.Text.Length;
+                if (!IsSupportedTone(cell.Tone))
+                {
+                    throw new PptxValidationException(
+                        "visual_data_table_tone_invalid",
+                        $"{cellPath}.tone must be a supported semantic tone or a #RRGGBB color.");
+                }
+            }
+        }
+
+        if (totalCharacters > maximumCharacters)
+        {
+            throw new PptxValidationException(
+                "visual_content_density_invalid",
+                $"{path} must not exceed {maximumCharacters} total characters for {normalizedDensity} density; split the table across slides.");
+        }
+    }
+
+    private static DataTableGeometry GetDataTableGeometry(
+        string density,
+        int rowCount,
+        bool hasTakeaway)
+    {
+        var outerX = density switch
+        {
+            "airy" => 0.82,
+            "detailed" => 0.52,
+            _ => 0.7,
+        };
+        var contentTop = density switch
+        {
+            "airy" => 2.12,
+            "detailed" => 1.62,
+            _ => 2.02,
+        };
+        var contentBottom = density switch
+        {
+            "airy" => 6.5,
+            "detailed" => 6.9,
+            _ => 6.62,
+        };
+        var tableBottom = hasTakeaway ? 6.58 : contentBottom;
+        var headerHeight = density == "detailed" ? 0.52 : 0.62;
+        var fontSize = density == "detailed" ? 9.2 : rowCount >= 7 ? 9.4 : 10.5;
+        var margin = density == "detailed" ? 0.07 : 0.1;
+        var rowHeight = (tableBottom - contentTop - headerHeight) / rowCount;
+        return new DataTableGeometry(13.333 - outerX * 2, headerHeight, rowHeight, fontSize, margin);
+    }
+
+    private static int EstimateTableCellCharacterCapacity(
+        double width,
+        double height,
+        double fontSize,
+        double margin,
+        int hardMaximum)
+    {
+        var lineHeight = fontSize / 72 * 1.2;
+        var availableHeight = Math.Max(lineHeight, height - margin * 2);
+        var maximumLines = Math.Max(1, (int)Math.Floor(availableHeight / lineHeight));
+        var averageCharacterWidth = fontSize / 72 * 0.95;
+        var charactersPerLine = Math.Max(4, (int)Math.Floor((width - margin * 2) / averageCharacterWidth));
+        return Math.Clamp(charactersPerLine * maximumLines, 4, hardMaximum);
+    }
+
+    private readonly record struct DataTableGeometry(
+        double TableWidth,
+        double HeaderHeight,
+        double RowHeight,
+        double FontSize,
+        double Margin);
+
     private static void ValidateMatrix(VisualMatrixSpec? matrix, string prefix)
     {
         if (matrix is null)
@@ -1175,6 +1588,47 @@ public static partial class VisualDeckValidator
         }
     }
 
+    private static void ValidateOptionalContrast(
+        string? foreground,
+        string? background,
+        double minimumRatio,
+        string foregroundPath,
+        string backgroundPath)
+    {
+        if (foreground is null || background is null)
+        {
+            return;
+        }
+
+        var foregroundLuminance = RelativeLuminance(foreground);
+        var backgroundLuminance = RelativeLuminance(background);
+        var contrastRatio = (Math.Max(foregroundLuminance, backgroundLuminance) + 0.05)
+            / (Math.Min(foregroundLuminance, backgroundLuminance) + 0.05);
+        if (contrastRatio < minimumRatio)
+        {
+            throw new PptxValidationException(
+                "visual_theme_contrast_invalid",
+                $"{foregroundPath} must have at least {minimumRatio:F1}:1 contrast against {backgroundPath}.");
+        }
+    }
+
+    private static double RelativeLuminance(string color)
+    {
+        var normalized = color.TrimStart('#');
+        static double Linearize(int component)
+        {
+            var value = component / 255d;
+            return value <= 0.04045
+                ? value / 12.92
+                : Math.Pow((value + 0.055) / 1.055, 2.4);
+        }
+
+        var red = Linearize(Convert.ToInt32(normalized[..2], 16));
+        var green = Linearize(Convert.ToInt32(normalized[2..4], 16));
+        var blue = Linearize(Convert.ToInt32(normalized[4..6], 16));
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    }
+
     private static void ValidateOptionalText(string? value, string path, int maximumLength)
     {
         if (value is not null)
@@ -1193,6 +1647,17 @@ public static partial class VisualDeckValidator
         }
     }
 
+    private static void ValidateSingleLineText(string? value, string path, int minimumLength, int maximumLength)
+    {
+        ValidateText(value, path, minimumLength, maximumLength);
+        if (value!.Contains('\n') || value.Contains('\r'))
+        {
+            throw new PptxValidationException(
+                "visual_text_invalid",
+                $"{path} must be a single line with no explicit line breaks.");
+        }
+    }
+
     private static bool ContainsInvalidControlCharacter(string value) =>
         value.Any(character => char.IsControl(character) && character is not ('\n' or '\r' or '\t'));
 
@@ -1203,6 +1668,9 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("^#?[0-9A-Fa-f]{6}$", RegexOptions.CultureInvariant)]
     private static partial Regex HexColorRegex();
+
+    [GeneratedRegex("\\A[A-Za-z0-9_-]{1,128}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex OpaqueIdentifierRegex();
 
     [GeneratedRegex("^(?:[1-9][0-9]?)/(?:1|2|4|8|16)$", RegexOptions.CultureInvariant)]
     private static partial Regex MusicTimeSignatureRegex();

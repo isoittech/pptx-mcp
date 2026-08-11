@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using PptxMcp.Artifacts;
 using PptxMcp.Configuration;
+using PptxMcp.Design;
 using PptxMcp.Jobs;
 using PptxMcp.Presentation;
 using PptxMcp.Security;
@@ -22,6 +23,8 @@ builder.Services.AddSingleton<RetentionPolicy>();
 builder.Services.AddSingleton<PptxPackageGuard>();
 builder.Services.AddSingleton<InputFileResolver>();
 builder.Services.AddSingleton<TemplateRegistry>();
+builder.Services.AddSingleton<BrandProfileCatalog>();
+builder.Services.AddSingleton<DesignBriefService>();
 builder.Services.AddSingleton<FileJobRepository>();
 builder.Services.AddSingleton<JobChannel>();
 builder.Services.AddSingleton<JobCancellationRegistry>();
@@ -32,6 +35,7 @@ builder.Services.AddSingleton<IVisualPresentationEngine, PptxGenJsVisualPresenta
 builder.Services.AddSingleton<PresentationAnalysisCache>();
 builder.Services.AddSingleton<LibreOfficeRenderer>();
 builder.Services.AddHostedService<DefaultTemplateWarmupService>();
+builder.Services.AddHostedService<BrandProfileCatalogWarmupService>();
 builder.Services.AddHostedService<JobWorker>();
 builder.Services.AddHostedService<RetentionWorker>();
 builder.Services.AddMcpServer(options =>
