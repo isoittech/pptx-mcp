@@ -9,18 +9,19 @@
 ## 決定
 
 - `VisualDeckSpec` を安全な視覚言語として拡張する。
-- 17種類の意味レイアウトを提供する。
+- 21種類の意味レイアウトを提供する。初期17種類からの追加判断はADR 0011とADR 0014に記録する。
   - title、agenda、section、statement、bullets
-  - cards、metrics、comparison、process、timeline
+  - cards、metrics、comparison、structuredBrief、scorecard、dataTable、musicScore
+  - process、timeline
   - matrix、funnel、roadmap、chart、dashboard
   - quote、closing
 - `design.style`、`density`、`motif` で資料全体のアートディレクションを指定する。
-- スライド単位の `variant` で grid、spotlight、split、cascade、editorial 等の構図を指定する。
+- スライド単位の `variant` で `spotlight`、`split`、`editorial` 等の実装済み構図を指定する。新規`visual-v5`入力ではkind・件数・状態が対応する値だけを受理し、描画されない`grid`と`cascade`は公開しない。
 - カード用の組み込みアイコンをPowerPointネイティブ図形で描画し、経営・技術・危機対応で自然に使われる意味語を受け付ける。
 - 色調は限定的な固定語彙だけでなく、意味的な別名と任意のRGB色を受け付ける。背景色とのコントラストが不足する本文色は可読色へ自動補正する。
 - マトリクス、ファネル、ロードマップ、ダッシュボード、箇条書き、グラフを編集可能なPowerPoint要素として生成する。
 - 6枚以上の構図不足、3枚連続の同一構図、文字中心ページの過多を `design_warnings` として返す。
-- 視覚評価後は `pptx_refine_visual_deck` で問題ページだけを構図ごと差し替える。
+- 視覚評価後は `pptx_refine_visual_slide` で問題ページだけを構図ごと差し替える。
 - モデルが入力を自律修正できるよう、検証失敗は例外の汎用文言ではなく、コードと対象フィールドを含む構造化結果として返す。
 - 宣言型仕様で受け付けた内容は黙って無視しない。Closingの箇条書きや各レイアウトのtakeaway等、対応フィールドを編集可能要素として描画する。
 

@@ -18,6 +18,12 @@ public sealed class PptxMcpOptions
 
     public string DefaultTemplateId { get; init; } = string.Empty;
 
+    public string BrandProfilesRoot { get; init; } = "/data/pptx-brand-profiles";
+
+    public bool RequireDesignBrief { get; init; }
+
+    public int DesignBriefLifetimeMinutes { get; init; } = 60;
+
     public string FirstAssistantNotice { get; init; } = string.Empty;
 
     public string VisualRendererPath { get; init; } = "/app/visual-renderer/index.mjs";
@@ -79,6 +85,17 @@ public sealed class PptxMcpOptions
         if (!Path.IsPathFullyQualified(TemplatesRoot))
         {
             throw new InvalidOperationException("PptxMcp:TemplatesRoot must be an absolute path.");
+        }
+
+        if (!Path.IsPathFullyQualified(BrandProfilesRoot))
+        {
+            throw new InvalidOperationException("PptxMcp:BrandProfilesRoot must be an absolute path.");
+        }
+
+        if (DesignBriefLifetimeMinutes is < 5 or > 120)
+        {
+            throw new InvalidOperationException(
+                "PptxMcp:DesignBriefLifetimeMinutes must be between 5 and 120.");
         }
 
         if (DefaultTemplateId.Length > 128

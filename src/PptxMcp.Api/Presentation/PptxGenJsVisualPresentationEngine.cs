@@ -92,12 +92,13 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
 
         PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(destinationPath);
 
+        var rendererContract = deck.RendererContract ?? "visual-v4";
         return new VisualDeckCreationResult(
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
             useTemplateChrome
-                ? "PptxGenJS 4.0.1 declarative renderer v4 + template chrome"
-                : "PptxGenJS 4.0.1 declarative renderer v4",
+                ? $"PptxGenJS 4.0.1 declarative renderer {rendererContract} + template chrome"
+                : $"PptxGenJS 4.0.1 declarative renderer {rendererContract}",
             VisualDeckValidator.GetDesignWarnings(deck));
     }
 }

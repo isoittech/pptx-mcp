@@ -3,6 +3,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using PptxMcp.Design;
 using PptxMcp.Domain;
 using PptxMcp.Jobs;
 using PptxMcp.Security;
@@ -20,6 +21,8 @@ public sealed class PowerPointTools
         workflow = new[]
         {
             "導入環境に既定テンプレートが登録されていれば、新規Visual Deckへ自動適用する",
+            "Brand Profileが外部登録されている場合はpptx_get_design_catalogで用途・密度・方向に合うrecipeとsample要約を選ぶ",
+            "Design Brief必須の導入環境では全ページのAsset Planを確定し、pptx_validate_design_briefが返したbrief_idをstartより前に取得する",
             "別テンプレートや既存資料を使う場合だけLibreChatへPPTXをアップロードする",
             "アップロードしたPPTXはpptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileId=latestを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
@@ -50,6 +53,8 @@ public sealed class PowerPointTools
             "名前付きシェイプを持つ企業テンプレートへのテキスト流し込み",
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
             "白紙からKPI・カード・比較・構造化ブリーフ・編集可能スコアカード・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
+            "外部読み取り専用Brand Profileのimmutable version/hash、用途別recipe、情報密度別sample要約、禁止・要確認ルールをcompact catalogとして取得",
+            "Design Briefと全ページAsset Planを検証し、利用者・会話・Brand Profileへ束縛した期限付きopaque brief_idを発行",
             "五線、音符、休符、小節線、ウクレレTAB、色分けした指番号をPowerPointネイティブの線・図形・テキストとして生成",
             "企業テンプレートの空白レイアウトと自動抽出したテーマをVisual Deckへ合成し、ブランド要素と編集可能な視覚表現を両立",
             "成功したVisual DeckまたはブランドVisual Deckへの1〜49ページの追加（末尾追加または指定ページ直後への挿入）",
@@ -65,6 +70,49 @@ public sealed class PowerPointTools
             "任意の既存PPTXまたは厳密なプレースホルダー資料に対するスライド追加、およびスライド削除・並べ替え",
         },
     };
+
+    [McpServerTool(Name = "pptx_get_design_catalog", ReadOnly = true, Idempotent = true),
+     Description("導入環境が外部登録したBrand Profileを取得します。無引数ではcompactなprofile一覧だけを返し、profileIdと任意のpurpose、density、styleDirectionIdを指定すると、一致する色・文章・視覚ルール、意味レイアウトrecipe、完成サンプルの要約を返します。会社固有値をOSSへ埋め込まず、返されたID、version、content_hashだけを後続ツールへコピーしてください。")]
+    public static object GetDesignCatalog(
+        BrandProfileCatalog catalog,
+        [Description("任意。無引数一覧から選んだ正確なprofile ID。URLやパスではありません。")]
+        string? profileId = null,
+        [Description("任意。profileIdと一緒に指定し、catalog内の用途IDでrecipeを絞ります。例: cover、kpi、comparison。自然文やパスではありません。")]
+        string? purpose = null,
+        [Description("任意。profileIdと一緒に指定し、airy、balanced、detailedのいずれかでrecipeを絞ります。")]
+        string? density = null,
+        [Description("任意。profileIdと一緒に指定し、選択profileの正確なstyle direction IDでrecipeを絞ります。")]
+        string? styleDirectionId = null)
+    {
+        try
+        {
+            return catalog.Query(profileId, purpose, density, styleDirectionId);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_get_design_catalog", exception);
+        }
+    }
+
+    [McpServerTool(Name = "pptx_validate_design_brief"),
+     Description("PPTX生成前にDesign Briefと全ページのAsset Planを検証し、設定された有効期間内のopaqueなbrief_idを発行します。未解決質問、要確認の仮定、profile recipeとの不一致、権利未確認素材の採用、phase 1で未対応の画像挿入を残した計画は拒否します。素材を使わないページはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredとし、noAssetLayoutを指定しません。noAssetLayoutはuserUploadまたはapprovedLibraryを計画した項目を画像なしrecipeへ切り替える場合だけ、status=fallbackSelectedと組み合わせます。このツールはPPTXを生成しません。")]
+    public static object ValidateDesignBrief(
+        CallerContextAccessor callerContext,
+        DesignBriefService designBriefs,
+        [Required, Description("audience、purpose、delivery_mode、desired_tone、density、brand_profile{id,version,content_hash}、style_direction_id、visual_strategy、source_policy、expected_slide_count、assumptions、空のquestions_for_userからなる確定済みbrief。")]
+        DesignBriefSpec brief,
+        [Required, Description("完成版の全ページに1件ずつ、slide_number順で指定する計画。各項目はcatalogのpurpose/recipe_id、visual_purpose、preferred_medium、acquisition、fallback、status、license_statusを持ちます。素材なしの正確な組合せはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredで、asset metadataを省略し、required_asset_rolesが空のrecipeを使います。noAssetLayoutはacquisition=noneでは禁止です。URL、パス、画像バイナリは渡しません。")]
+        IReadOnlyList<AssetPlanItem> assetPlan)
+    {
+        try
+        {
+            return designBriefs.Validate(callerContext.GetRequired(), brief, assetPlan);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_validate_design_brief", exception);
+        }
+    }
 
     [McpServerTool(Name = "pptx_analyze", ReadOnly = true, Idempotent = true),
      Description("登録済み既定テンプレートまたはLibreChatにアップロード済みのPPTXを安全に検査し、編集候補、企業テーマ色、日本語フォントを非同期で解析します。既定テンプレートはsourceFileId=default、添付のfile_idが不明ならlatestを使ってください。既定テンプレートは起動時解析キャッシュを再利用します。解析結果のthemeは白紙VisualDeckSpecのthemeへ移植できます。")]
@@ -177,16 +225,17 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_start_visual_deck", Destructive = true),
-     Description("新規Visual Deckの小さなサーバー側ドラフトを開始します。新規資料では最初に1回だけ呼び、資料タイトル、最終ページ数、全体のtheme/design、テンプレート選択をここで確定します。確定後は完成まで変更できません。成功済みデッキがある場合は再開始せず、問題ページだけをpptx_refine_visual_slideで直します。明示的に別資料を作るようユーザーが依頼した場合だけuserRequestedNewWorkflow=trueを指定します。この段階でスライド本文やPPTXは生成しません。空引数で呼ばないでください。")]
+     Description("新規Visual Deckの小さなサーバー側ドラフトを開始します。新規資料では最初に1回だけ呼び、資料タイトル、最終ページ数、全体のtheme/design、テンプレート選択をここで確定します。Design Briefを使う場合は先にpptx_get_design_catalogとpptx_validate_design_briefを完了し、briefIdを渡してtheme/designを省略します。確定後は完成まで変更できません。成功済みデッキがある場合は再開始せず、問題ページだけをpptx_refine_visual_slideで直します。明示的に別資料を作るようユーザーが依頼した場合だけuserRequestedNewWorkflow=trueを指定します。この段階でスライド本文やPPTXは生成しません。空引数で呼ばないでください。")]
     public static async Task<object> StartVisualDeck(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         JobService jobs,
+        DesignBriefService designBriefs,
         [Required, Description("資料全体のタイトル。1〜160文字。")]
         string title,
         [Required, Description("完成時の総ページ数。1〜50。後から変更しないため、構成を決めてから指定します。")]
         int expectedSlideCount,
-        [Description("任意の全体テーマ。presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyber。明示した色とfontFaceはテンプレートから抽出した値より優先され、未指定項目だけテンプレートで補完されます。")]
+        [Description("任意の全体テーマ。presetはmidnight/aurora/sunset/forest/minimal/ocean/berry/clay/cyber。色roleはprimary/secondary/accent/background/surface/text/mutedText/positive/warning/criticalと1〜8色のdataSeriesColors、font roleはheadingFontFace/bodyFontFaceを使います。legacy fontFaceは両roleのfallbackです。明示値はテンプレート抽出値より優先され、Design BriefのbriefIdを使う場合はtheme自体を省略します。")]
         VisualThemeSpec? theme = null,
         [Description("任意の資料サブジェクト。最大240文字。")]
         string? subject = null,
@@ -200,11 +249,20 @@ public sealed class PowerPointTools
         string templateLayoutId = "auto",
         [Description("既に成功したデッキとは別の新しい資料を、ユーザーが明示的に依頼した場合だけtrue。見た目の修正や自動リトライではfalseのままにします。")]
         bool userRequestedNewWorkflow = false,
+        [Description("任意。pptx_validate_design_briefが同じ利用者・会話へ発行した期限内のbrief_id。導入環境のRequireDesignBrief=trueでは必須です。指定時はtheme/designを省略し、Brand Profileのtemplate_sourceとexpectedSlideCountを一致させます。")]
+        string? briefId = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
             var caller = callerContext.GetRequired();
+            var designBrief = designBriefs.AuthorizeForStart(
+                caller,
+                briefId,
+                expectedSlideCount,
+                templateSourceFileId,
+                theme,
+                design);
             var permission = await jobs.AuthorizeVisualDeckStartAsync(
                 caller,
                 userRequestedNewWorkflow,
@@ -213,13 +271,14 @@ public sealed class PowerPointTools
                 caller,
                 title,
                 expectedSlideCount,
-                theme,
+                designBrief?.Theme ?? theme,
                 subject,
                 language,
-                design,
+                designBrief?.Design ?? design,
                 templateSourceFileId,
                 templateLayoutId,
-                permission.AllowSubmittedReplacement);
+                permission.AllowSubmittedReplacement,
+                designBrief);
         }
         catch (PptxValidationException exception)
         {
@@ -228,13 +287,13 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
-     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。明示する場合だけ直前のnext_slide_numberと一致させます。各ページは1枚1メッセージに絞り、title/agenda/section/statement/cards/metrics/comparison/structuredBrief/scorecard/musicScore/process/timeline/matrix/funnel/roadmap/chart/dashboard/quote/closingを内容に応じて使い分けます。文字量が多い説明は2〜3個のsectionsへ分けるstructuredBrief、評価軸×選択肢はscorecard、編集可能な五線譜とウクレレTABの併記はmusicScoreを使います。6枚以上の資料では全体で4種類以上の構図を計画し、単純な箇条書きは補助的に限定してください。既に受理されたページを再送しません。remaining_slide_countが0になるまでpptx_finish_*を呼びません。")]
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。各ページは1枚1メッセージに絞り、Title/Agenda/Section/Bullets/Statement/Cards/Metrics/Comparison/StructuredBrief/Scorecard/DataTable/MusicScore/Process/Timeline/Matrix/Funnel/Roadmap/Chart/Dashboard/Quote/Closingを内容に応じて使い分けます。StructuredBriefはstructuredBrief.sections、Scorecardは評価軸×選択肢、DataTableはdataTableの編集可能なcolumns/rows/cells（header/cell textは明示改行なし）、MusicScoreはmusicScoreの五線譜とTABを使います。slide単位のdensityはairy/balanced/detailedでdeck既定を上書きできます。variantはautoのほか、Bullets 4件以上かつtakeawayなしのsplit、Metrics正確に3件またはCards 3〜4件のspotlight、StructuredBrief 3 sectionsのeditorialだけを使えます。Design Briefを使うdraftでは全slideへ計画済みrecipeIdをコピーし、recipeのkind/density/variantから変えません。6枚以上では4種類以上の構図を計画し、受理済みページを再送せず、remaining_slide_countが0になるまでfinishしません。")]
     public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         [Required, Description("pptx_start_visual_deckが返したdraft_id。")]
         string draftId,
-        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定し、各音符のpitchとukulele string/fretを一致させて五線譜と色分けTABを生成します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件指定します。metric/card/section/scorecard cellのtoneは意味語または#RRGGBB、iconは組み込み業務アイコンを使えます。")]
+        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。DataTableはdataTable.columnsとdataTable.rowsを使い、全rowのcells数をcolumns数と一致させ、header/cell textを明示改行なしの1行にします。airyは最大4列×6行、balancedは5列×8行、detailedは6列×10行です。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件です。任意のdensityと、Design Brief利用時は必須のrecipeIdをslide直下に指定します。")]
         IReadOnlyList<VisualSlideSpec> slides,
         [Description("省略推奨。明示する場合はこのバッチの先頭ページ番号で、直前のnext_slide_numberと一致させます。")]
         int? startSlideNumber = null)
@@ -347,7 +406,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_deck", Destructive = true),
-     Description("互換用のVisual Deck差分修正ツールです。サーバーは1回につき問題ページ1枚だけを受理し、最大2巡を強制します。通常はjobId=latestを自動解決して30秒待機するpptx_refine_visual_slideを優先してください。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトを維持します。資料全体を再送してはいけません。")]
+     Description("互換用のVisual Deck差分修正ツールです。サーバーは1回につき問題ページ1枚だけを受理し、最大2巡を強制します。通常はjobId=latestを自動解決して30秒待機するpptx_refine_visual_slideを優先してください。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトを維持します。Design Brief / Brand Profile-bound deckの差し替えslideは、元ページのrecipeId、kind、実効density、variantを完全に保持します。資料全体を再送してはいけません。")]
     public static async Task<object> RefineVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -393,7 +452,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大2巡に制限します。上限後は全体を再作成しません。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。Design Brief / Brand Profile-bound deckでは、元ページのrecipeId、kind、実効density、variantを完全に保持し、別recipeや別構図へ変更しません。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大2巡に制限します。上限後は全体を再作成しません。")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -620,6 +679,23 @@ public sealed class PowerPointTools
                 "Call the same page-level operation once with jobId=latest so all accepted changes are preserved.",
             "visual_creative_direction_locked" =>
                 "Finish the existing draft with its locked template, theme, and design. Do not restart the whole deck to change appearance.",
+            "design_brief_required" =>
+                "Call pptx_get_design_catalog, resolve only material user questions, call pptx_validate_design_brief, and then retry pptx_start_visual_deck once with the returned briefId.",
+            "design_catalog_profile_required" =>
+                "Call pptx_get_design_catalog once without filters, choose one exact profileId, then call it again with that profileId and optional recipe filters.",
+            "design_brief_expired" or "brand_profile_version_mismatch" =>
+                "Refresh pptx_get_design_catalog and validate a new Design Brief before starting. Do not reuse the expired or stale briefId.",
+            "design_brief_confirmation_required" or "design_brief_questions_unresolved" =>
+                "Ask at most the material unresolved questions or select a safe explicit fallback, then validate the finalized brief with no unresolved questions.",
+            "asset_plan_omission_invalid" =>
+                "For that item use exactly preferred_medium=none, acquisition=none, fallback=none, status=omitted, and license_status=notRequired; omit approved_asset_collection_id, attribution_ref, crop_intent, aspect_ratio, and text_safe_area; select a recipe whose required_asset_roles is empty. Never pair acquisition=none with noAssetLayout.",
+            "visual_slide_recipe_mismatch"
+                or "visual_slide_recipe_kind_mismatch"
+                or "visual_slide_recipe_density_mismatch"
+                or "visual_slide_recipe_variant_mismatch" =>
+                "Copy the exact planned recipeId and match its semantic kind, effective density, and implemented variant. Do not start a new draft.",
+            "brand_profile_insert_requires_design_brief" =>
+                "Do not insert slides into this Brand Profile-bound deck in phase 1. Explain that inserted pages need a newly validated Asset Plan and recipe contract; keep the latest successful deck unchanged.",
             _ => $"Correct the field named in message and call {tool} again. Do not repeat the same invalid input.",
         };
         return new(

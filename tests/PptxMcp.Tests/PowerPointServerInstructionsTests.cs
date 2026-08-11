@@ -20,7 +20,7 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("instead of repeatedly calling pptx_get_job", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_insert_visual_slides with jobId=latest and only the new slides", instructions, StringComparison.Ordinal);
         Assert.Contains("Never reconstruct or resend the existing slides", instructions, StringComparison.Ordinal);
-        Assert.Contains("never start a new draft for this operation", instructions, StringComparison.Ordinal);
+        Assert.Contains("never start a new draft merely to bypass the insertion restriction", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_start_visual_deck exactly once", instructions, StringComparison.Ordinal);
         Assert.Contains("Omit startSlideNumber", instructions, StringComparison.Ordinal);
         Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);

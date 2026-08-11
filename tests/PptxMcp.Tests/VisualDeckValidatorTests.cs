@@ -32,6 +32,8 @@ public sealed class VisualDeckValidatorTests
         Assert.Equal("#FFFFFF", result.Theme.BackgroundColor);
         Assert.Equal("#101010", result.Theme.TextColor);
         Assert.Equal("Corporate Body", result.Theme.FontFace);
+        Assert.Equal("Corporate Heading", result.Theme.HeadingFontFace);
+        Assert.Equal("Corporate Body", result.Theme.BodyFontFace);
         Assert.Equal(deck.Design, result.Design);
     }
 
@@ -43,6 +45,22 @@ public sealed class VisualDeckValidatorTests
             [new VisualSlideSpec(VisualSlideKind.Title, "成長戦略")]);
 
         Assert.Same(deck, VisualDeckBranding.ApplyTemplateTheme(deck, null));
+    }
+
+    [Fact]
+    public void RejectsExplicitSurfaceAndTextColorsWithoutReadableContrast()
+    {
+        var deck = new VisualDeckSpec(
+            "配色検証",
+            [new VisualSlideSpec(VisualSlideKind.Title, "表紙")],
+            new VisualThemeSpec(
+                SurfaceColor: "#F8FAFC",
+                TextColor: "#FFFFFF"),
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_theme_contrast_invalid", error.Code);
     }
 
     [Fact]
@@ -439,6 +457,318 @@ public sealed class VisualDeckValidatorTests
     }
 
     [Fact]
+    public void AcceptsEditableGeneralPurposeDataTableWithSlideDensityOverride()
+    {
+        var deck = new VisualDeckSpec(
+            "運用状況",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.DataTable,
+                    "拠点別の運用状況",
+                    Takeaway: "優先対応は西拠点",
+                    DataTable: new VisualDataTableSpec(
+                        [
+                            new VisualDataTableColumnSpec("拠点", WidthWeight: 1.4),
+                            new VisualDataTableColumnSpec("稼働率", "right"),
+                            new VisualDataTableColumnSpec("対応", WidthWeight: 2.2),
+                        ],
+                        [
+                            new VisualDataTableRowSpec([
+                                new VisualDataTableCellSpec("東"),
+                                new VisualDataTableCellSpec("82%", "positive", true),
+                                new VisualDataTableCellSpec("現状維持"),
+                            ]),
+                            new VisualDataTableRowSpec([
+                                new VisualDataTableCellSpec("西"),
+                                new VisualDataTableCellSpec("96%", "warning", true),
+                                new VisualDataTableCellSpec("増強を前倒し"),
+                            ]),
+                        ]),
+                    Density: "detailed",
+                    RecipeId: "report-table-detailed"),
+            ],
+            Design: new VisualDesignSpec(Density: "airy"),
+            RendererContract: "visual-v5");
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void RejectsDataTableRowsThatDoNotMatchColumnCount()
+    {
+        var deck = new VisualDeckSpec(
+            "運用状況",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.DataTable,
+                    "拠点別の運用状況",
+                    DataTable: new VisualDataTableSpec(
+                        [
+                            new VisualDataTableColumnSpec("拠点"),
+                            new VisualDataTableColumnSpec("稼働率"),
+                        ],
+                        [
+                            new VisualDataTableRowSpec([
+                                new VisualDataTableCellSpec("東"),
+                            ]),
+                        ])),
+            ],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_data_table_cells_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void RejectsDataTableColumnWeightsThatWouldOverflowTheRenderedTable()
+    {
+        var columns = new[]
+        {
+            new VisualDataTableColumnSpec("狭い列", WidthWeight: 0.5),
+            new VisualDataTableColumnSpec("列2", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列3", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列4", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列5", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列6", WidthWeight: 4),
+        };
+        var rows = Enumerable.Range(1, 10)
+            .Select(rowNumber => new VisualDataTableRowSpec(
+                columns.Select((_, columnIndex) => new VisualDataTableCellSpec(
+                    columnIndex == 0 ? new string('あ', 40) : $"{rowNumber}-{columnIndex + 1}"))
+                    .ToArray()))
+            .ToArray();
+        var deck = new VisualDeckSpec(
+            "過密表",
+            [new VisualSlideSpec(
+                VisualSlideKind.DataTable,
+                "安全に収まらない表",
+                DataTable: new VisualDataTableSpec(columns, rows),
+                Density: "detailed")],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_data_table_column_too_narrow", error.Code);
+    }
+
+    [Fact]
+    public void RejectsDataTableCellTextBeyondGeometryBasedCapacity()
+    {
+        var deck = new VisualDeckSpec(
+            "過密表",
+            [new VisualSlideSpec(
+                VisualSlideKind.DataTable,
+                "セルが長すぎる表",
+                DataTable: new VisualDataTableSpec(
+                    [
+                        new VisualDataTableColumnSpec("項目"),
+                        new VisualDataTableColumnSpec("説明"),
+                        new VisualDataTableColumnSpec("対応"),
+                    ],
+                    Enumerable.Range(1, 10)
+                        .Select(rowNumber => new VisualDataTableRowSpec(
+                            [
+                                new VisualDataTableCellSpec($"項目{rowNumber}"),
+                                new VisualDataTableCellSpec(new string('あ', 100)),
+                                new VisualDataTableCellSpec("確認"),
+                            ]))
+                        .ToArray()),
+                Density: "detailed")],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_data_table_cell_overflow_risk", error.Code);
+        Assert.Contains("dataTable.rows[0].cells[1].text", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void RejectsExplicitLineBreaksInDataTableText(bool inHeader)
+    {
+        var deck = new VisualDeckSpec(
+            "改行を含む表",
+            [new VisualSlideSpec(
+                VisualSlideKind.DataTable,
+                "セル改行を拒否する表",
+                DataTable: new VisualDataTableSpec(
+                    [
+                        new VisualDataTableColumnSpec(inHeader ? "項目\n補足" : "項目"),
+                        new VisualDataTableColumnSpec("説明"),
+                    ],
+                    [new VisualDataTableRowSpec([
+                        new VisualDataTableCellSpec(inHeader ? "値" : "A\nB\nC"),
+                        new VisualDataTableCellSpec("補足"),
+                    ])]))],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_text_invalid", error.Code);
+        Assert.Contains(inHeader ? ".header" : ".text", error.Message, StringComparison.Ordinal);
+        Assert.Contains("single line", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("column", "visual_data_table_column_invalid")]
+    [InlineData("row", "visual_data_table_row_invalid")]
+    [InlineData("cell", "visual_data_table_cell_invalid")]
+    public void RejectsNullNestedDataTableItemsAsValidationErrors(string nullItem, string expectedCode)
+    {
+        IReadOnlyList<VisualDataTableColumnSpec> columns = nullItem == "column"
+            ? [null!, new VisualDataTableColumnSpec("説明")]
+            : [new VisualDataTableColumnSpec("項目"), new VisualDataTableColumnSpec("説明")];
+        IReadOnlyList<VisualDataTableRowSpec> rows = nullItem switch
+        {
+            "row" => [null!],
+            "cell" => [new VisualDataTableRowSpec([null!, new VisualDataTableCellSpec("補足")])],
+            _ => [new VisualDataTableRowSpec([
+                new VisualDataTableCellSpec("値"),
+                new VisualDataTableCellSpec("補足"),
+            ])],
+        };
+        var deck = new VisualDeckSpec(
+            "nullを含む表",
+            [new VisualSlideSpec(
+                VisualSlideKind.DataTable,
+                "不正要素を拒否する表",
+                DataTable: new VisualDataTableSpec(columns, rows))],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal(expectedCode, error.Code);
+        Assert.Contains("must not be null", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsNoOpAndKindMismatchedVariants()
+    {
+        var removedVariant = new VisualDeckSpec(
+            "資料",
+            [new VisualSlideSpec(
+                VisualSlideKind.Cards,
+                "要点",
+                Cards:
+                [
+                    new VisualCardSpec("要点A"),
+                    new VisualCardSpec("要点B"),
+                    new VisualCardSpec("要点C"),
+                ],
+                Variant: "grid")],
+            RendererContract: "visual-v5");
+        var mismatchedVariant = new VisualDeckSpec(
+            "資料",
+            [new VisualSlideSpec(
+                VisualSlideKind.Cards,
+                "要点",
+                Cards:
+                [
+                    new VisualCardSpec("要点A"),
+                    new VisualCardSpec("要点B"),
+                    new VisualCardSpec("要点C"),
+                ],
+                Variant: "split")],
+            RendererContract: "visual-v5");
+
+        var removedError = Assert.Throws<PptxValidationException>(
+            () => VisualDeckValidator.Validate(removedVariant, 50));
+        var mismatchError = Assert.Throws<PptxValidationException>(
+            () => VisualDeckValidator.Validate(mismatchedVariant, 50));
+
+        Assert.Equal("visual_slide_variant_invalid", removedError.Code);
+        Assert.Equal("visual_slide_variant_kind_mismatch", mismatchError.Code);
+    }
+
+    [Theory]
+    [InlineData("bullets")]
+    [InlineData("metrics")]
+    [InlineData("cards")]
+    [InlineData("editorial")]
+    public void RejectsVariantsThatWouldSilentlyFallBackToAuto(string scenario)
+    {
+        var slide = scenario switch
+        {
+            "bullets" => new VisualSlideSpec(
+                VisualSlideKind.Bullets,
+                "要点",
+                Bullets: ["A", "B", "C", "D"],
+                Takeaway: "結論",
+                Variant: "split"),
+            "metrics" => new VisualSlideSpec(
+                VisualSlideKind.Metrics,
+                "指標",
+                Metrics: [new VisualMetricSpec("1", "A"), new VisualMetricSpec("2", "B")],
+                Variant: "spotlight"),
+            "cards" => new VisualSlideSpec(
+                VisualSlideKind.Cards,
+                "要点",
+                Cards:
+                [
+                    new VisualCardSpec("A"),
+                    new VisualCardSpec("B"),
+                    new VisualCardSpec("C"),
+                    new VisualCardSpec("D"),
+                    new VisualCardSpec("E"),
+                ],
+                Variant: "spotlight"),
+            _ => new VisualSlideSpec(
+                VisualSlideKind.StructuredBrief,
+                "論点",
+                Sections:
+                [
+                    new VisualBriefSectionSpec("A", "本文"),
+                    new VisualBriefSectionSpec("B", "本文"),
+                ],
+                Variant: "editorial"),
+        };
+        var deck = new VisualDeckSpec("資料", [slide], RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_slide_variant_kind_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void RejectsMetricsSpotlightWithMoreThanExactlyThreeItems()
+    {
+        var deck = new VisualDeckSpec(
+            "資料",
+            [new VisualSlideSpec(
+                VisualSlideKind.Metrics,
+                "指標",
+                Metrics:
+                [
+                    new VisualMetricSpec("1", "A"),
+                    new VisualMetricSpec("2", "B"),
+                    new VisualMetricSpec("3", "C"),
+                    new VisualMetricSpec("4", "D"),
+                ],
+                Variant: "spotlight")],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_slide_variant_kind_mismatch", error.Code);
+    }
+
+    [Fact]
+    public void AcceptsStoredLegacyNoOpVariantForLineageCompatibility()
+    {
+        var deck = new VisualDeckSpec(
+            "旧資料",
+            [new VisualSlideSpec(
+                VisualSlideKind.Cards,
+                "要点",
+                Cards: [new VisualCardSpec("A"), new VisualCardSpec("B"), new VisualCardSpec("C")],
+                Variant: "grid")]);
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
     public void WarnsWhenTextRichContentDoesNotUseDetailedDensity()
     {
         var deck = new VisualDeckSpec(
@@ -459,6 +789,31 @@ public sealed class VisualDeckValidatorTests
         var warnings = VisualDeckValidator.GetDesignWarnings(deck);
 
         Assert.Contains(warnings, warning => warning.Contains("design.density=detailed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SlideDensityOverrideSuppressesTextRichDensityWarning()
+    {
+        var deck = new VisualDeckSpec(
+            "説明資料",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.StructuredBrief,
+                    "情報量に合わせてページ単位で密度を変える",
+                    Sections:
+                    [
+                        new VisualBriefSectionSpec("論点A", new string('あ', 240)),
+                        new VisualBriefSectionSpec("論点B", new string('い', 240)),
+                        new VisualBriefSectionSpec("論点C", new string('う', 120)),
+                    ],
+                    Density: "detailed"),
+            ],
+            Design: new VisualDesignSpec(Density: "airy"));
+
+        VisualDeckValidator.Validate(deck, 50);
+        var warnings = VisualDeckValidator.GetDesignWarnings(deck);
+
+        Assert.DoesNotContain(warnings, warning => warning.Contains("text-rich", StringComparison.Ordinal));
     }
 
     [Fact]

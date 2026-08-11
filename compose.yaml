@@ -12,6 +12,8 @@ services:
       PptxMcp__LibreChatUploadsRoot: /data/librechat-uploads
       PptxMcp__TemplatesRoot: /data/pptx-templates
       PptxMcp__DefaultTemplateId: ${PPTX_MCP_DEFAULT_TEMPLATE_ID:-}
+      PptxMcp__BrandProfilesRoot: /data/pptx-brand-profiles
+      PptxMcp__RequireDesignBrief: ${PPTX_MCP_REQUIRE_DESIGN_BRIEF:-false}
       PptxMcp__FirstAssistantNotice: ${PPTX_MCP_FIRST_ASSISTANT_NOTICE:-}
     read_only: true
     tmpfs:
@@ -20,6 +22,7 @@ services:
       - pptx-data:/data/pptx-mcp
       - ${LIBRECHAT_UPLOADS_PATH:?set LIBRECHAT_UPLOADS_PATH}:/data/librechat-uploads:ro
       - ${PPTX_MCP_TEMPLATES_PATH:-./templates}:/data/pptx-templates:ro
+      - ${PPTX_MCP_BRAND_PROFILES_PATH:-./brand-profiles}:/data/pptx-brand-profiles:ro
     cap_drop:
       - ALL
     restart: unless-stopped
