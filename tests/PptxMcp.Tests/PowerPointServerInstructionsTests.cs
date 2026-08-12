@@ -26,6 +26,8 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);
         Assert.Contains("remaining_slide_count is zero", instructions, StringComparison.Ordinal);
         Assert.Contains("only one recovery restart", instructions, StringComparison.Ordinal);
+        Assert.Contains("openxml_validation_failed", instructions, StringComparison.Ordinal);
+        Assert.Contains("do not claim that shortening text", instructions, StringComparison.Ordinal);
         Assert.Contains("userRequestedNewWorkflow=true", instructions, StringComparison.Ordinal);
         Assert.Contains("StructuredBrief", instructions, StringComparison.Ordinal);
         Assert.Contains("design.density=detailed", instructions, StringComparison.Ordinal);

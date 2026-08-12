@@ -108,6 +108,59 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
     }
 
     [Fact]
+    public void NormalizesNegativePptxGenJsShapeExtentsWithoutChangingItsVisualBounds()
+    {
+        var offset = new A.Offset { X = 10_716_768L, Y = 658_368L };
+        var extents = new A.Extents { Cx = 566_928L, Cy = -457_200L };
+        var transform = new A.Transform2D(offset, extents);
+        var slide = new P.Slide(new P.ShapeProperties(transform));
+
+        var correctionCount = PptxGenJsOpenXmlNormalizer.NormalizeSlide(slide);
+
+        Assert.Equal(1, correctionCount);
+        Assert.Equal(10_716_768L, offset.X?.Value);
+        Assert.Equal(201_168L, offset.Y?.Value);
+        Assert.Equal(566_928L, extents.Cx?.Value);
+        Assert.Equal(457_200L, extents.Cy?.Value);
+        Assert.True(transform.VerticalFlip?.Value);
+        Assert.False(transform.HorizontalFlip?.Value ?? false);
+    }
+
+    [Fact]
+    public void NormalizesAndValidatesPresentationContainingNegativeShapeExtent()
+    {
+        var path = TestPresentationFactory.Create("NODE MOTIF");
+        try
+        {
+            using (var document = PresentationDocument.Open(path, true))
+            {
+                var shapeProperties = document.PresentationPart!
+                    .SlideParts.Single()
+                    .Slide!.Descendants<P.ShapeProperties>().Single();
+                shapeProperties.Append(
+                    new A.Transform2D(
+                        new A.Offset { X = 10_716_768L, Y = 658_368L },
+                        new A.Extents { Cx = 566_928L, Cy = -457_200L }));
+                document.PresentationPart.SlideParts.Single().Slide!.Save();
+            }
+
+            PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(path);
+
+            using var normalized = PresentationDocument.Open(path, false);
+            var transform = normalized.PresentationPart!
+                .SlideParts.Single()
+                .Slide!.Descendants<A.Transform2D>().Single();
+            Assert.Equal(201_168L, transform.Offset?.Y?.Value);
+            Assert.Equal(457_200L, transform.Extents?.Cy?.Value);
+            Assert.True(transform.VerticalFlip?.Value);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void NormalizesPptxGenJsLineAndBarChartMarkup()
     {
         var lineSeries = new C.LineChartSeries(

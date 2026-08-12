@@ -164,6 +164,32 @@ internal static class PptxGenJsOpenXmlNormalizer
     internal static int NormalizeSlide(P.Slide slide)
     {
         var correctionCount = 0;
+        foreach (var transform in slide.Descendants<A.Transform2D>())
+        {
+            var offset = transform.GetFirstChild<A.Offset>();
+            var extents = transform.GetFirstChild<A.Extents>();
+            if (offset is null || extents is null)
+            {
+                continue;
+            }
+
+            if (extents.Cx?.Value is < 0 and not long.MinValue)
+            {
+                offset.X = checked((offset.X?.Value ?? 0L) + extents.Cx.Value);
+                extents.Cx = -extents.Cx.Value;
+                transform.HorizontalFlip = !(transform.HorizontalFlip?.Value ?? false);
+                correctionCount++;
+            }
+
+            if (extents.Cy?.Value is < 0 and not long.MinValue)
+            {
+                offset.Y = checked((offset.Y?.Value ?? 0L) + extents.Cy.Value);
+                extents.Cy = -extents.Cy.Value;
+                transform.VerticalFlip = !(transform.VerticalFlip?.Value ?? false);
+                correctionCount++;
+            }
+        }
+
         foreach (var tableCellProperties in slide.Descendants<A.TableCellProperties>())
         {
             var anchor = tableCellProperties.GetAttribute("anchor", string.Empty);
