@@ -2588,6 +2588,20 @@ function renderIcon(slide, iconName, x, y, size, color, inverse) {
   });
 }
 
+function addLineBetweenPoints(slide, start, end, line) {
+  const deltaX = end[0] - start[0];
+  const deltaY = end[1] - start[1];
+  slide.addShape(pptx.ShapeType.line, {
+    x: Math.min(start[0], end[0]),
+    y: Math.min(start[1], end[1]),
+    w: Math.abs(deltaX),
+    h: Math.abs(deltaY),
+    flipH: deltaX < 0,
+    flipV: deltaY < 0,
+    line,
+  });
+}
+
 function addMotif(slide, index, inverse, subtle) {
   if (design.motif === "none") return;
   if (currentDensityName === "detailed" && subtle) return;
@@ -2611,13 +2625,11 @@ function addMotif(slide, index, inverse, subtle) {
 
   if (design.motif === "nodes") {
     const points = [[10.88, 0.34], [11.72, 0.72], [12.34, 0.22]];
-    slide.addShape(pptx.ShapeType.line, {
-      x: points[0][0], y: points[0][1], w: points[1][0] - points[0][0], h: points[1][1] - points[0][1],
-      line: { color: foreground, transparency, width: 1 },
+    addLineBetweenPoints(slide, points[0], points[1], {
+      color: foreground, transparency, width: 1,
     });
-    slide.addShape(pptx.ShapeType.line, {
-      x: points[1][0], y: points[1][1], w: points[2][0] - points[1][0], h: points[2][1] - points[1][1],
-      line: { color: foreground, transparency, width: 1 },
+    addLineBetweenPoints(slide, points[1], points[2], {
+      color: foreground, transparency, width: 1,
     });
     points.forEach(([px, py], pointIndex) => slide.addShape(pptx.ShapeType.ellipse, {
       x: px, y: py, w: 0.16 + pointIndex * 0.03, h: 0.16 + pointIndex * 0.03,

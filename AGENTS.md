@@ -72,6 +72,7 @@
 - 動作上必須の引数には`Required`属性を付け、MCPの公開JSON Schemaでも必須にする。ただしData Annotationsは実行時検証を代替せず、巨大な入力の生成自体も安定化しない。Visual Deckの新規生成は段階ドラフト、Visual Deckの自動修正は必須`revision`を持つ`pptx_refine_visual_slide`で1ページずつ逐次適用する。
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
 - PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルート、表セル、グラフを正規化し、`node_modules`を直接改変しない。
+- PptxGenJSへ負の`w`/`h`を渡すと`a:ext`へ負値をそのまま書き、Open XML検証に失敗する。右上・左上へ向かう線分は、正の幅・高さと`flipH`/`flipV`へ正規化して描画し、`PptxGenJsOpenXmlNormalizer`でも負のshape extentを位置移動＋反転属性へ補正する回帰テストを維持する。
 - PptxGenJS 4.0.1が依存する`image-size` 1.2.1には2026-08-08時点で修正版のないICNS/JXL/HEIFの無限ループDoSがある。Visual Deckレンダラーは画像入力と`addImage`を公開・使用しないため脆弱な解析経路へ到達しない状態をテストで固定し、修正版公開後に更新する。画像入力を追加する場合は先にこの依存を解消する。
 - `addTable`の垂直中央揃えは`valign: "middle"`を使う。`"mid"`は表セルへ不正な`anchor="mid"`として出力されるため、正規化処理と回帰テストも維持する。
 - PptxGenJSの棒グラフは系列内の`c:dPt`を`c:dLbls`より後ろへ出力する場合がある。Open XMLの要素順に合わせて個別データ点をラベルより前へ移し、実データ点を含む回帰テストを維持する。
