@@ -1,9 +1,13 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
+using PptxMcp.Configuration;
 using PptxMcp.Domain;
 using PptxMcp.Jobs;
+using PptxMcp.Security;
 using PptxMcp.Tools;
 
 namespace PptxMcp.Tests;
@@ -503,6 +507,30 @@ public sealed class ToolInputContractTests
         Assert.Contains("\"status\":\"invalid_input\"", json, StringComparison.Ordinal);
         Assert.Contains("\"code\":\"visual_content_missing\"", json, StringComparison.Ordinal);
         Assert.Contains("slides[9].body", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MissingVisualDraftIsATerminalErrorAndDoesNotInviteAnotherAddCall()
+    {
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-LibreChat-User-ID"] = "user-a";
+        httpContext.Request.Headers["X-LibreChat-Conversation-ID"] = "conversation-a";
+        var caller = new CallerContextAccessor(new HttpContextAccessor { HttpContext = httpContext });
+        var drafts = new VisualDeckDraftService(
+            Options.Create(new PptxMcpOptions()),
+            TimeProvider.System);
+
+        var result = PowerPointTools.AddVisualSlidesToDraft(
+            caller,
+            drafts,
+            "0123456789abcdef0123456789abcdef",
+            [new VisualSlideSpec(VisualSlideKind.Title, "再開テスト")]);
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal("visual_draft_not_found", error.Code);
+        Assert.StartsWith("Stop this turn.", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("Do not call pptx_add_visual_slides_to_draft", error.Instruction, StringComparison.Ordinal);
+        Assert.DoesNotContain("call pptx_add_visual_slides_to_draft again", error.Instruction, StringComparison.Ordinal);
     }
 
     [Fact]

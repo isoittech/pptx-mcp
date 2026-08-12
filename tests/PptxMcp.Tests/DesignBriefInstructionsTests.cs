@@ -27,6 +27,8 @@ public sealed class DesignBriefInstructionsTests
         Assert.Contains("pptx.designBrief.select", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_cancel_design_brief_selection", instructions, StringComparison.Ordinal);
         Assert.Contains("argument-free", instructions, StringComparison.Ordinal);
+        Assert.Contains("visual_draft_not_found", instructions, StringComparison.Ordinal);
+        Assert.Contains("never call add or finish with that draftId again", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

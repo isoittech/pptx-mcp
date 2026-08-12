@@ -778,6 +778,10 @@ public sealed class PowerPointTools
                 "Call the same page-level operation once with jobId=latest so all accepted changes are preserved.",
             "visual_creative_direction_locked" =>
                 "Finish the existing draft with its locked template, theme, and design. Do not restart the whole deck to change appearance.",
+            "visual_draft_not_found" or "visual_draft_expired" =>
+                "Stop this turn. Do not call pptx_add_visual_slides_to_draft or a finish tool with this draftId again. Tell the user that the draft is unavailable or expired; a fresh Design Brief and pptx_start_visual_deck are required to generate the deck again.",
+            "visual_draft_not_editable" or "visual_draft_already_submitted" =>
+                "Do not retry this draft mutation. Use the existing submitted job when available, or report that the draft can no longer be edited.",
             "design_brief_required" =>
                 "Call pptx_get_design_catalog, resolve only material user questions, call pptx_validate_design_brief, and then retry pptx_start_visual_deck once with the returned briefId.",
             "design_catalog_profile_required" =>
