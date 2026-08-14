@@ -16,13 +16,15 @@ public sealed class JobService(
     JobCancellationRegistry cancellationRegistry,
     ArtifactTokenService tokenService,
     IOptions<PptxMcpOptions> options,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ImageAssetRepository? imageAssets = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim[] visualMutationLocks = Enumerable.Range(0, 64)
         .Select(static _ => new SemaphoreSlim(1, 1))
         .ToArray();
     private readonly PptxMcpOptions options = options.Value;
+    private readonly ImageAssetRepository? imageAssets = imageAssets;
 
     public Task<JobReceipt> SubmitAnalyzeAsync(
         CallerContext caller,
@@ -98,6 +100,7 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         VisualDeckValidator.Validate(deck, options.MaxSlides);
+        ValidateImageAssetsOwned(caller, deck);
         if (!useDefaultTemplate || !templates.HasDefault)
         {
             return await SubmitGeneratedAsync(
@@ -126,6 +129,7 @@ public sealed class JobService(
         CancellationToken cancellationToken)
     {
         VisualDeckValidator.Validate(deck, options.MaxSlides);
+        ValidateImageAssetsOwned(caller, deck);
         if (string.IsNullOrWhiteSpace(templateLayoutId) || templateLayoutId.Length > 512)
         {
             throw new PptxValidationException(
@@ -259,6 +263,7 @@ public sealed class JobService(
                 ?? throw new PptxValidationException("invalid_job_payload", "The source branded visual deck specification is missing.");
             var refinedBrandedDeck = ApplyVisualDeckRevisions(branded.Deck, revisions, options.MaxSlides);
             VisualDeckValidator.Validate(refinedBrandedDeck, options.MaxSlides);
+            ValidateImageAssetsOwned(caller, refinedBrandedDeck);
             var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
             if (!File.Exists(sourcePath))
             {
@@ -279,6 +284,7 @@ public sealed class JobService(
             ?? throw new PptxValidationException("invalid_job_payload", "The source visual deck specification is missing.");
         var refinedDeck = ApplyVisualDeckRevisions(originalDeck, revisions, options.MaxSlides);
         VisualDeckValidator.Validate(refinedDeck, options.MaxSlides);
+        ValidateImageAssetsOwned(caller, refinedDeck);
         return await SubmitGeneratedAsync(
             caller,
             JobKind.CreateVisualDeck,
@@ -344,6 +350,7 @@ public sealed class JobService(
                 afterSlideNumber,
                 options.MaxSlides);
             VisualDeckValidator.Validate(extendedBrandedDeck, options.MaxSlides);
+            ValidateImageAssetsOwned(caller, extendedBrandedDeck);
             var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
             if (!File.Exists(sourcePath))
             {
@@ -368,6 +375,7 @@ public sealed class JobService(
             afterSlideNumber,
             options.MaxSlides);
         VisualDeckValidator.Validate(extendedDeck, options.MaxSlides);
+        ValidateImageAssetsOwned(caller, extendedDeck);
         return await SubmitGeneratedAsync(
             caller,
             JobKind.CreateVisualDeck,
@@ -629,6 +637,26 @@ public sealed class JobService(
             .ToArray();
     }
 
+    private void ValidateImageAssetsOwned(CallerContext caller, VisualDeckSpec deck)
+    {
+        foreach (var slide in deck.Slides)
+        {
+            if (slide.Media is null)
+            {
+                continue;
+            }
+
+            if (imageAssets is null)
+            {
+                throw new PptxValidationException(
+                    "visual_media_unavailable",
+                    "Image asset resolution is unavailable in this server configuration.");
+            }
+
+            imageAssets.GetOwned(caller, slide.Media.AssetId);
+        }
+    }
+
     internal static VisualDeckSpec ApplyVisualDeckRevisions(
         VisualDeckSpec originalDeck,
         IReadOnlyList<VisualSlideRevision> revisions,
@@ -781,6 +809,19 @@ public sealed class JobService(
                 throw new PptxValidationException(
                     "visual_slide_recipe_variant_mismatch",
                     $"Slide {revision.SlideNumber}.variant must remain {recipe.Variant} during refinement.");
+            }
+
+            var assetAudit = brandBinding.DesignBriefAudit?.Slides.SingleOrDefault(item =>
+                item.SlideNumber == revision.SlideNumber);
+            if (assetAudit?.AssetId is { } assetId
+                && (slide.Media is null
+                    || !string.Equals(slide.Media.AssetId, assetId, StringComparison.Ordinal)
+                    || !string.Equals(slide.Media.CropIntent, assetAudit.CropIntent, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(slide.Media.TextPosition, assetAudit.TextSafeArea, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new PptxValidationException(
+                    "visual_media_asset_binding_mismatch",
+                    $"Slide {revision.SlideNumber} must preserve the verified image asset, crop intent, and text position during refinement.");
             }
         }
     }

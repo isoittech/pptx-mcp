@@ -57,12 +57,14 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。addの`startSlideNumber`は任意とし、省略時は受理済み末尾からサーバーが算出します。明示値がある場合は正しい次番号との一致を検証します。
 
 - title、agenda、section、statement、bullets
-- cards、metrics、comparison、structuredBrief、scorecard、dataTable、musicScore
+- cards、metrics、comparison、structuredBrief、scorecard、dataTable、media、musicScore
 - process、timeline
 - matrix、funnel、roadmap、chart、dashboard
 - quote、closing
 
-テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。入力にファイルパス、URL、画像、JavaScript、任意座標を持たせないため、表現力を上げてもコード実行境界は広げません。
+テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。通常の公開入力にファイルパス、URL、画像bytes、JavaScript、任意座標を持たせません。例外となる`media.assetId`は事前登録済みのopaque IDだけで、serverがcaller scopeとSHA-256を検証し、metadataなしPNGを埋め込みます。
+
+`media`は最初の実装として`split`だけを提供します。ユーザー提供JPEG/PNGを`pptx_register_uploaded_image_asset`で検証・無害化してから、実asset ID、crop intent、text positionを指定します。画像がない状態を空欄や仮画像で完成扱いせず、native diagramまたは画像なしrecipeへ切り替えます。詳細は[ADR 0016](adr/0016-conversation-scoped-image-assets-and-media-split.md)に記録します。
 
 固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。文字量の多い説明では`structuredBrief`が本文を2〜3個の見出し付きセクションへ分け、`scorecard`が評価軸×選択肢を編集可能なPowerPoint表へ変換します。`density=detailed`は単一のフォント倍率ではなく、外周余白、見出し領域、内部間隔、罫線、カード形状、影をまとめて切り替えます。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合に加え、500文字以上のページでdetailedを使っていない場合や全セクションを強調している場合は `design_warnings` を返します。詳細は [ADR 0010](adr/0010-readable-information-density.md) に記録します。
 

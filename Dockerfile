@@ -15,7 +15,7 @@ FROM node:20-bookworm-slim AS visual-renderer
 WORKDIR /visual-renderer
 COPY visual-renderer/package.json visual-renderer/package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY visual-renderer/index.mjs visual-renderer/music-glyphs.mjs ./
+COPY visual-renderer/index.mjs visual-renderer/music-glyphs.mjs visual-renderer/sanitize-image.mjs ./
 COPY visual-renderer/assets ./assets
 COPY visual-renderer/test ./test
 RUN npm test
@@ -34,7 +34,6 @@ RUN apt-get update \
         fonts-liberation \
         fonts-noto-cjk \
         libreoffice-impress \
-        nodejs \
         poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /data/pptx-mcp /data/librechat-uploads \
@@ -42,6 +41,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=publish /app/publish .
 COPY --from=visual-renderer --chown=app:app /visual-renderer /app/visual-renderer
+COPY --from=visual-renderer /usr/local/bin/node /usr/local/bin/node
 ENV ASPNETCORE_HTTP_PORTS=8080 \
     DOTNET_EnableDiagnostics=0 \
     HOME=/tmp/app-home

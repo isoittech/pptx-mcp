@@ -8,7 +8,9 @@ using PptxMcp.Storage;
 
 namespace PptxMcp.Presentation;
 
-public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> options) : IVisualPresentationEngine
+public sealed class PptxGenJsVisualPresentationEngine(
+    IOptions<PptxMcpOptions> options,
+    ImageAssetRepository imageAssets) : IVisualPresentationEngine
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
@@ -31,6 +33,22 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
         var specification = JsonSerializer.SerializeToNode(deck, SerializerOptions)?.AsObject()
             ?? throw new PptxValidationException("invalid_visual_deck", "The visual deck specification could not be serialized.");
         specification["templateChrome"] = useTemplateChrome;
+        var assetMetadata = new JsonObject();
+        foreach (var assetId in deck.Slides
+                     .Where(static slide => slide.Media is not null)
+                     .Select(static slide => slide.Media!.AssetId)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var asset = imageAssets.Get(assetId);
+            assetMetadata[assetId] = new JsonObject
+            {
+                ["width"] = asset.Width,
+                ["height"] = asset.Height,
+                ["altText"] = asset.AltText,
+                ["sha256"] = asset.Sha256,
+            };
+        }
+        specification["imageAssets"] = assetMetadata;
         await using (var stream = File.Open(specificationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             await JsonSerializer.SerializeAsync<JsonNode>(stream, specification, SerializerOptions, cancellationToken).ConfigureAwait(false);
@@ -51,6 +69,7 @@ public sealed class PptxGenJsVisualPresentationEngine(IOptions<PptxMcpOptions> o
         process.StartInfo.ArgumentList.Add(rendererPath);
         process.StartInfo.ArgumentList.Add(specificationPath);
         process.StartInfo.ArgumentList.Add(destinationPath);
+        process.StartInfo.Environment["PPTX_MCP_IMAGE_ASSET_ROOT"] = imageAssets.AssetsRoot;
 
         if (!process.Start())
         {

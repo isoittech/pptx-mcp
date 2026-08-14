@@ -14,6 +14,31 @@ namespace PptxMcp.Tools;
 [McpServerToolType]
 public sealed class PowerPointTools
 {
+    [McpServerTool(Name = "pptx_register_uploaded_image_asset", Destructive = true),
+     Description("LibreChatへ添付済みのJPEG/PNGを、現在の利用者・会話だけで使える期限付き画像assetへ登録します。URLやローカルpathは受け取りません。原本を検証・回転・sRGB化・縮小し、metadataを除いたPNGへ無害化してopaque asset_idを返します。画像が必要なAsset Planを確定する前に呼び、返ったasset_idを同じslideのassetPlan.asset_idとMedia.media.assetIdへコピーしてください。sourceFileIdが会話に提示されない場合はlatestを使えます。利用者が提供権限を持つ画像だけを登録し、altTextには画像の内容、attributionRefには任意のopaque出典記録IDだけを指定します。")]
+    public static async Task<object> RegisterUploadedImageAssetAsync(
+        CallerContextAccessor callerContext,
+        ImageAssetRepository imageAssets,
+        [Required, Description("画像を見られない利用者にも意味が伝わる、1〜240文字の簡潔な代替テキスト。")] string altText,
+        [Description("LibreChat添付のopaque file_id。省略時は最新のJPEG/PNG添付を選ぶlatest。URL、path、ファイル名は不可。")] string sourceFileId = "latest",
+        [Description("任意のopaque出典記録ID。URL、path、出典本文は不可。")] string? attributionRef = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await imageAssets.RegisterUserUploadAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                altText,
+                attributionRef,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError("pptx_register_uploaded_image_asset", exception);
+        }
+    }
+
     [McpServerTool(Name = "pptx_get_capabilities", ReadOnly = true, Idempotent = true),
      Description("PowerPoint MCPの対応範囲、制約、推奨ワークフローを返します。")]
     public static object GetCapabilities() => new
@@ -25,6 +50,7 @@ public sealed class PowerPointTools
             "Design Brief必須の導入環境では全ページのAsset Planを確定し、pptx_validate_design_briefが返したbrief_idをstartより前に取得する",
             "デザイン方向の選択が結果へ大きく影響するときだけpptx_prepare_design_briefでカードを表示し、ユーザー選択後にpptx_apply_design_brief_actionが返すbrief_idを使う",
             "別テンプレートや既存資料を使う場合だけLibreChatへPPTXをアップロードする",
+            "ユーザー提供画像を使う場合はJPEG/PNGをLibreChatへ添付し、pptx_register_uploaded_image_assetで無害化済みopaque asset_idへ登録してからDesign Briefを確定する",
             "アップロードしたPPTXはpptx_analyzeでスライドと編集候補を取得する（file_idが会話に提示されない場合はsourceFileId=latestを使う）",
             "対象が曖昧ならスライド番号とshape_idをユーザーに選択してもらう",
             "企業テンプレートから新規作成する場合は、解析結果のlayout_idとshape_idをそのまま使い、全ページ分のslidesを1回のpptx_create_deckへ渡す",
@@ -57,6 +83,7 @@ public sealed class PowerPointTools
             "外部読み取り専用Brand Profileのimmutable version/hash、用途別recipe、情報密度別sample要約、禁止・要確認ルールをcompact catalogとして取得",
             "Design Briefと全ページAsset Planを検証し、利用者・会話・Brand Profileへ束縛した期限付きopaque brief_idを発行",
             "条件付きDesign Briefカード、最大3つのサーバー検証済み候補、完成サンプルcarousel、1回限りの利用者選択",
+            "会話へ束縛したユーザー提供JPEG/PNGの検証・metadata除去・sRGB PNG化と、Media/splitへの実画像埋め込み、crop、代替テキスト、出典表示",
             "未選択カードが表示できない場合のcaller-boundな安全なcancelとdirect validationへの復帰",
             "五線、音符、休符、小節線、ウクレレTAB、色分けした指番号をPowerPointネイティブの線・図形・テキストとして生成",
             "企業テンプレートの空白レイアウトと自動抽出したテーマをVisual Deckへ合成し、ブランド要素と編集可能な視覚表現を両立",
@@ -98,13 +125,13 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_validate_design_brief"),
-     Description("PPTX生成前にDesign Briefと全ページのAsset Planを検証し、設定された有効期間内のopaqueなbrief_idを発行します。未解決質問、要確認の仮定、profile recipeとの不一致、権利未確認素材の採用、phase 1で未対応の画像挿入を残した計画は拒否します。素材を使わないページはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredとし、noAssetLayoutを指定しません。noAssetLayoutはuserUploadまたはapprovedLibraryを計画した項目を画像なしrecipeへ切り替える場合だけ、status=fallbackSelectedと組み合わせます。このツールはPPTXを生成しません。")]
+     Description("PPTX生成前にDesign Briefと全ページのAsset Planを検証し、設定された有効期間内のopaqueなbrief_idを発行します。未解決質問、要確認の仮定、profile recipeとの不一致、権利未確認素材の採用、利用不能な画像計画は拒否します。ユーザー提供画像を使うページは先にpptx_register_uploaded_image_assetを呼び、acquisition=userUpload, status=ready, license_status=userProvided, fallback=noneと検証済みasset_id、crop_intent、text_safe_area=left|right、画像必須recipeを指定します。素材を使わないページはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredとし、noAssetLayoutを指定しません。approvedLibraryまたは未登録userUploadは画像なしrecipeへfallbackSelectedで切り替えます。このツールはPPTXを生成しません。")]
     public static object ValidateDesignBrief(
         CallerContextAccessor callerContext,
         DesignBriefService designBriefs,
         [Required, Description("audience、purpose、delivery_mode、desired_tone、density、brand_profile{id,version,content_hash}、style_direction_id、visual_strategy、source_policy、expected_slide_count、assumptions、空のquestions_for_userからなる確定済みbrief。")]
         DesignBriefSpec brief,
-        [Required, Description("完成版の全ページに1件ずつ、slide_number順で指定する計画。各項目はcatalogのpurpose/recipe_id、visual_purpose、preferred_medium、acquisition、fallback、status、license_statusを持ちます。素材なしの正確な組合せはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredで、asset metadataを省略し、required_asset_rolesが空のrecipeを使います。noAssetLayoutはacquisition=noneでは禁止です。URL、パス、画像バイナリは渡しません。")]
+        [Required, Description("完成版の全ページに1件ずつ、slide_number順で指定する計画。各項目はcatalogのpurpose/recipe_id、visual_purpose、preferred_medium、acquisition、fallback、status、license_statusを持ちます。ready userUploadは登録済みasset_id、crop_intent、text_safe_area=left|rightを持たせます。素材なしの正確な組合せはpreferred_medium=none, acquisition=none, fallback=none, status=omitted, license_status=notRequiredで、asset metadataを省略し、required_asset_rolesが空のrecipeを使います。noAssetLayoutはacquisition=noneでは禁止です。URL、パス、画像バイナリは渡しません。")]
         IReadOnlyList<AssetPlanItem> assetPlan)
     {
         try
@@ -386,13 +413,13 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
-     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。各ページは1枚1メッセージに絞り、Title/Agenda/Section/Bullets/Statement/Cards/Metrics/Comparison/StructuredBrief/Scorecard/DataTable/MusicScore/Process/Timeline/Matrix/Funnel/Roadmap/Chart/Dashboard/Quote/Closingを内容に応じて使い分けます。StructuredBriefはstructuredBrief.sections、Scorecardは評価軸×選択肢、DataTableはdataTableの編集可能なcolumns/rows/cells（header/cell textは明示改行なし）、MusicScoreはmusicScoreの五線譜とTABを使います。slide単位のdensityはairy/balanced/detailedでdeck既定を上書きできます。variantはautoのほか、Bullets 4件以上かつtakeawayなしのsplit、Metrics正確に3件またはCards 3〜4件のspotlight、StructuredBrief 3 sectionsのeditorialだけを使えます。Design Briefを使うdraftでは全slideへ計画済みrecipeIdをコピーし、recipeのkind/density/variantから変えません。6枚以上では4種類以上の構図を計画し、受理済みページを再送せず、remaining_slide_countが0になるまでfinishしません。")]
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。各ページは1枚1メッセージに絞り、Title/Agenda/Section/Bullets/Statement/Cards/Metrics/Comparison/StructuredBrief/Scorecard/DataTable/Media/MusicScore/Process/Timeline/Matrix/Funnel/Roadmap/Chart/Dashboard/Quote/Closingを内容に応じて使い分けます。Mediaはvariant=splitと、pptx_register_uploaded_image_assetが返した同じ会話のmedia.assetId、cropIntent、textPositionを必須とし、空欄・仮画像・URL・pathを完成扱いしません。StructuredBriefはstructuredBrief.sections、Scorecardは評価軸×選択肢、DataTableはdataTableの編集可能なcolumns/rows/cells（header/cell textは明示改行なし）、MusicScoreはmusicScoreの五線譜とTABを使います。slide単位のdensityはairy/balanced/detailedでdeck既定を上書きできます。variantはautoのほか、MediaまたはBullets 4件以上かつtakeawayなしのsplit、Metrics正確に3件またはCards 3〜4件のspotlight、StructuredBrief 3 sectionsのeditorialだけを使えます。Design Briefを使うdraftでは全slideへ計画済みrecipeIdをコピーし、recipeのkind/density/variantから変えません。6枚以上では4種類以上の構図を計画し、受理済みページを再送せず、remaining_slide_countが0になるまでfinishしません。")]
     public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         [Required, Description("pptx_start_visual_deckが返したdraft_id。")]
         string draftId,
-        [Required, Description("追加する連続した1〜4ページだけ。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。DataTableはdataTable.columnsとdataTable.rowsを使い、全rowのcells数をcolumns数と一致させ、header/cell textを明示改行なしの1行にします。airyは最大4列×6行、balancedは5列×8行、detailedは6列×10行です。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件です。任意のdensityと、Design Brief利用時は必須のrecipeIdをslide直下に指定します。")]
+        [Required, Description("追加する連続した1〜4ページだけ。Mediaはmedia.assetId、cropIntent=contain|cover|focalCenter|focalLeft|focalRight、textPosition=left|rightを指定し、画像が未登録ならMediaを使いません。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。DataTableはdataTable.columnsとdataTable.rowsを使い、全rowのcells数をcolumns数と一致させ、header/cell textを明示改行なしの1行にします。airyは最大4列×6行、balancedは5列×8行、detailedは6列×10行です。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件です。任意のdensityと、Design Brief利用時は必須のrecipeIdをslide直下に指定します。")]
         IReadOnlyList<VisualSlideSpec> slides,
         [Description("省略推奨。明示する場合はこのバッチの先頭ページ番号で、直前のnext_slide_numberと一致させます。")]
         int? startSlideNumber = null)

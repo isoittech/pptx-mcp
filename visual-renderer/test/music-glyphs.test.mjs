@@ -63,9 +63,12 @@ test("Every exposed music symbol has non-empty native geometry", async () => {
   assert.ok(calls.every((call) => call.shapeType === "custGeom"));
 });
 
-test("Visual renderer does not expose PptxGenJS image parsing", async () => {
+test("Visual renderer only embeds server-verified image data with alt text", async () => {
   const source = await readFile(new URL("../index.mjs", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /\.addImage\s*\(/);
+  assert.equal(source.match(/\.addImage\s*\(/gu)?.length, 1);
+  assert.match(source, /data:\s*asset\.data/u);
+  assert.match(source, /altText:\s*asset\.altText/u);
+  assert.doesNotMatch(source, /addImage\s*\(\s*\{[^}]*\bpath\s*:/su);
 });
 
 test("Bundled Bravura asset matches the reviewed 1.392 release", async () => {

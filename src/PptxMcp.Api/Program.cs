@@ -22,6 +22,8 @@ builder.Services.AddSingleton<ArtifactTokenService>();
 builder.Services.AddSingleton<RetentionPolicy>();
 builder.Services.AddSingleton<PptxPackageGuard>();
 builder.Services.AddSingleton<InputFileResolver>();
+builder.Services.AddSingleton<UploadedImageResolver>();
+builder.Services.AddSingleton<ImageAssetRepository>();
 builder.Services.AddSingleton<TemplateRegistry>();
 builder.Services.AddSingleton<BrandProfileCatalog>();
 builder.Services.AddSingleton<DesignBriefService>();

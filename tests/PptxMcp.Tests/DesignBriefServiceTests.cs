@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using System.Text.Json.Nodes;
 using PptxMcp.Design;
 using PptxMcp.Domain;
 using PptxMcp.Security;
@@ -10,6 +11,78 @@ namespace PptxMcp.Tests;
 public sealed class DesignBriefServiceTests
 {
     private static readonly CallerContext Caller = new("user-a", "conversation-a", "message-a");
+
+    [Fact]
+    public void AcceptsReadyUserUploadOnlyWithOpaqueAssetAndImageRecipe()
+    {
+        var root = BrandProfileTestFactory.CreateRoot();
+        BrandProfileTestFactory.WriteProfile(root);
+        var manifestPath = Path.Combine(root, "general", "brand-profile.json");
+        var manifest = JsonNode.Parse(File.ReadAllText(manifestPath))!.AsObject();
+        manifest["layout_recipes"]!.AsArray().Add(JsonNode.Parse(
+            """{"id":"media-balanced","purpose":"product","semantic_kind":"Media","variant":"split","density":"balanced","style_direction_id":"standard","required_asset_roles":["hero_image"],"sample_ids":[]}"""));
+        File.WriteAllText(manifestPath, manifest.ToJsonString());
+
+        try
+        {
+            var options = BrandProfileTestFactory.CreateOptions(root, requireDesignBrief: true);
+            var catalog = new BrandProfileCatalog(options);
+            var reference = GetReference(catalog);
+            var service = new DesignBriefService(options, TimeProvider.System, catalog);
+            var brief = new DesignBriefSpec(
+                "Product leaders",
+                "Explain the approved product experience.",
+                DesignDeliveryMode.Projection,
+                "Direct",
+                "balanced",
+                reference,
+                "standard",
+                "Use one verified product image.",
+                DesignSourcePolicy.ApprovedOrUserProvided,
+                2,
+                [new DesignAssumption("The user supplied the image.", DesignAssumptionStatus.Confirmed)],
+                []);
+            var ready = new AssetPlanItem(
+                2,
+                "product",
+                "media-balanced",
+                AssetVisualPurpose.Product,
+                AssetPreferredMedium.Photo,
+                AssetAcquisition.UserUpload,
+                AssetFallback.None,
+                AssetPlanStatus.Ready,
+                AssetLicenseStatus.UserProvided,
+                AttributionRef: "ATTR-001",
+                CropIntent: "focalRight",
+                AspectRatio: "landscape16x9",
+                TextSafeArea: "left",
+                AssetId: "0123456789abcdef0123456789abcdef");
+            var plan = new[]
+            {
+                new AssetPlanItem(
+                    1,
+                    "cover",
+                    "cover-airy",
+                    AssetVisualPurpose.None,
+                    AssetPreferredMedium.None,
+                    AssetAcquisition.None,
+                    AssetFallback.None,
+                    AssetPlanStatus.Omitted),
+                ready,
+            };
+
+            var validated = service.Validate(Caller, brief, plan);
+            Assert.Equal(1, validated.AssetPlanSummary.UserUploadReadyCount);
+
+            var missingAsset = Assert.Throws<PptxValidationException>(() =>
+                service.Validate(Caller, brief, [plan[0], ready with { AssetId = null }]));
+            Assert.Equal("asset_plan_user_upload_invalid", missingAsset.Code);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     [Fact]
     public void IssuesOpaqueBriefBoundToCallerConversationProfileAndCreativeDirection()

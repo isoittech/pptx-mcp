@@ -9,7 +9,7 @@
 ## 決定
 
 - `VisualDeckSpec` を安全な視覚言語として拡張する。
-- 21種類の意味レイアウトを提供する。初期17種類からの追加判断はADR 0011とADR 0014に記録する。
+- 22種類の意味レイアウトを提供する。初期17種類からの追加判断はADR 0011、ADR 0014、画像を扱う`Media`はADR 0016に記録する。
   - title、agenda、section、statement、bullets
   - cards、metrics、comparison、structuredBrief、scorecard、dataTable、musicScore
   - process、timeline

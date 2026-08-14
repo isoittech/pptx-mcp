@@ -128,7 +128,7 @@ public sealed record DesignBriefSpec(
     string StyleDirectionId,
     [property: JsonPropertyName("visual_strategy"), Description("Short explanation of how visuals, hierarchy, and composition support the story.")]
     string VisualStrategy,
-    [property: JsonPropertyName("source_policy"), Description("approvedOnly or approvedOrUserProvided. Phase 1 does not fetch web or generated images.")]
+    [property: JsonPropertyName("source_policy"), Description("approvedOnly or approvedOrUserProvided. The server never fetches web or generated images; userUpload requires approvedOrUserProvided.")]
     DesignSourcePolicy SourcePolicy,
     [property: JsonPropertyName("expected_slide_count"), Description("Exact final slide count that will be passed to pptx_start_visual_deck.")]
     int ExpectedSlideCount,
@@ -148,11 +148,11 @@ public sealed record AssetPlanItem(
     AssetVisualPurpose VisualPurpose,
     [property: JsonPropertyName("preferred_medium"), Description("photo, illustration, icon, nativeDiagram, chart, or none. acquisition=none requires preferred_medium=none.")]
     AssetPreferredMedium PreferredMedium,
-    [property: JsonPropertyName("acquisition"), Description("Phase-1 planning choice: nativeDraw, userUpload, approvedLibrary, or none. Exact no-asset combination: acquisition=none, preferred_medium=none, fallback=none, status=omitted, license_status=notRequired. This server does not insert images yet.")]
+    [property: JsonPropertyName("acquisition"), Description("Planning choice: nativeDraw, userUpload, approvedLibrary, or none. userUpload may be ready only with a verified asset_id. approvedLibrary still requires a fallback. Exact no-asset combination: acquisition=none, preferred_medium=none, fallback=none, status=omitted, license_status=notRequired.")]
     AssetAcquisition Acquisition,
     [property: JsonPropertyName("fallback"), Description("Safe fallback: nativeDraw, noAssetLayout, askUser, or none. IMPORTANT: acquisition=none requires fallback=none; noAssetLayout is only a fallbackSelected replacement for userUpload or approvedLibrary, never for acquisition=none.")]
     AssetFallback Fallback,
-    [property: JsonPropertyName("status"), Description("ready, needsUser, fallbackSelected, or omitted. acquisition=none requires omitted; nativeDraw requires ready; userUpload or approvedLibrary requires fallbackSelected in phase 1. A finalized plan cannot remain needsUser.")]
+    [property: JsonPropertyName("status"), Description("ready, needsUser, fallbackSelected, or omitted. acquisition=none requires omitted; nativeDraw requires ready; userUpload is ready only with a verified asset_id or otherwise fallbackSelected; approvedLibrary currently requires fallbackSelected. A finalized plan cannot remain needsUser.")]
     AssetPlanStatus Status,
     [property: JsonPropertyName("license_status"), Description("notRequired, approved, userProvided, unknown, or restricted. acquisition=none and nativeDraw require notRequired. Unknown or restricted assets must not be treated as usable.")]
     AssetLicenseStatus LicenseStatus = AssetLicenseStatus.NotRequired,
@@ -165,7 +165,9 @@ public sealed record AssetPlanItem(
     [property: JsonPropertyName("aspect_ratio"), Description("Optional aspect-ratio token: landscape16x9, landscape4x3, square1x1, portrait4x5, or flexible.")]
     string? AspectRatio = null,
     [property: JsonPropertyName("text_safe_area"), Description("Optional text-safe-area token: none, left, right, top, or bottom.")]
-    string? TextSafeArea = null);
+    string? TextSafeArea = null,
+    [property: JsonPropertyName("asset_id"), Description("Required opaque image asset ID when acquisition=userUpload and status=ready. Obtain it from pptx_register_uploaded_image_asset in the same conversation. Never provide a URL or path.")]
+    string? AssetId = null);
 
 public sealed record DesignBriefStyleAlternative(
     [property: JsonPropertyName("style_direction_id"), Description("Alternative style direction ID from the same immutable Brand Profile.")]
@@ -202,7 +204,8 @@ public sealed record DesignBriefSelectionCancellationView(
 public sealed record AssetPlanSummary(
     [property: JsonPropertyName("native_draw_count")] int NativeDrawCount,
     [property: JsonPropertyName("no_asset_count")] int NoAssetCount,
-    [property: JsonPropertyName("fallback_selected_count")] int FallbackSelectedCount);
+    [property: JsonPropertyName("fallback_selected_count")] int FallbackSelectedCount,
+    [property: JsonPropertyName("user_upload_ready_count")] int UserUploadReadyCount = 0);
 
 public sealed record BrandProfileCatalogSummary(
     [property: JsonPropertyName("id")] string Id,
@@ -361,7 +364,8 @@ public sealed record VisualSlideAssetAudit(
     [property: JsonPropertyName("attribution_ref")] string? AttributionRef,
     [property: JsonPropertyName("crop_intent")] string? CropIntent,
     [property: JsonPropertyName("aspect_ratio")] string? AspectRatio,
-    [property: JsonPropertyName("text_safe_area")] string? TextSafeArea);
+    [property: JsonPropertyName("text_safe_area")] string? TextSafeArea,
+    [property: JsonPropertyName("asset_id")] string? AssetId = null);
 
 public sealed class CamelCaseJsonStringEnumConverter<TEnum>()
     : JsonStringEnumConverter<TEnum>(JsonNamingPolicy.CamelCase, allowIntegerValues: false)

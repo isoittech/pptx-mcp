@@ -6,6 +6,57 @@ namespace PptxMcp.Tests;
 public sealed class VisualDeckValidatorTests
 {
     [Fact]
+    public void AcceptsVerifiedMediaSplitAndRejectsPlaceholderOnlyMedia()
+    {
+        var verified = new VisualDeckSpec(
+            "製品紹介",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Media,
+                    "製品の利用場面",
+                    Body: "現場での利用イメージ",
+                    Variant: "split",
+                    Media: new VisualMediaSpec(
+                        "0123456789abcdef0123456789abcdef",
+                        "focalRight",
+                        "left",
+                        "承認済みの利用イメージ")),
+            ],
+            RendererContract: "visual-v5");
+        VisualDeckValidator.Validate(verified, 50);
+
+        var placeholder = verified with
+        {
+            Slides = [verified.Slides[0] with { Media = null }],
+        };
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(placeholder, 50));
+
+        Assert.Equal("visual_content_missing", error.Code);
+    }
+
+    [Theory]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF", "cover", "left", "visual_media_asset_id_invalid")]
+    [InlineData("0123456789abcdef0123456789abcdef", "automatic", "left", "visual_media_crop_invalid")]
+    [InlineData("0123456789abcdef0123456789abcdef", "cover", "center", "visual_media_text_position_invalid")]
+    public void RejectsInvalidMediaTokens(string assetId, string crop, string textPosition, string code)
+    {
+        var deck = new VisualDeckSpec(
+            "画像契約",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Media,
+                    "画像",
+                    Variant: "split",
+                    Media: new VisualMediaSpec(assetId, crop, textPosition)),
+            ],
+            RendererContract: "visual-v5");
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal(code, error.Code);
+    }
+
+    [Fact]
     public void AppliesCorporateThemeWithoutDiscardingCreativeDirection()
     {
         var deck = new VisualDeckSpec(

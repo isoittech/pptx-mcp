@@ -13,7 +13,8 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 名前付きシェイプを持つ企業テンプレートへのテキスト流し込み
 - 企業テンプレート内で編集可能な実箇条書き・自動採番・0〜4段階のインデントを生成
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
-- 白紙から意味ベースの21レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
+- 白紙から意味ベースの22レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
+- ユーザー提供JPEG/PNGを会話scope付きopaque assetへ無害化登録し、`Media/split`へcrop・代替テキスト・出典付きで埋め込み
 - 文字量の多い説明を2〜3列へ構造化する `structuredBrief`、評価軸×選択肢の `scorecard`、汎用の `dataTable` を編集可能なPowerPoint表として生成
 - `density=detailed` で外周余白、見出し領域、罫線、カード影、内部間隔を一体的に切り替える高密度デザイン
 - 企業テンプレートのマスター、ロゴ、フッター、ページ設定を保ち、テーマを自動抽出して意味ベースのVisual Deckを合成
@@ -72,13 +73,14 @@ PPTX_MCP_REQUIRE_DESIGN_BRIEF=false
 
 `pptx_get_design_catalog`は無引数でcompactなprofile一覧だけを返します。recipeとsample要約は、その一覧から選んだ正確なprofile IDを必ず指定し、必要に応じて用途、密度、style directionで絞った2回目の呼出しで取得します。profile IDなしの絞り込みは、全profileの詳細が一度に膨張しないよう拒否します。manifest bytesと任意の検査済みsample thumbnail hashを合成したSHA-256を`content_hash`として返し、起動中は検証済みsnapshotを変更しません。
 
-`RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。第2段階もPPTXへの外部画像挿入は行わないため、`userUpload`または`approvedLibrary`を計画する場合だけ、`status=fallbackSelected`と`nativeDraw`または`noAssetLayout`のfallback、外部画像を必須としないrecipeを確定してください。任意URL、任意パス、画像バイナリはMCP入力へ渡せません。OSS既定は互換性のため`false`です。
+`RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。ユーザー提供JPEG/PNGを使う場合は、先に`pptx_register_uploaded_image_asset`で会話scope付きassetへ登録し、`userUpload`、`ready`、`userProvided`、`fallback=none`、返された`asset_id`、crop、text safe area、画像必須Media recipeを指定します。未登録userUploadと`approvedLibrary`は引き続き`fallbackSelected`と`nativeDraw`または`noAssetLayout`の画像不要recipeへ切り替えます。任意URL、任意パス、画像バイナリはMCP入力へ渡せません。OSS既定は互換性のため`false`です。
 
 方向選択が結果へ大きく影響し、実効的に異なる案が2件以上ある場合だけ、`pptx_prepare_design_brief`でDesign Briefカードを表示できます。利用者が推奨案・別案・画像を使わない別構成から選ぶと、固定intentのopaque IDを`pptx_apply_design_brief_action`がserver側で照合し、選択済み`brief_id`だけをstart可能にします。カードpending中はoptional構成でもvalidate/startを拒否します。カードが表示できない場合は、引数なしの`pptx_cancel_design_brief_selection`で未選択状態だけを破棄してsafe defaultへ戻せます。bundleの正確なschemaは[Brand Profile bundle](docs/brand-profiles.md)、基礎判断は[ADR 0013](docs/adr/0013-external-brand-profiles-and-design-brief-gate.md)、選択UIと状態境界は[ADR 0015](docs/adr/0015-design-brief-selection-ui-resource.md)を参照してください。
 
 ## MCPツール
 
 - `pptx_get_capabilities`
+- `pptx_register_uploaded_image_asset`
 - `pptx_get_design_catalog`
 - `pptx_validate_design_brief`
 - `pptx_prepare_design_brief`
@@ -104,7 +106,7 @@ PPTX_MCP_REQUIRE_DESIGN_BRIEF=false
 
 処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大2巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
 
-新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none` の場合だけ白紙生成になります。
+新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`media`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none` の場合だけ白紙生成になります。
 
 長い説明を1つの本文枠へ押し込まず、見出しだけでも要点を追える2〜3個の `sections` に分ける場合は `structuredBrief` を使います。セクション合計は900文字までです。3セクション・600文字未満では上段の主論点と下段2論点からなるモザイクへ自動変更し、短い内容ほど本文と箇条書きを拡大します。600文字以上では3列を使い、情報量に合わない大きな空箱を避けます。複数案を評価軸で比べる場合は `scorecard` を使い、2〜4個の `options` と2〜6行の `criteria` を指定します。各評価セルは短い判定、根拠、意味色を持ち、成果物では編集可能なPowerPointネイティブ表になります。文字量が多い資料では `design.density=detailed` を指定すると、フォントだけを縮小せず、余白、タイトル領域、内部間隔、細い罫線、影なしカードをまとめて切り替えます。
 
@@ -138,4 +140,4 @@ cd visual-renderer
 npm audit --omit=dev
 ```
 
-2026-08-08時点ではPptxGenJSの推移依存`image-size`に、修正版未公開のICNS/JXL/HEIF解析DoSが報告されます。Visual Deckは画像、URL、ローカルパスを入力として受け取らず、レンダラーも`addImage`を使用しないため該当パーサーへ到達しません。この境界はNodeテストで固定しています。修正版が公開されたらロックファイルを更新してください。
+2026-08-14時点ではPptxGenJSの推移依存`image-size`に、修正版未公開のICNS/JXL/HEIF解析DoSが報告されます。公開画像toolはJPEG/PNGだけを別processのSharpでdecodeし、metadataなしのPNGへ正規化します。Visual rendererはserver-owned hash、PNG signature、IHDR、宣言寸法を再検証したbytesだけを`addImage`へ渡し、URL、path、ICNS/JXL/HEIF原本へ到達しません。この限定境界をNodeテストで固定し、修正版公開後にロックファイルを更新してください。
