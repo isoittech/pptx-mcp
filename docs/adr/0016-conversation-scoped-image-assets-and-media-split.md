@@ -14,6 +14,7 @@ Asset Planは写真・イラストの必要性、取得元、権利、crop、tex
 
 - 第1縦切りは`userUpload`のJPEG/PNGと、単一画像を使う`Media/split`に限定する。approved library、Web取得、画像生成、複数画像galleryは別段階とする。
 - 公開tool `pptx_register_uploaded_image_asset`はLibreChatのopaque `file_id`または`latest`、代替テキスト、任意のopaque attribution IDだけを受け取る。URL、path、ファイル名、画像bytes、自由形式の出典URLを受け取らない。
+- LibreChatのmessage attachment画像は通常の文書uploadとは別の`images/<user-id>/`へ保存される。導入環境は画像rootと文書upload rootを別々に読み取り専用mountし、resolverは両方の同一caller user ID配下だけを探索する。
 - uploadはtrusted callerのuser ID配下だけを参照し、regular file、symlinkなし、opaque ID、拡張子、JPEG/PNG signature、12MiB上限を検証する。
 - 原本はserver-owned Node 20 + Sharpでdecodeし、単一frame、20Mpx以下、長辺2560px以下へ制限する。orientationを反映し、sRGB・metadataなしのPNGへ変換する。PPTXへ原本を直接渡さない。
 - 無害化済みPNG、幅、高さ、SHA-256、alt text、acquisition、license status、opaque attribution、user scope hash、conversation scope hash、作成・失効時刻をserver-owned storageへ保存する。asset IDはlowercase 32 hexとし、保持期間はjob既定と同じ7日、期限後は定期削除する。
@@ -55,4 +56,4 @@ Asset Planは写真・イラストの必要性、取得元、権利、crop、tex
 - user/conversation/expiry、asset ID tamper、SHA-256不一致、合計size上限をtestする。
 - `Media/split`のOpen XMLへembedded image relationship、alt text、crop rectがあり、external relationshipがないことをtestする。
 - placeholder-only Media、Asset Plan不一致、refineでのasset/crop/text position変更を拒否する。
-- runtime containerでregister→Design Brief→draft→finish→LibreOffice previewをE2Eし、PowerPoint修復警告相当のOpen XML検証を通す。
+- runtime containerでLibreChatの実message attachment rootからregister→Design Brief→draft→finish→LibreOffice previewをE2Eし、PowerPoint修復警告相当のOpen XML検証を通す。

@@ -20,24 +20,14 @@ public sealed partial class UploadedImageResolver(IOptions<PptxMcpOptions> optio
             throw InvalidFileId();
         }
 
-        var uploadsRoot = Path.GetFullPath(options.LibreChatUploadsRoot);
-        var rootPrefix = uploadsRoot + Path.DirectorySeparatorChar;
-        var userDirectory = Path.GetFullPath(Path.Combine(uploadsRoot, caller.UserId));
-        if (!userDirectory.StartsWith(rootPrefix, StringComparison.Ordinal)
-            || !Directory.Exists(userDirectory)
-            || new DirectoryInfo(userDirectory).LinkTarget is not null)
-        {
-            throw new PptxValidationException("image_file_not_found", "The uploaded JPEG or PNG image was not found.");
-        }
-
         var latest = string.Equals(fileId, "latest", StringComparison.OrdinalIgnoreCase);
         if (!latest && !SafeIdentifier().IsMatch(fileId))
         {
             throw InvalidFileId();
         }
 
-        var candidates = Directory
-            .EnumerateFiles(userDirectory, "*", SearchOption.TopDirectoryOnly)
+        var candidates = ResolveUserDirectories(caller.UserId)
+            .SelectMany(userDirectory => Directory.EnumerateFiles(userDirectory, "*", SearchOption.TopDirectoryOnly))
             .Where(IsRegularImageUpload)
             .Where(path => latest || FileIdFromName(path).Equals(fileId, StringComparison.Ordinal))
             .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc)
@@ -71,6 +61,23 @@ public sealed partial class UploadedImageResolver(IOptions<PptxMcpOptions> optio
                 "The upload extension must match its JPEG or PNG contents.");
         }
         return new ValidatedImageUpload(file.FullName, file.Length, FileIdFromName(file.FullName), mediaType);
+    }
+
+    private IEnumerable<string> ResolveUserDirectories(string userId)
+    {
+        foreach (var configuredRoot in new[] { options.LibreChatImagesRoot, options.LibreChatUploadsRoot }
+                     .Distinct(StringComparer.Ordinal))
+        {
+            var root = Path.GetFullPath(configuredRoot);
+            var rootPrefix = root + Path.DirectorySeparatorChar;
+            var userDirectory = Path.GetFullPath(Path.Combine(root, userId));
+            if (userDirectory.StartsWith(rootPrefix, StringComparison.Ordinal)
+                && Directory.Exists(userDirectory)
+                && new DirectoryInfo(userDirectory).LinkTarget is null)
+            {
+                yield return userDirectory;
+            }
+        }
     }
 
     private static bool IsRegularImageUpload(string path)

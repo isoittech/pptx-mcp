@@ -14,6 +14,8 @@ public sealed class PptxMcpOptions
 
     public string LibreChatUploadsRoot { get; init; } = "/data/librechat-uploads";
 
+    public string LibreChatImagesRoot { get; init; } = "/data/librechat-images";
+
     public string TemplatesRoot { get; init; } = "/data/pptx-templates";
 
     public string DefaultTemplateId { get; init; } = string.Empty;
@@ -93,6 +95,13 @@ public sealed class PptxMcpOptions
         if (!Path.IsPathFullyQualified(ImageSanitizerPath))
         {
             throw new InvalidOperationException("PptxMcp:ImageSanitizerPath must be an absolute path.");
+        }
+
+        if (!Path.IsPathFullyQualified(LibreChatUploadsRoot)
+            || !Path.IsPathFullyQualified(LibreChatImagesRoot))
+        {
+            throw new InvalidOperationException(
+                "PptxMcp LibreChat upload roots must be absolute paths.");
         }
 
         if (MaxImageFileBytes is <= 0 or > 30L * 1024 * 1024

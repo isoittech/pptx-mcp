@@ -59,6 +59,41 @@ public sealed class ImageAssetRepositoryTests
     }
 
     [Fact]
+    public async Task UploadedImageResolverUsesLibreChatMessageImageRoot()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"pptx-message-image-{Guid.NewGuid():N}");
+        var imagesRoot = Path.Combine(root, "images");
+        var userDirectory = Path.Combine(imagesRoot, "user-a");
+        Directory.CreateDirectory(userDirectory);
+        var options = Options.Create(new PptxMcpOptions
+        {
+            LibreChatImagesRoot = imagesRoot,
+            LibreChatUploadsRoot = Path.Combine(root, "uploads"),
+            StorageRoot = Path.Combine(root, "storage"),
+        });
+        var resolver = new UploadedImageResolver(options);
+        var caller = new CallerContext("user-a", "conversation-a", null);
+        const string fileId = "81a85f9b-cf73-4950-ac25-c63c96694473";
+
+        try
+        {
+            var imagePath = Path.Combine(userDirectory, $"{fileId}__subtle-upload.png");
+            await File.WriteAllBytesAsync(imagePath, [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+
+            var explicitImage = await resolver.ResolveAsync(caller, fileId, CancellationToken.None);
+            var latestImage = await resolver.ResolveAsync(caller, "latest", CancellationToken.None);
+
+            Assert.Equal(fileId, explicitImage.FileId);
+            Assert.Equal(imagePath, explicitImage.Path);
+            Assert.Equal(fileId, latestImage.FileId);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task StoredAssetIsBoundToUserConversationAndExpiry()
     {
         var root = Path.Combine(Path.GetTempPath(), $"pptx-image-asset-{Guid.NewGuid():N}");

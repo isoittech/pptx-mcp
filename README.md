@@ -32,7 +32,7 @@ SmartArtノード、グラフデータ、埋め込みExcel、既存デッキの�
 
 ## 起動
 
-1. `.env.example` を `.env` にコピーし、共有秘密は24文字以上、署名鍵は32文字以上の独立したランダム値に置き換え、LibreChat のアップロードディレクトリを設定します。
+1. `.env.example` を `.env` にコピーし、共有秘密は24文字以上、署名鍵は32文字以上の独立したランダム値に置き換え、LibreChat の文書uploadとmessage attachment画像の各ディレクトリを読み取り専用で設定します。
 2. `docker compose build` を実行します。
 3. `docker compose up -d pptx-mcp` を実行します。
 4. `integrations/librechat/librechat.fragment.yaml` の内容を LibreChat 設定へ統合します。
@@ -74,6 +74,8 @@ PPTX_MCP_REQUIRE_DESIGN_BRIEF=false
 `pptx_get_design_catalog`は無引数でcompactなprofile一覧だけを返します。recipeとsample要約は、その一覧から選んだ正確なprofile IDを必ず指定し、必要に応じて用途、密度、style directionで絞った2回目の呼出しで取得します。profile IDなしの絞り込みは、全profileの詳細が一度に膨張しないよう拒否します。manifest bytesと任意の検査済みsample thumbnail hashを合成したSHA-256を`content_hash`として返し、起動中は検証済みsnapshotを変更しません。
 
 `RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。ユーザー提供JPEG/PNGを使う場合は、先に`pptx_register_uploaded_image_asset`で会話scope付きassetへ登録し、`userUpload`、`ready`、`userProvided`、`fallback=none`、返された`asset_id`、crop、text safe area、画像必須Media recipeを指定します。未登録userUploadと`approvedLibrary`は引き続き`fallbackSelected`と`nativeDraw`または`noAssetLayout`の画像不要recipeへ切り替えます。任意URL、任意パス、画像バイナリはMCP入力へ渡せません。OSS既定は互換性のため`false`です。
+
+LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書uploadが`uploads/<user-id>/`へ分かれます。導入環境は`PptxMcp__LibreChatImagesRoot`と`PptxMcp__LibreChatUploadsRoot`を別々に読み取り専用mountしてください。MCP入力はどちらのpathも受け取らず、信頼済みcaller user scopeとopaque file IDだけで解決します。
 
 方向選択が結果へ大きく影響し、実効的に異なる案が2件以上ある場合だけ、`pptx_prepare_design_brief`でDesign Briefカードを表示できます。利用者が推奨案・別案・画像を使わない別構成から選ぶと、固定intentのopaque IDを`pptx_apply_design_brief_action`がserver側で照合し、選択済み`brief_id`だけをstart可能にします。カードpending中はoptional構成でもvalidate/startを拒否します。カードが表示できない場合は、引数なしの`pptx_cancel_design_brief_selection`で未選択状態だけを破棄してsafe defaultへ戻せます。bundleの正確なschemaは[Brand Profile bundle](docs/brand-profiles.md)、基礎判断は[ADR 0013](docs/adr/0013-external-brand-profiles-and-design-brief-gate.md)、選択UIと状態境界は[ADR 0015](docs/adr/0015-design-brief-selection-ui-resource.md)を参照してください。
 

@@ -36,7 +36,7 @@ RUN apt-get update \
         libreoffice-impress \
         poppler-utils \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /data/pptx-mcp /data/librechat-uploads \
+    && mkdir -p /data/pptx-mcp /data/librechat-uploads /data/librechat-images \
     && chown -R app:app /data/pptx-mcp
 WORKDIR /app
 COPY --from=publish /app/publish .
