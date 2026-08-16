@@ -141,9 +141,24 @@ thumbnailはmetadataを持たないnon-interlaced PNG derivativeだけを使い�
 
 この技術検査は権利・機密承認ではありません。現catalogにprofile単位ACLはないため、対象deploymentの全PowerPoint利用者へ表示・配布してよい、非機密で権利確認済みのderivativeだけを登録してください。data URIは会話hostへ渡った後、Design Briefの有効期限だけでは削除されません。hostの保持・共有policyも満たす必要があります。元PPTX、人物・製品画像、社内限定sampleを無条件にthumbnail化しないでください。
 
-第2段階もthumbnailをPPTXへ挿入せず、Webや承認済みライブラリから画像を取得しません。`required_asset_roles`を持つrecipeはcatalogへ登録できますが、外部画像を挿入できる安全なfile ID経路が実装されるまでは、Design Briefにそのrecipeを確定できません。`nativeDraw`または画像なしで成立する別recipeを選んでください。
+sample thumbnailはPPTXへ挿入せず、model/rendererの学習入力にも使いません。Webや承認済みライブラリからの画像取得も行いません。一方、[ADR 0016](adr/0016-conversation-scoped-image-assets-and-media-split.md)以降は、LibreChatへユーザーが添付したJPEG/PNGだけを`pptx_register_uploaded_image_asset`で会話scope付き・metadataなしPNGへ登録できます。登録済み`asset_id`を使う`Media/split` recipeは`required_asset_roles`を1件以上持たせ、Asset Planを`userUpload`、`ready`、`userProvided`、`fallback=none`、crop、`text_safe_area=left|right`で確定します。
 
-Asset Planで素材を使わないページを表す正規形は、`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`です。asset metadataは省略し、`required_asset_roles`が空のrecipeを選びます。`noAssetLayout`は「素材なし」の別名ではありません。`userUpload`または`approvedLibrary`を計画したものの、第1段階では挿入せず画像なしrecipeへ切り替える項目に限り、`status=fallbackSelected`と組み合わせて使います。
+Asset Planで素材を使わないページを表す正規形は、`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`です。asset metadataは省略し、`required_asset_roles`が空のrecipeを選びます。`noAssetLayout`は「素材なし」の別名ではありません。未登録`userUpload`または現時点で解決未対応の`approvedLibrary`を画像なしrecipeへ切り替える項目に限り、`status=fallbackSelected`と組み合わせます。登録済み`userUpload`を実際に使う場合は`fallback=none`です。
+
+最小の画像recipe例は次の通りです。会社名、内部URL、実asset IDはbundleへ保存しません。
+
+```json
+{
+  "id": "product-media-balanced",
+  "purpose": "product",
+  "semantic_kind": "Media",
+  "variant": "split",
+  "density": "balanced",
+  "style_direction_id": "standard",
+  "required_asset_roles": ["hero_image"],
+  "sample_ids": []
+}
+```
 
 ## 反映と更新
 

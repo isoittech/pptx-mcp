@@ -8,7 +8,8 @@ namespace PptxMcp.Jobs;
 
 public sealed class VisualDeckDraftService(
     IOptions<PptxMcpOptions> options,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ImageAssetRepository? imageAssets = null)
 {
     public const int MaximumBatchSlides = 4;
     private const int MaximumActiveDrafts = 128;
@@ -140,6 +141,7 @@ public sealed class VisualDeckDraftService(
             }
 
             ValidateBrandRecipes(current, slides, expectedStart);
+            ValidateImageAssets(caller, current, slides, expectedStart);
 
             var combined = current.Slides.Concat(slides).ToArray();
             if (combined.Length > current.ExpectedSlideCount)
@@ -327,7 +329,8 @@ public sealed class VisualDeckDraftService(
                 pair.Value.AttributionRef,
                 pair.Value.CropIntent,
                 pair.Value.AspectRatio,
-                pair.Value.TextSafeArea))
+                pair.Value.TextSafeArea,
+                pair.Value.AssetId))
             .ToArray();
         var audit = new VisualDeckDesignBriefAudit(
             draft.DesignBrief.Brief.SourcePolicy,
@@ -458,6 +461,52 @@ public sealed class VisualDeckDraftService(
                 throw new PptxValidationException(
                     "visual_slide_recipe_variant_mismatch",
                     $"Slide {slideNumber}.variant must be {recipe.Variant} for recipe {recipe.Id}.");
+            }
+        }
+    }
+
+    private void ValidateImageAssets(
+        CallerContext caller,
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides,
+        int startSlideNumber)
+    {
+        for (var index = 0; index < slides.Count; index++)
+        {
+            var slideNumber = startSlideNumber + index;
+            var slide = slides[index];
+            if (slide.Media is null)
+            {
+                if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var missingMediaPlan) == true
+                    && missingMediaPlan.AssetId is not null)
+                {
+                    throw new PptxValidationException(
+                        "visual_media_required",
+                        $"Slide {slideNumber} must include media.assetId={missingMediaPlan.AssetId}; an empty image placeholder is not a completed slide.");
+                }
+
+                continue;
+            }
+
+            if (imageAssets is null)
+            {
+                throw new PptxValidationException(
+                    "visual_media_unavailable",
+                    "Image asset resolution is unavailable in this server configuration.");
+            }
+
+            var asset = imageAssets.GetOwned(caller, slide.Media.AssetId);
+            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true)
+            {
+                if (!string.Equals(plan.AssetId, slide.Media.AssetId, StringComparison.Ordinal)
+                    || !string.Equals(plan.CropIntent, slide.Media.CropIntent, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(plan.TextSafeArea, slide.Media.TextPosition, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(plan.AttributionRef, asset.AttributionRef, StringComparison.Ordinal))
+                {
+                    throw new PptxValidationException(
+                        "visual_media_asset_plan_mismatch",
+                        $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
+                }
             }
         }
     }

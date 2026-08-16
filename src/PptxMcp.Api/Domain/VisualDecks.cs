@@ -28,6 +28,7 @@ public enum VisualSlideKind
     StructuredBrief,
     Scorecard,
     DataTable,
+    Media,
     MusicScore,
 }
 
@@ -119,16 +120,28 @@ public sealed record VisualSlideSpec(
     IReadOnlyList<VisualBriefSectionSpec>? Sections = null,
     [property: Description("Editable comparison table for a scorecard slide. Each criterion must have exactly one cell per option.")]
     VisualScorecardSpec? Scorecard = null,
-    [property: Description("Implemented layout variant. Use auto normally; split only for Bullets with at least four bullets and no takeaway; spotlight only for Metrics with exactly three metrics or Cards with three to four cards; editorial only for StructuredBrief with exactly three sections.")]
+    [property: Description("Implemented layout variant. Use auto normally; split for Media with one verified image asset or Bullets with at least four bullets and no takeaway; spotlight only for Metrics with exactly three metrics or Cards with three to four cards; editorial only for StructuredBrief with exactly three sections.")]
     string Variant = "auto",
     [property: Description("Editable native standard-notation and ukulele TAB score for a music_score slide. Use semantic pitches, durations, strings, frets, and fingers instead of coordinates.")]
     VisualMusicScoreSpec? MusicScore = null,
     [property: Description("Editable general-purpose table for a data_table slide. Column headers and every row must use the same cell count.")]
     VisualDataTableSpec? DataTable = null,
+    [property: Description("Verified user-uploaded image content for a media slide. The assetId is opaque and conversation-bound; placeholders, URLs, and paths are never valid substitutes.")]
+    VisualMediaSpec? Media = null,
     [property: Description("Optional per-slide information density override: airy, balanced, or detailed. Omit to inherit deck design.density.")]
     string? Density = null,
     [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
     string? RecipeId = null);
+
+public sealed record VisualMediaSpec(
+    [property: Description("Opaque asset_id returned by pptx_register_uploaded_image_asset in the same user and conversation scope.")]
+    string AssetId,
+    [property: Description("Crop intent: contain, cover, focalCenter, focalLeft, or focalRight.")]
+    string CropIntent = "cover",
+    [property: Description("Text column position for split media: left or right. The image occupies the opposite side.")]
+    string TextPosition = "left",
+    [property: Description("Optional short caption shown next to the image. The registered asset alt text remains the accessibility description.")]
+    string? Caption = null);
 
 public sealed record VisualMusicScoreSpec(
     [property: Description("One to eight measures in reading order. A slide may contain at most 64 events in total.")]
@@ -426,6 +439,21 @@ public static partial class VisualDeckValidator
         "automation",
     };
 
+    private static readonly HashSet<string> MediaCropIntents = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "contain",
+        "cover",
+        "focalCenter",
+        "focalLeft",
+        "focalRight",
+    };
+
+    private static readonly HashSet<string> MediaTextPositions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "left",
+        "right",
+    };
+
     private static readonly HashSet<string> SlideVariants = new(StringComparer.OrdinalIgnoreCase)
     {
         "auto",
@@ -586,6 +614,7 @@ public static partial class VisualDeckValidator
             + (slide.Steps?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Label?.Length ?? 0)) ?? 0)
             + (slide.Cards?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Value?.Length ?? 0)) ?? 0)
             + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0)
+            + (slide.Media?.Caption?.Length ?? 0)
             + (slide.MusicScore?.Caption?.Length ?? 0)
             + (slide.MusicScore?.Measures.Sum(static measure =>
                 measure.Events.Sum(static item => item.Annotation?.Length ?? 0)) ?? 0);
@@ -828,6 +857,7 @@ public static partial class VisualDeckValidator
             slide.Density ?? deckDensity ?? "balanced",
             !string.IsNullOrWhiteSpace(slide.Takeaway));
         ValidateMatrix(slide.Matrix, prefix);
+        ValidateMedia(slide.Media, prefix);
         ValidateMusicScore(slide.MusicScore, prefix);
 
         ValidateChart(slide.Chart, prefix);
@@ -877,9 +907,43 @@ public static partial class VisualDeckValidator
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.scorecard is required for a scorecard slide.");
             case VisualSlideKind.DataTable when slide.DataTable is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.dataTable is required for a dataTable slide.");
+            case VisualSlideKind.Media when slide.Media is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.media with a verified assetId is required for a Media slide; placeholders are not accepted.");
             case VisualSlideKind.MusicScore when slide.MusicScore is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.musicScore is required for a musicScore slide.");
         }
+    }
+
+    private static void ValidateMedia(VisualMediaSpec? media, string prefix)
+    {
+        if (media is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.media";
+        if (!ImageAssetIdRegex().IsMatch(media.AssetId))
+        {
+            throw new PptxValidationException(
+                "visual_media_asset_id_invalid",
+                $"{path}.assetId must be the lowercase opaque asset_id returned by pptx_register_uploaded_image_asset.");
+        }
+
+        if (!MediaCropIntents.Contains(media.CropIntent))
+        {
+            throw new PptxValidationException(
+                "visual_media_crop_invalid",
+                $"{path}.cropIntent must be contain, cover, focalCenter, focalLeft, or focalRight.");
+        }
+
+        if (!MediaTextPositions.Contains(media.TextPosition))
+        {
+            throw new PptxValidationException(
+                "visual_media_text_position_invalid",
+                $"{path}.textPosition must be left or right.");
+        }
+
+        ValidateOptionalText(media.Caption, $"{path}.caption", 160);
     }
 
     private static void ValidateMusicScore(VisualMusicScoreSpec? musicScore, string prefix)
@@ -982,7 +1046,8 @@ public static partial class VisualDeckValidator
 
         var supported = variant.ToLowerInvariant() switch
         {
-            "split" => slide.Kind == VisualSlideKind.Bullets
+            "split" => slide.Kind == VisualSlideKind.Media
+                || slide.Kind == VisualSlideKind.Bullets
                 && slide.Bullets?.Count >= 4
                 && string.IsNullOrWhiteSpace(slide.Takeaway),
             "spotlight" => slide.Kind == VisualSlideKind.Metrics
@@ -1671,6 +1736,9 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("\\A[A-Za-z0-9_-]{1,128}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex OpaqueIdentifierRegex();
+
+    [GeneratedRegex("\\A[0-9a-f]{32}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ImageAssetIdRegex();
 
     [GeneratedRegex("^(?:[1-9][0-9]?)/(?:1|2|4|8|16)$", RegexOptions.CultureInvariant)]
     private static partial Regex MusicTimeSignatureRegex();

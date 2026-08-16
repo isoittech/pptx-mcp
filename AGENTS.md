@@ -22,7 +22,7 @@
 - PPTX 操作は `IPresentationEngine` の背後に置き、Open XML 実装と将来の商用エンジンを交換可能にする。
 - LibreOffice は表示確認用レンダリングに限定し、編集には使用しない。
 - 白紙生成は `VisualDeckSpec` を固定PptxGenJSレンダラーへ渡す。任意JavaScript、任意座標、URL、ローカルパスをツール入力へ追加しない。
-- `VisualDeckSpec` は21種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
+- `VisualDeckSpec` は22種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
 - 楽譜は`MusicScore`へ音高・音価・ウクレレ弦・フレット・指番号を渡し、PowerPointネイティブの線・図形・テキストで五線譜とTABを描く。任意座標を公開せず、音高と調弦・弦・フレットの一致を検証する。音楽記号は同梱したBravura 1.392の輪郭を`custGeom`へ変換し、手描き近似、画像貼付、閲覧側フォント依存へ戻さない。OTFとSIL OFL原文は必ず一緒に更新する。
 - 文字量の多い説明は`StructuredBrief`の2〜3セクションへ分け、評価軸×選択肢は`Scorecard`の編集可能なPowerPoint表にする。`density=detailed`はフォント縮小だけで実装せず、外周余白、見出し領域、間隔、罫線、影を一体で切り替える。
 - `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。
@@ -35,7 +35,7 @@
 - デザイン方向が結果へ大きく影響し、実効renderer fingerprintが異なる案を2件以上出せる場合だけ、`pptx_prepare_design_brief`→UI Resourceでturn終了→固定`pptx.designBrief.select` intent→`pptx_apply_design_brief_action`の順にする。候補は最大3件、clientからは`choiceSessionId`と`optionId`だけを受け、pending中はoptional構成でもvalidate/startを拒否する。明確な依頼や1案だけなら従来のvalidateへ直行する。カード非表示または利用者がsafe defaultを明示した場合だけ、引数なしの`pptx_cancel_design_brief_selection`で未選択pendingを破棄する。選択済みは取消不可とする。詳細はADR 0015を参照する。
 - Brand sample thumbnailは`sample-thumbnails/<sample-id>.png`の検査済みnon-interlaced PNGだけをUI確認用に任意読込する。model/renderer入力やPPTX素材へ使わず、任意URL・JPEG・path・symlink・metadata chunkを拒否する。profile単位ACLはないため、対象deploymentの全利用者へ配布承認済み・非機密・権利確認済みのderivativeだけを登録する。技術検査を権利承認と呼ばない。
 - 複数のBrand sample thumbnailは16:9なら960x540程度を基準にする。1profile全体の6Mpx上限は各画像の上限とは別に適用され、1280x720を9枚置く構成は起動時検証で拒否される。
-- Design Briefを使うdraftは全ページのAsset Planとlayout recipeを固定し、add時に`recipeId`、意味layout、密度、実装済みvariantを照合する。画像挿入未実装の段階では`userUpload`や`approvedLibrary`を完成素材として扱わず、nativeDrawまたは画像なしlayoutのfallbackと外部素材を必須としないrecipeを確定する。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`の組合せにし、`noAssetLayout`は`userUpload`または`approvedLibrary`の`fallbackSelected`にだけ使う。
+- Design Briefを使うdraftは全ページのAsset Planとlayout recipeを固定し、add時に`recipeId`、意味layout、密度、実装済みvariantを照合する。`userUpload`画像を使う場合は先に`pptx_register_uploaded_image_asset`で会話scope付きassetへ登録し、`ready`、`userProvided`、`fallback=none`、`asset_id`、crop、text safe area、画像必須`Media/split` recipeを固定する。未登録uploadと`approvedLibrary`はnativeDrawまたは画像なしlayoutのfallbackへ切り替える。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`の組合せにし、`noAssetLayout`は`userUpload`または`approvedLibrary`の`fallbackSelected`にだけ使う。
 - 完成したprofile-bound deckには秘密を含まないDesign Brief監査snapshotとページrecipe契約を保存する。refineでは元ページの`recipeId`、kind、実効density、variantと監査snapshotを保持し、第1段階のinsertは新規Asset Planを検証できないため拒否する。期限付き`brief_id`はjob payloadへ保存しない。
 - Design Brief監査には`selection_source=agentDefault|userCard`だけを保存し、choice session、option、nonce、brief IDをjob payloadへ残さない。旧payloadでfieldが欠落する場合は`agentDefault`として読む。
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。通常の欠け・重なりに加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。
@@ -73,7 +73,9 @@
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
 - PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルート、表セル、グラフを正規化し、`node_modules`を直接改変しない。
 - PptxGenJSへ負の`w`/`h`を渡すと`a:ext`へ負値をそのまま書き、Open XML検証に失敗する。右上・左上へ向かう線分は、正の幅・高さと`flipH`/`flipV`へ正規化して描画し、`PptxGenJsOpenXmlNormalizer`でも負のshape extentを位置移動＋反転属性へ補正する回帰テストを維持する。
-- PptxGenJS 4.0.1が依存する`image-size` 1.2.1には2026-08-08時点で修正版のないICNS/JXL/HEIFの無限ループDoSがある。Visual Deckレンダラーは画像入力と`addImage`を公開・使用しないため脆弱な解析経路へ到達しない状態をテストで固定し、修正版公開後に更新する。画像入力を追加する場合は先にこの依存を解消する。
+- PptxGenJS 4.0.1が依存する`image-size` 1.2.1には2026-08-08時点で修正版のないICNS/JXL/HEIFの無限ループDoSがある。画像登録toolはJPEG/PNGだけをSharpでmetadataなしPNGへ正規化し、rendererはserver-owned hash検証済みPNG dataだけを`addImage`へ渡す。URL、path、原upload、ICNS/JXL/HEIFをrendererへ到達させない境界をテストで固定し、修正版公開後に更新する。
+- LibreChatのmessage attachment画像は文書uploadと異なり`images/<user-id>/`へ保存される。導入時は`LibreChatImagesRoot`と`LibreChatUploadsRoot`を別々に読み取り専用mountし、実UI添付からresolverまでのE2Eを省略しない。
+- 画像layoutを空欄や「ここに画像」のshapeで完成扱いしない。`Media`は同じ利用者・会話の有効なasset ID、alt text、cropを必須にし、素材がなければnative diagramまたは画像なしrecipeへ変更する。詳細は[ADR 0016](docs/adr/0016-conversation-scoped-image-assets-and-media-split.md)を参照する。
 - `addTable`の垂直中央揃えは`valign: "middle"`を使う。`"mid"`は表セルへ不正な`anchor="mid"`として出力されるため、正規化処理と回帰テストも維持する。
 - PptxGenJSの棒グラフは系列内の`c:dPt`を`c:dLbls`より後ろへ出力する場合がある。Open XMLの要素順に合わせて個別データ点をラベルより前へ移し、実データ点を含む回帰テストを維持する。
 - PptxGenJSは空のノートスライドとPowerPointが修復を要求するノートマスターを自動生成する。`VisualDeckSpec`は発表者ノートを扱わないため、白紙生成では`PptxGenJsOpenXmlNormalizer`がノート関連パーツを完全に削除し、企業テンプレートへの合成時も生成側のノートスライドを削除してテンプレート側のノートマスターだけを保持する。

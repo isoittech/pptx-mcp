@@ -14,6 +14,8 @@ public sealed class PptxMcpOptions
 
     public string LibreChatUploadsRoot { get; init; } = "/data/librechat-uploads";
 
+    public string LibreChatImagesRoot { get; init; } = "/data/librechat-images";
+
     public string TemplatesRoot { get; init; } = "/data/pptx-templates";
 
     public string DefaultTemplateId { get; init; } = string.Empty;
@@ -28,7 +30,15 @@ public sealed class PptxMcpOptions
 
     public string VisualRendererPath { get; init; } = "/app/visual-renderer/index.mjs";
 
+    public string ImageSanitizerPath { get; init; } = "/app/visual-renderer/sanitize-image.mjs";
+
     public long MaxFileBytes { get; init; } = 30L * 1024 * 1024;
+
+    public long MaxImageFileBytes { get; init; } = 12L * 1024 * 1024;
+
+    public int MaxImagePixels { get; init; } = 20_000_000;
+
+    public int MaxImageDimension { get; init; } = 2_560;
 
     public int MaxSlides { get; init; } = 50;
 
@@ -80,6 +90,25 @@ public sealed class PptxMcpOptions
         if (!Path.IsPathFullyQualified(VisualRendererPath))
         {
             throw new InvalidOperationException("PptxMcp:VisualRendererPath must be an absolute path.");
+        }
+
+        if (!Path.IsPathFullyQualified(ImageSanitizerPath))
+        {
+            throw new InvalidOperationException("PptxMcp:ImageSanitizerPath must be an absolute path.");
+        }
+
+        if (!Path.IsPathFullyQualified(LibreChatUploadsRoot)
+            || !Path.IsPathFullyQualified(LibreChatImagesRoot))
+        {
+            throw new InvalidOperationException(
+                "PptxMcp LibreChat upload roots must be absolute paths.");
+        }
+
+        if (MaxImageFileBytes is <= 0 or > 30L * 1024 * 1024
+            || MaxImagePixels is <= 0 or > 40_000_000
+            || MaxImageDimension is < 320 or > 4_096)
+        {
+            throw new InvalidOperationException("Configured image resource limits are outside the supported bounds.");
         }
 
         if (!Path.IsPathFullyQualified(TemplatesRoot))

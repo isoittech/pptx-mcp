@@ -519,7 +519,8 @@ public sealed partial class BrandProfileCatalog
         }
 
         var variantSupported = recipe.Variant.Equals("auto", StringComparison.OrdinalIgnoreCase)
-            || recipe.Variant.Equals("split", StringComparison.OrdinalIgnoreCase) && recipe.SemanticKind == VisualSlideKind.Bullets
+            || recipe.Variant.Equals("split", StringComparison.OrdinalIgnoreCase)
+                && recipe.SemanticKind is VisualSlideKind.Bullets or VisualSlideKind.Media
             || recipe.Variant.Equals("spotlight", StringComparison.OrdinalIgnoreCase)
                 && recipe.SemanticKind is VisualSlideKind.Metrics or VisualSlideKind.Cards
             || recipe.Variant.Equals("editorial", StringComparison.OrdinalIgnoreCase)

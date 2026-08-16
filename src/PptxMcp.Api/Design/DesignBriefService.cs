@@ -965,6 +965,7 @@ public sealed partial class DesignBriefService(
                 ? AssetPlanStatus.Ready
                 : AssetPlanStatus.Omitted,
             LicenseStatus = AssetLicenseStatus.NotRequired,
+            AssetId = null,
             ApprovedAssetCollectionId = null,
             AttributionRef = null,
             CropIntent = null,
@@ -1057,7 +1058,10 @@ public sealed partial class DesignBriefService(
         var summary = new AssetPlanSummary(
             values.Count(static item => item.Acquisition == AssetAcquisition.NativeDraw),
             values.Count(static item => item.Acquisition == AssetAcquisition.None),
-            values.Count(static item => item.Status == AssetPlanStatus.FallbackSelected));
+            values.Count(static item => item.Status == AssetPlanStatus.FallbackSelected),
+            values.Count(static item =>
+                item.Acquisition == AssetAcquisition.UserUpload
+                && item.Status == AssetPlanStatus.Ready));
         return new DesignBriefValidationView(
             binding.BriefId,
             "validated",
@@ -1118,6 +1122,7 @@ public sealed partial class DesignBriefService(
             ValidateOptionalToken(item.AspectRatio, SupportedAspectRatios, $"assetPlan[{index}].aspect_ratio");
             ValidateOptionalToken(item.TextSafeArea, SupportedTextSafeAreas, $"assetPlan[{index}].text_safe_area");
             ValidateOptionalIdentifier(item.AttributionRef, $"assetPlan[{index}].attribution_ref");
+            ValidateOptionalAssetId(item.AssetId, $"assetPlan[{index}].asset_id");
             ValidateOptionalIdentifier(
                 item.ApprovedAssetCollectionId,
                 $"assetPlan[{index}].approved_asset_collection_id");
@@ -1143,6 +1148,7 @@ public sealed partial class DesignBriefService(
                 if (item.Status != AssetPlanStatus.Ready
                     || item.LicenseStatus != AssetLicenseStatus.NotRequired
                     || item.Fallback is not (AssetFallback.None or AssetFallback.NativeDraw)
+                    || item.AssetId is not null
                     || item.ApprovedAssetCollectionId is not null)
                 {
                     throw new PptxValidationException(
@@ -1156,6 +1162,7 @@ public sealed partial class DesignBriefService(
                     || item.PreferredMedium != AssetPreferredMedium.None
                     || item.LicenseStatus != AssetLicenseStatus.NotRequired
                     || item.Fallback != AssetFallback.None
+                    || item.AssetId is not null
                     || item.ApprovedAssetCollectionId is not null
                     || item.AttributionRef is not null
                     || item.CropIntent is not null
@@ -1177,8 +1184,28 @@ public sealed partial class DesignBriefService(
                         $"{path} userUpload is not allowed by brief.source_policy.");
                 }
 
-                ValidatePhaseOneFallback(item, path);
-                EnsureRecipeDoesNotRequireUnavailableAsset(recipe, path);
+                if (item.Status == AssetPlanStatus.Ready)
+                {
+                    if (item.AssetId is null
+                        || item.Fallback != AssetFallback.None
+                        || item.ApprovedAssetCollectionId is not null
+                        || item.LicenseStatus != AssetLicenseStatus.UserProvided
+                        || item.PreferredMedium is not (AssetPreferredMedium.Photo or AssetPreferredMedium.Illustration)
+                        || item.CropIntent is null
+                        || !string.Equals(item.TextSafeArea, "left", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(item.TextSafeArea, "right", StringComparison.OrdinalIgnoreCase)
+                        || recipe.RequiredAssetRoles.Count == 0)
+                    {
+                        throw new PptxValidationException(
+                            "asset_plan_user_upload_invalid",
+                            $"{path} ready userUpload must use a registered asset_id, photo or illustration medium, fallback=none, userProvided license status, a crop_intent, text_safe_area=left|right, no approved collection, and a recipe with a required asset role.");
+                    }
+                }
+                else
+                {
+                    ValidateImageFallback(item, recipe, path);
+                }
+
                 if (item.ApprovedAssetCollectionId is not null
                     || item.LicenseStatus is not (AssetLicenseStatus.UserProvided or AssetLicenseStatus.Unknown))
                 {
@@ -1189,8 +1216,13 @@ public sealed partial class DesignBriefService(
 
                 break;
             case AssetAcquisition.ApprovedLibrary:
-                ValidatePhaseOneFallback(item, path);
-                EnsureRecipeDoesNotRequireUnavailableAsset(recipe, path);
+                ValidateImageFallback(item, recipe, path);
+                if (item.AssetId is not null)
+                {
+                    throw new PptxValidationException(
+                        "asset_plan_approved_library_invalid",
+                        $"{path} approvedLibrary cannot use a user-uploaded asset_id.");
+                }
                 if (item.ApprovedAssetCollectionId is null
                     || !profile.Detail.ApprovedAssetCollectionIds.Contains(
                         item.ApprovedAssetCollectionId,
@@ -1210,15 +1242,18 @@ public sealed partial class DesignBriefService(
         }
     }
 
-    private static void ValidatePhaseOneFallback(AssetPlanItem item, string path)
+    private static void ValidateImageFallback(AssetPlanItem item, BrandLayoutRecipe recipe, string path)
     {
         if (item.Status != AssetPlanStatus.FallbackSelected
-            || item.Fallback is not (AssetFallback.NativeDraw or AssetFallback.NoAssetLayout))
+            || item.Fallback is not (AssetFallback.NativeDraw or AssetFallback.NoAssetLayout)
+            || item.AssetId is not null)
         {
             throw new PptxValidationException(
                 "asset_plan_image_insertion_unavailable",
-                $"{path} plans a non-native image source, but phase 1 cannot insert images. Select status=fallbackSelected and fallback=nativeDraw or noAssetLayout before generation.");
+                $"{path} without a usable registered image must select status=fallbackSelected, fallback=nativeDraw or noAssetLayout, and omit asset_id before generation.");
         }
+
+        EnsureRecipeDoesNotRequireUnavailableAsset(recipe, path);
 
         if (item.LicenseStatus is AssetLicenseStatus.Unknown or AssetLicenseStatus.Restricted
             && item.AttributionRef is not null)
@@ -1226,6 +1261,16 @@ public sealed partial class DesignBriefService(
             throw new PptxValidationException(
                 "asset_plan_unverified_attribution_invalid",
                 $"{path} must not attach attribution to an unknown or restricted asset that will not be used.");
+        }
+    }
+
+    private static void ValidateOptionalAssetId(string? value, string path)
+    {
+        if (value is not null && !ImageAssetIdRegex().IsMatch(value))
+        {
+            throw new PptxValidationException(
+                "asset_plan_asset_id_invalid",
+                $"{path} must be the lowercase opaque asset_id returned by pptx_register_uploaded_image_asset.");
         }
     }
 
@@ -1389,6 +1434,9 @@ public sealed partial class DesignBriefService(
 
     [GeneratedRegex("\\A[A-Za-z0-9_-]{1,128}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex OpaqueIdentifierRegex();
+
+    [GeneratedRegex("\\A[0-9a-f]{32}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ImageAssetIdRegex();
 
     [GeneratedRegex("(?<![A-Za-z0-9_])[A-Za-z]:[\\\\/]", RegexOptions.CultureInvariant)]
     private static partial Regex WindowsPathRegex();

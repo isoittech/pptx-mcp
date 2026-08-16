@@ -36,7 +36,7 @@ Brand ProfileとDesign Briefゲートは、生成開始前にブランド、用�
 - scriptは固定intentだけをpostし、heightだけを240〜900pxへclampして通知する。widthはhostへ送らない。
 - カードは推奨style、目的、読者、delivery mode、density、visual strategy、tone、Asset Plan要約、最大3件の主な前提、source policy、完成sample carouselを短く表示する。
 - CTAは一度選ぶと方針が確定し生成へ進むことを明示する。apply後の別案変更は許可しない。
-- 第2段階では外部画像をPPTXへ挿入しない。写真計画も検証時に画像不要recipeのfallbackへ確定しているため、「写真あり対写真なし」とは表示せず、「画像を使わない別構成」と表示する。真の写真比較はAsset Broker導入後に扱う。
+- 本カード導入時点では外部画像をPPTXへ挿入しないため、「写真あり対写真なし」とは表示せず、「画像を使わない別構成」と表示する。後続のADR 0016で登録済みuserUploadを`Media/split`へ使えるようになったが、カードがsample thumbnailを生成素材として扱わない境界と、approved library／Web素材を使わない境界は維持する。
 - toolのmodel-facing textはUI Resource markerの提示、turn終了、pending中のvalidate/start禁止を指示する。option ID対応をplain textへ展開しない。UI非対応hostでは自動選択させずfail-closedにする。
 - カードが表示できない、または利用者がカードなしのsafe defaultを明示した場合に限り、引数なしの`pptx_cancel_design_brief_selection`で同じ利用者・会話の未選択pendingを破棄できる。選択済み、start予約中、start済みは取消不可とする。cancel後のdirect validationは`selection_source=agentDefault`になる。
 

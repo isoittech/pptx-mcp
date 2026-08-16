@@ -4,6 +4,8 @@
 
 採用
 
+画像挿入を行わない第1段階の判断は履歴として本ADRに残す。会話scope付きユーザー提供画像と`Media/split`による後続拡張は[ADR 0016](0016-conversation-scoped-image-assets-and-media-split.md)を優先する。
+
 ## 背景
 
 テンプレートPPTXのマスター、テーマ、数枚のレイアウトだけでは、用途ごとの構図、情報密度、文章トーン、素材の選び方、同一ブランド内の複数方向を十分に表現できない。一方、企業名、ロゴ、実テンプレート、社内URL、承認済み素材の場所をOSSへ含めたり、モデルから任意パスやURLを渡したりしてはならない。
@@ -30,7 +32,7 @@
 
 代わりに、導入環境はmanifestの作成、version管理、sample説明、recipeとレンダラー実装の整合を保守する必要がある。全ページAsset Planはツール入力を増やすため、catalogはprofile選択後の絞り込み式にし、brief応答は要約だけにする。期限付きbriefと生成途中のdraftは現段階ではメモリ内状態であり、プロセス再起動後は再検証が必要である。完成jobには最小監査snapshotが残るが、元のbrief全文や一時IDは残さない。
 
-第1段階ではsampleの画像表示、承認済みライブラリからの取得、Web画像の権利確認、画像挿入を行わない。第2段階では、外部bundleの検査済みPNG derivativeだけをDesign Brief選択UIへ表示するが、model/renderer入力またはPPTX素材にはしない。承認済みライブラリからの取得と画像挿入は引き続き行わない。これらを追加する場合も、外部取得は導入環境のオーケストレーション側、`pptx-mcp`は権限scope付きopaque file IDの解決と安全な配置だけを担当し、任意URLダウンロードを追加しない。layout recipe、DataTable、実行可能なstyle roleの詳細は [ADR 0014](0014-executable-style-recipes-and-data-tables.md)、条件付き選択UIは[ADR 0015](0015-design-brief-selection-ui-resource.md)を参照する。
+第1段階ではsampleの画像表示、承認済みライブラリからの取得、Web画像の権利確認、画像挿入を行わない。第2段階では、外部bundleの検査済みPNG derivativeだけをDesign Brief選択UIへ表示するが、model/renderer入力またはPPTX素材にはしない。後続のADR 0016で、ユーザー提供uploadに限定した権限scope付きopaque asset IDの解決と安全な配置を追加した。承認済みライブラリとWeb取得はなお導入環境のオーケストレーション側brokerを必要とし、任意URLダウンロードは追加しない。layout recipe、DataTable、実行可能なstyle roleの詳細は [ADR 0014](0014-executable-style-recipes-and-data-tables.md)、条件付き選択UIは[ADR 0015](0015-design-brief-selection-ui-resource.md)、実画像assetは[ADR 0016](0016-conversation-scoped-image-assets-and-media-split.md)を参照する。
 
 ## 検証
 

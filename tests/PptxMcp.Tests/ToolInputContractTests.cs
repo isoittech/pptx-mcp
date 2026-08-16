@@ -2,12 +2,14 @@ using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.Server;
 using PptxMcp.Configuration;
 using PptxMcp.Domain;
 using PptxMcp.Jobs;
 using PptxMcp.Security;
+using PptxMcp.Storage;
 using PptxMcp.Tools;
 
 namespace PptxMcp.Tests;
@@ -437,10 +439,14 @@ public sealed class ToolInputContractTests
         Assert.Contains("Scorecard", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("MusicScore", schema, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("DataTable", schema, StringComparison.Ordinal);
+        Assert.Contains("Media", schema, StringComparison.Ordinal);
         Assert.Contains("sections", schema, StringComparison.Ordinal);
         Assert.Contains("criteria", schema, StringComparison.Ordinal);
         Assert.Contains("musicScore", schema, StringComparison.Ordinal);
         Assert.Contains("dataTable", schema, StringComparison.Ordinal);
+        Assert.Contains("media", schema, StringComparison.Ordinal);
+        Assert.Contains("assetId", schema, StringComparison.Ordinal);
+        Assert.Contains("cropIntent", schema, StringComparison.Ordinal);
         Assert.Contains("recipeId", schema, StringComparison.Ordinal);
         Assert.Contains("density", schema, StringComparison.Ordinal);
         Assert.Contains("measures", schema, StringComparison.Ordinal);
@@ -452,12 +458,48 @@ public sealed class ToolInputContractTests
         Assert.Contains("musicScore", description, StringComparison.Ordinal);
         Assert.Contains("五線譜", description, StringComparison.Ordinal);
         Assert.Contains("DataTable", description, StringComparison.Ordinal);
+        Assert.Contains("Media", description, StringComparison.Ordinal);
+        Assert.Contains("空欄・仮画像", description, StringComparison.Ordinal);
         Assert.Contains("dataTable", description, StringComparison.Ordinal);
         Assert.Contains("明示改行なし", description, StringComparison.Ordinal);
         Assert.Contains("recipeId", description, StringComparison.Ordinal);
         Assert.Contains("density", description, StringComparison.Ordinal);
         Assert.Contains("spotlight", description, StringComparison.Ordinal);
         Assert.Contains("Metrics正確に3件", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UploadedImageAssetToolAcceptsOnlyOpaqueUploadMetadata()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.RegisterUploadedImageAssetAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        using var services = new ServiceCollection()
+            .AddSingleton<CallerContextAccessor>(_ => throw new InvalidOperationException("Schema-only service."))
+            .AddSingleton<ImageAssetRepository>(_ => throw new InvalidOperationException("Schema-only service."))
+            .BuildServiceProvider();
+        var tool = McpServerTool.Create(
+            method,
+            (object)null!,
+            new McpServerToolCreateOptions { Services = services }).ProtocolTool;
+        var properties = tool.InputSchema.GetProperty("properties")
+            .EnumerateObject()
+            .Select(static property => property.Name)
+            .ToArray();
+        var required = tool.InputSchema.GetProperty("required")
+            .EnumerateArray()
+            .Select(static item => item.GetString())
+            .ToArray();
+
+        Assert.Equal("pptx_register_uploaded_image_asset", tool.Name);
+        Assert.Equal(["altText", "sourceFileId", "attributionRef"], properties);
+        Assert.Contains("altText", required);
+        Assert.DoesNotContain("sourceFileId", required);
+        Assert.DoesNotContain(properties, name => name is "url" or "path" or "bytes" or "data");
+        Assert.Contains("metadataを除いたPNG", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("opaque asset_id", tool.Description, StringComparison.Ordinal);
     }
 
     [Fact]

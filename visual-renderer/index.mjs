@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { createRequire } from "node:module";
 import {
@@ -17,6 +18,7 @@ if (!specificationPath || !outputPath) {
 }
 
 const spec = JSON.parse(await readFile(specificationPath, "utf8"));
+const imageAssets = await loadImageAssets(spec.imageAssets ?? {});
 const rendererContract = String(spec.rendererContract ?? "visual-v4").toLowerCase();
 if (!["visual-v4", "visual-v5"].includes(rendererContract)) {
   throw new Error(`Unsupported renderer contract: ${rendererContract}`);
@@ -374,6 +376,9 @@ for (const [index, slideSpec] of spec.slides.entries()) {
     case "data_table":
       renderDataTable(slide, slideSpec, index);
       break;
+    case "media":
+      renderMedia(slide, slideSpec, index);
+      break;
     case "musicscore":
     case "music_score":
       renderMusicScore(slide, slideSpec, index);
@@ -530,6 +535,210 @@ function renderBullets(slide, data, index) {
   });
   if (data.takeaway) {
     takeawayCard(slide, data.takeaway, 9.55, 2.08, 3.08, 3.75);
+  }
+}
+
+function renderMedia(slide, data, index) {
+  contentBase(slide, data, index);
+  if (String(data.variant ?? "split").toLowerCase() !== "split" || !data.media) {
+    throw new Error("Media slides require variant=split and a verified media payload.");
+  }
+  const asset = imageAssets[data.media.assetId];
+  if (!asset) {
+    throw new Error("The verified Media asset is missing from the server-owned renderer binding.");
+  }
+
+  const textOnLeft = String(data.media.textPosition ?? "left").toLowerCase() === "left";
+  const gap = 0.28;
+  const availableWidth = W - density.outerX * 2;
+  const textWidth = Math.min(5.25, availableWidth * 0.43);
+  const imageWidth = availableWidth - textWidth - gap;
+  const top = density.contentTop;
+  const height = density.contentBottom - density.contentTop;
+  const textX = textOnLeft ? density.outerX : density.outerX + imageWidth + gap;
+  const imageX = textOnLeft ? density.outerX + textWidth + gap : density.outerX;
+
+  card(slide, textX, top, textWidth, height, styleProfile.surface);
+  const crop = String(data.media.cropIntent ?? "cover");
+  slide.addImage({
+    data: asset.data,
+    altText: asset.altText,
+    objectName: `Verified image ${data.media.assetId}`,
+    ...imagePlacement(asset, { x: imageX, y: top, w: imageWidth, h: height }, crop),
+  });
+  slide.addShape(pptx.ShapeType.rect, {
+    x: imageX,
+    y: top,
+    w: imageWidth,
+    h: height,
+    fill: { color: theme.background, transparency: 100 },
+    line: { color: styleProfile.borderColor, width: 0.35, transparency: 72 },
+  });
+
+  const bodyParts = [];
+  const bullets = data.bullets ?? [];
+  if (data.body) {
+    bodyParts.push({ text: data.body, options: { breakLine: bullets.length > 0 } });
+  }
+  for (const [bulletIndex, bullet] of bullets.entries()) {
+    bodyParts.push({
+      text: bullet,
+      options: {
+        bullet: true,
+        breakLine: bulletIndex < bullets.length - 1,
+        paraSpaceBeforePt: 8,
+      },
+    });
+  }
+  if (bodyParts.length > 0) {
+    slide.addText(bodyParts, {
+      x: textX + density.panelPadding,
+      y: top + density.panelPadding,
+      w: textWidth - density.panelPadding * 2,
+      h: height - density.panelPadding * 2 - (data.media.caption ? 0.52 : 0),
+      fontFace: theme.bodyFont,
+      fontSize: scaled(currentDensityName === "detailed" ? 14.5 : 16),
+      color: cardTextColor,
+      margin: 0.04,
+      breakLine: false,
+      valign: "mid",
+      fit: "shrink",
+    });
+  }
+  if (data.media.caption) {
+    slide.addText(data.media.caption, {
+      x: textX + density.panelPadding,
+      y: top + height - 0.62,
+      w: textWidth - density.panelPadding * 2,
+      h: 0.28,
+      fontFace: theme.bodyFont,
+      fontSize: scaled(9.5),
+      color: cardMutedTextColor,
+      italic: true,
+      margin: 0,
+      fit: "shrink",
+    });
+  }
+  if (data.attribution) {
+    slide.addShape(pptx.ShapeType.rect, {
+      x: imageX,
+      y: top + height - 0.38,
+      w: imageWidth,
+      h: 0.38,
+      fill: { color: "000000", transparency: 42 },
+      line: { color: "000000", transparency: 100 },
+    });
+    slide.addText(data.attribution, {
+      x: imageX + 0.12,
+      y: top + height - 0.29,
+      w: imageWidth - 0.24,
+      h: 0.17,
+      fontFace: theme.bodyFont,
+      fontSize: 7,
+      color: "FFFFFF",
+      bold: true,
+      margin: 0,
+      align: "right",
+      transparency: 8,
+      fit: "shrink",
+    });
+  }
+}
+
+function imagePlacement(asset, box, cropIntent) {
+  const normalized = cropIntent.toLowerCase();
+  if (normalized === "contain") {
+    const scale = Math.min(box.w / asset.width, box.h / asset.height);
+    const width = asset.width * scale;
+    const height = asset.height * scale;
+    return {
+      x: box.x + (box.w - width) / 2,
+      y: box.y + (box.h - height) / 2,
+      w: width,
+      h: height,
+    };
+  }
+
+  const scale = Math.max(box.w / asset.width, box.h / asset.height);
+  const sourceWidth = asset.width * scale;
+  const sourceHeight = asset.height * scale;
+  const horizontalOverflow = Math.max(0, sourceWidth - box.w);
+  const verticalOverflow = Math.max(0, sourceHeight - box.h);
+  const cropX = normalized === "focalleft"
+    ? 0
+    : normalized === "focalright"
+      ? horizontalOverflow
+      : horizontalOverflow / 2;
+  return {
+    x: box.x,
+    y: box.y,
+    w: sourceWidth,
+    h: sourceHeight,
+    sizing: {
+      type: "crop",
+      x: cropX,
+      y: verticalOverflow / 2,
+      w: box.w,
+      h: box.h,
+    },
+  };
+}
+
+async function loadImageAssets(metadata) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new Error("Server-owned image asset metadata must be an object.");
+  }
+  const assetRoot = process.env.PPTX_MCP_IMAGE_ASSET_ROOT;
+  const entries = Object.entries(metadata);
+  if (entries.length > 20 || (entries.length > 0 && !assetRoot)) {
+    throw new Error("The image asset binding is missing or exceeds the per-deck asset limit.");
+  }
+
+  const root = assetRoot ? path.resolve(assetRoot) : "";
+  const resolved = {};
+  let totalBytes = 0;
+  for (const [assetId, item] of entries) {
+    if (!/^[0-9a-f]{32}$/.test(assetId)
+      || !item
+      || !Number.isInteger(item.width)
+      || !Number.isInteger(item.height)
+      || typeof item.altText !== "string"
+      || item.altText.length < 1
+      || item.altText.length > 240
+      || !/^[0-9a-f]{64}$/.test(String(item.sha256 ?? ""))) {
+      throw new Error("The server-owned image asset metadata is invalid.");
+    }
+    const assetPath = path.resolve(root, assetId, "asset.png");
+    if (!assetPath.startsWith(`${root}${path.sep}`)) {
+      throw new Error("The image asset path escaped its server-owned root.");
+    }
+    const bytes = await readFile(assetPath);
+    totalBytes += bytes.length;
+    if (totalBytes > 64 * 1024 * 1024
+      || createHash("sha256").update(bytes).digest("hex") !== item.sha256) {
+      throw new Error("The image asset failed integrity or total-size validation.");
+    }
+    validatePngHeader(bytes, item.width, item.height);
+    resolved[assetId] = {
+      width: item.width,
+      height: item.height,
+      altText: item.altText,
+      data: `data:image/png;base64,${bytes.toString("base64")}`,
+    };
+  }
+  return resolved;
+}
+
+function validatePngHeader(bytes, expectedWidth, expectedHeight) {
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const isPng = bytes.length >= 24
+    && bytes.subarray(0, signature.length).equals(signature)
+    && bytes.readUInt32BE(8) === 13
+    && bytes.subarray(12, 16).toString("ascii") === "IHDR";
+  if (!isPng
+    || bytes.readUInt32BE(16) !== expectedWidth
+    || bytes.readUInt32BE(20) !== expectedHeight) {
+    throw new Error("The image asset is not the exact normalized PNG declared by the server.");
   }
 }
 
