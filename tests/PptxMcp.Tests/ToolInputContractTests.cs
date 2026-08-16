@@ -448,6 +448,9 @@ public sealed class ToolInputContractTests
         Assert.Contains("media", schema, StringComparison.Ordinal);
         Assert.Contains("diagram", schema, StringComparison.Ordinal);
         Assert.Contains("visualObjects", schema, StringComparison.Ordinal);
+        Assert.Contains("speakerNotes", schema, StringComparison.Ordinal);
+        Assert.Contains("purpose", schema, StringComparison.Ordinal);
+        Assert.Contains("talkScript", schema, StringComparison.Ordinal);
         Assert.Contains("assetId", schema, StringComparison.Ordinal);
         Assert.Contains("cropIntent", schema, StringComparison.Ordinal);
         Assert.Contains("recipeId", schema, StringComparison.Ordinal);
@@ -467,6 +470,8 @@ public sealed class ToolInputContractTests
         Assert.Contains("明示改行なし", description, StringComparison.Ordinal);
         Assert.Contains("recipeId", description, StringComparison.Ordinal);
         Assert.Contains("density", description, StringComparison.Ordinal);
+        Assert.Contains("speakerNotes", description, StringComparison.Ordinal);
+        Assert.Contains("発表者ノート", description, StringComparison.Ordinal);
         Assert.Contains("spotlight", description, StringComparison.Ordinal);
         Assert.Contains("Metrics正確に3件", description, StringComparison.Ordinal);
     }
@@ -599,6 +604,9 @@ public sealed class ToolInputContractTests
         Assert.Contains("visualObjects", toolDescription, StringComparison.Ordinal);
         Assert.Contains("省略すれば", toolDescription, StringComparison.Ordinal);
         Assert.Contains("異なるID", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("speakerNotes", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("purpose", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("talkScript", toolDescription, StringComparison.Ordinal);
 
         var legacyMethod = typeof(PowerPointTools).GetMethod(
             nameof(PowerPointTools.RefineVisualDeckAsync),
@@ -609,5 +617,6 @@ public sealed class ToolInputContractTests
         Assert.Contains("visualObjects", legacyDescription, StringComparison.Ordinal);
         Assert.Contains("省略すれば", legacyDescription, StringComparison.Ordinal);
         Assert.Contains("異なるID", legacyDescription, StringComparison.Ordinal);
+        Assert.Contains("speakerNotes", legacyDescription, StringComparison.Ordinal);
     }
 }

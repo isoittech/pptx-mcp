@@ -38,6 +38,10 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
         Assert.Contains("below 9 pt", instructions, StringComparison.Ordinal);
         Assert.Contains("enforces at most two rounds", instructions, StringComparison.Ordinal);
+        Assert.Contains("speakerNotes with both purpose and talkScript", instructions, StringComparison.Ordinal);
+        Assert.Contains("included in the downloaded PPTX", instructions, StringComparison.Ordinal);
+        Assert.Contains("hidden chain-of-thought", instructions, StringComparison.Ordinal);
+        Assert.Contains("omit speakerNotes to inherit", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

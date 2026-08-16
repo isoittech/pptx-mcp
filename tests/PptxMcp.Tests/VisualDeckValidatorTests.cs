@@ -6,6 +6,51 @@ namespace PptxMcp.Tests;
 public sealed class VisualDeckValidatorTests
 {
     [Fact]
+    public void AcceptsBoundedSpeakerNotesAndRejectsUnsafeFields()
+    {
+        var valid = new VisualDeckSpec(
+            "Speaker notes",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Title,
+                    "Decision",
+                    SpeakerNotes: new VisualSpeakerNotesSpec(
+                        "この提案を今承認すべき理由を伝える。",
+                        "まず背景を説明します。\n次に、承認してほしい事項を示します。")),
+            ]);
+
+        VisualDeckValidator.Validate(valid, 50);
+
+        var multilinePurpose = valid with
+        {
+            Slides =
+            [
+                valid.Slides[0] with
+                {
+                    SpeakerNotes = new VisualSpeakerNotesSpec("一行目\n二行目", "説明します。"),
+                },
+            ],
+        };
+        var oversizedScript = valid with
+        {
+            Slides =
+            [
+                valid.Slides[0] with
+                {
+                    SpeakerNotes = new VisualSpeakerNotesSpec("狙い", new string('あ', 1_201)),
+                },
+            ],
+        };
+
+        Assert.Equal(
+            "visual_text_invalid",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(multilinePurpose, 50)).Code);
+        Assert.Equal(
+            "visual_text_invalid",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(oversizedScript, 50)).Code);
+    }
+
+    [Fact]
     public void NativeDiagramAcceptsBoundedAcyclicTree()
     {
         var deck = new VisualDeckSpec(

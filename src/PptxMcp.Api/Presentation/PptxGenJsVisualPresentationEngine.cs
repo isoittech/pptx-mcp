@@ -118,6 +118,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
             useTemplateChrome
                 ? $"PptxGenJS 4.0.1 declarative renderer {rendererContract} + template chrome"
                 : $"PptxGenJS 4.0.1 declarative renderer {rendererContract}",
+            deck.Slides.Count(static slide => slide.SpeakerNotes is not null),
             VisualDeckValidator.GetDesignWarnings(deck));
     }
 }

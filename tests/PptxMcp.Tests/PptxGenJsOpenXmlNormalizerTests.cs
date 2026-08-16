@@ -11,7 +11,7 @@ namespace PptxMcp.Tests;
 public sealed class PptxGenJsOpenXmlNormalizerTests
 {
     [Fact]
-    public void RemovesGeneratedNotesAndRedundantPackageDirectories()
+    public void RemovesEmptyGeneratedNotesAndRedundantPackageDirectories()
     {
         var path = TestPresentationFactory.CreateWithGeneratedNotes("VISUAL CONTENT");
         try
@@ -65,6 +65,37 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
                     archive.Entries,
                     static entry => entry.FullName.EndsWith('/'));
             }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void PreservesNonEmptySpeakerNotesAndValidatesThePackage()
+    {
+        const string speakerNotes = "【このスライドの狙い】\n意思決定を促す。\n\n【トークスクリプト】\n次の一手を説明します。";
+        var path = TestPresentationFactory.CreateWithSpeakerNotes(speakerNotes, "VISUAL CONTENT");
+        try
+        {
+            PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(path);
+
+            using var document = PresentationDocument.Open(path, false);
+            var presentationPart = document.PresentationPart!;
+            var notesSlidePart = presentationPart.SlideParts.Single().NotesSlidePart;
+            Assert.NotNull(notesSlidePart);
+            Assert.Contains(
+                speakerNotes,
+                notesSlidePart!.NotesSlide!.Descendants<A.Text>().Select(static text => text.Text));
+            Assert.Single(
+                presentationPart.Parts
+                    .Select(static relationship => relationship.OpenXmlPart)
+                    .OfType<NotesMasterPart>());
+            Assert.Single(
+                presentationPart.Presentation!
+                    .GetFirstChild<P.NotesMasterIdList>()!
+                    .Elements<P.NotesMasterId>());
         }
         finally
         {

@@ -46,7 +46,7 @@ internal static class PptxGenJsOpenXmlNormalizer
                 ?? throw new PptxValidationException(
                     "invalid_pptx",
                     "The PPTX does not contain a presentation root.");
-            var presentationCorrectionCount = RemoveGeneratedNotes(presentationPart);
+            var presentationCorrectionCount = NormalizeGeneratedNotes(presentationPart);
             presentationCorrectionCount += NormalizePresentation(presentation);
             if (presentationCorrectionCount > 0)
             {
@@ -91,7 +91,7 @@ internal static class PptxGenJsOpenXmlNormalizer
         }
     }
 
-    internal static int RemoveGeneratedNotes(PresentationPart presentationPart)
+    internal static int NormalizeGeneratedNotes(PresentationPart presentationPart)
     {
         var correctionCount = 0;
         foreach (var slidePart in presentationPart.SlideParts.ToArray())
@@ -101,27 +101,120 @@ internal static class PptxGenJsOpenXmlNormalizer
                 continue;
             }
 
-            slidePart.DeletePart(notesSlidePart);
-            correctionCount++;
+            if (!HasSpeakerNotes(notesSlidePart))
+            {
+                slidePart.DeletePart(notesSlidePart);
+                correctionCount++;
+            }
         }
 
+        var retainedNotesMasters = presentationPart.SlideParts
+            .Select(static slidePart => slidePart.NotesSlidePart?.NotesMasterPart)
+            .Where(static notesMasterPart => notesMasterPart is not null)
+            .Cast<NotesMasterPart>()
+            .Distinct()
+            .ToArray();
         var notesMasterParts = presentationPart.Parts
             .Select(static relationship => relationship.OpenXmlPart)
             .OfType<NotesMasterPart>()
             .ToArray();
         foreach (var notesMasterPart in notesMasterParts)
         {
-            presentationPart.DeletePart(notesMasterPart);
-            correctionCount++;
+            if (!retainedNotesMasters.Contains(notesMasterPart))
+            {
+                presentationPart.DeletePart(notesMasterPart);
+                correctionCount++;
+            }
         }
 
-        var notesMasterIds = presentationPart.Presentation?.GetFirstChild<P.NotesMasterIdList>();
-        if (notesMasterIds is not null)
+        if (retainedNotesMasters.Length == 0)
         {
-            notesMasterIds.Remove();
+            var notesMasterIds = presentationPart.Presentation?.GetFirstChild<P.NotesMasterIdList>();
+            if (notesMasterIds is not null)
+            {
+                notesMasterIds.Remove();
+                correctionCount++;
+            }
+
+            return correctionCount;
+        }
+
+        if (retainedNotesMasters.Length != 1)
+        {
+            throw new PptxValidationException(
+                "openxml_validation_failed",
+                "The generated presentation must use exactly one notes master for retained speaker notes.");
+        }
+
+        correctionCount += EnsurePresentationNotesMasterRelationship(
+            presentationPart,
+            retainedNotesMasters[0]);
+        return correctionCount;
+    }
+
+    internal static bool HasSpeakerNotes(NotesSlidePart notesSlidePart) =>
+        notesSlidePart.NotesSlide?
+            .Descendants<P.Shape>()
+            .Where(static shape =>
+            {
+                var placeholder = shape.NonVisualShapeProperties?
+                    .ApplicationNonVisualDrawingProperties?
+                    .PlaceholderShape;
+                return placeholder is not null
+                    && (placeholder.Type?.Value is null
+                        || placeholder.Type.Value == P.PlaceholderValues.Body);
+            })
+            .SelectMany(static shape => shape.Descendants<A.Text>())
+            .Any(static text => !string.IsNullOrWhiteSpace(text.Text)) == true;
+
+    internal static int EnsurePresentationNotesMasterRelationship(
+        PresentationPart presentationPart,
+        NotesMasterPart notesMasterPart)
+    {
+        var correctionCount = 0;
+        if (!presentationPart.Parts.Any(relationship => ReferenceEquals(relationship.OpenXmlPart, notesMasterPart)))
+        {
+            presentationPart.AddPart(notesMasterPart);
             correctionCount++;
         }
 
+        var relationshipId = presentationPart.GetIdOfPart(notesMasterPart);
+        var presentation = presentationPart.Presentation
+            ?? throw new PptxValidationException(
+                "invalid_pptx",
+                "The PPTX does not contain a presentation root.");
+        var notesMasterIds = presentation.GetFirstChild<P.NotesMasterIdList>();
+        var currentRelationshipIds = notesMasterIds?
+            .Elements<P.NotesMasterId>()
+            .Select(static item => item.GetAttribute(
+                "id",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships").Value)
+            .ToArray() ?? [];
+        if (currentRelationshipIds.Length == 1
+            && string.Equals(currentRelationshipIds[0], relationshipId, StringComparison.Ordinal))
+        {
+            return correctionCount;
+        }
+
+        notesMasterIds?.Remove();
+        var notesMasterId = new P.NotesMasterId();
+        notesMasterId.SetAttribute(new OpenXmlAttribute(
+            "r",
+            "id",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            relationshipId));
+        var replacement = new P.NotesMasterIdList(notesMasterId);
+        var slideIds = presentation.GetFirstChild<P.SlideIdList>();
+        if (slideIds is null)
+        {
+            presentation.Append(replacement);
+        }
+        else
+        {
+            presentation.InsertBefore(replacement, slideIds);
+        }
+
+        correctionCount++;
         return correctionCount;
     }
 

@@ -68,7 +68,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 
 `nativeDiagram`はtree/flow 3〜12 nodes、cycle 3〜6、concentric 2〜4、network 3〜9、edge最大18を受け、座標をレンダラー側で決めます。既存Processの`loop`、Timeline/Roadmapの`stepped`、Funnelの`pyramid`は、受理されるだけの別名ではなく専用描画分岐を持ちます。補助オブジェクトは`pptx_prepare_visual_objects`へ1回最大8件をまとめ、1ページ最大3件・strong最大1件・会話最大24件です。tool resultはopaque IDと短い説明のJSON textだけを返し、PPTX本体はネイティブ図形です。詳細は[ADR 0017](adr/0017-native-semantic-diagrams-and-visual-objects.md)に記録します。
 
-固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。文字量の多い説明では`structuredBrief`が本文を2〜3個の見出し付きセクションへ分け、`scorecard`が評価軸×選択肢を編集可能なPowerPoint表へ変換します。`density=detailed`は単一のフォント倍率ではなく、外周余白、見出し領域、内部間隔、罫線、カード形状、影をまとめて切り替えます。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合に加え、500文字以上のページでdetailedを使っていない場合や全セクションを強調している場合は `design_warnings` を返します。詳細は [ADR 0010](adr/0010-readable-information-density.md) に記録します。
+固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。文字量の多い説明では`structuredBrief`が本文を2〜3個の見出し付きセクションへ分け、`scorecard`が評価軸×選択肢を編集可能なPowerPoint表へ変換します。`density=detailed`は単一のフォント倍率ではなく、外周余白、見出し領域、内部間隔、罫線、カード形状、影をまとめて切り替えます。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合に加え、500文字以上のページでdetailedを使っていない場合や全セクションを強調している場合は `design_warnings` を返します。`VisualSlideSpec.speakerNotes`はvisible canvasとは別に発表者ノートへ保存し、refineで省略した場合は元ページから継承します。詳細は [ADR 0010](adr/0010-readable-information-density.md) と [ADR 0018](adr/0018-speaker-notes.md) に記録します。
 
 `musicScore`は音高、音価、ウクレレの弦・フレット・左手指を意味入力として受け、五線、符頭、符幹、休符、小節線、TAB線、フレット番号、指色マーカーをPowerPointネイティブの図形・線・テキストへ変換します。任意座標や任意描画命令を公開せず、音高とTABの一致、表示密度、対応調弦をドメイン層で検証します。PowerPoint内では個別要素として編集できますが、専用譜面ソフトのような移調・自動組版は行いません。詳細は [ADR 0011](adr/0011-editable-music-score-layout.md) に記録します。
 

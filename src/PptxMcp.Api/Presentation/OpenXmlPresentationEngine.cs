@@ -446,6 +446,18 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 "The visual deck must contain between 1 and 50 slides.");
         }
 
+        var speakerNotes = visualSlides
+            .Select(static slide => slide.NotesSlidePart is { } notesPart
+                && PptxGenJsOpenXmlNormalizer.HasSpeakerNotes(notesPart)
+                && notesPart.NotesSlide is { } notes
+                ? (P.NotesSlide)notes.CloneNode(deep: true)
+                : null)
+            .ToArray();
+        var notesMaster = ResolveCompositionNotesMaster(
+            visualPresentationPart,
+            destinationPresentationPart,
+            speakerNotes.Any(static notes => notes is not null));
+
         var presentation = destinationPresentationPart.Presentation
             ?? throw new PptxValidationException("invalid_pptx", "The presentation root is missing.");
         var slideIdList = presentation.SlideIdList
@@ -465,15 +477,13 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             }
         }
 
-        foreach (var visualSlide in visualSlides)
+        for (var index = 0; index < visualSlides.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var visualSlide = visualSlides[index];
             var importedSlide = destinationPresentationPart.AddPart(visualSlide);
             if (importedSlide.NotesSlidePart is { } generatedNotesSlide)
             {
-                // VisualDeckSpec has no speaker-notes field. PptxGenJS still creates an empty
-                // notes slide for every slide; importing slides one by one clones its shared
-                // notes master and produces relationships PowerPoint attempts to repair.
                 importedSlide.DeletePart(generatedNotesSlide);
             }
 
@@ -488,6 +498,11 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 importedSlide.AddPart(selectedLayout);
             }
 
+            if (speakerNotes[index] is { } notes)
+            {
+                AttachSpeakerNotes(importedSlide, notesMaster!, notes);
+            }
+
             var relationshipId = destinationPresentationPart.GetIdOfPart(importedSlide);
             slideIdList.Append(new P.SlideId { Id = nextSlideId++, RelationshipId = relationshipId });
         }
@@ -498,6 +513,50 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
             visualSlides.Length,
             selectedLayout.Uri.ToString(),
             layoutName);
+    }
+
+    private static NotesMasterPart? ResolveCompositionNotesMaster(
+        PresentationPart visualPresentationPart,
+        PresentationPart destinationPresentationPart,
+        bool notesRequired)
+    {
+        if (!notesRequired)
+        {
+            return null;
+        }
+
+        var destinationMaster = destinationPresentationPart.Parts
+            .Select(static relationship => relationship.OpenXmlPart)
+            .OfType<NotesMasterPart>()
+            .FirstOrDefault();
+        if (destinationMaster is null)
+        {
+            var sourceMaster = visualPresentationPart.Parts
+                .Select(static relationship => relationship.OpenXmlPart)
+                .OfType<NotesMasterPart>()
+                .SingleOrDefault()
+                ?? throw new PptxValidationException(
+                    "openxml_validation_failed",
+                    "Speaker notes are present but the generated notes master is missing.");
+            destinationMaster = destinationPresentationPart.AddPart(sourceMaster);
+        }
+
+        PptxGenJsOpenXmlNormalizer.EnsurePresentationNotesMasterRelationship(
+            destinationPresentationPart,
+            destinationMaster);
+        return destinationMaster;
+    }
+
+    private static void AttachSpeakerNotes(
+        SlidePart slidePart,
+        NotesMasterPart notesMasterPart,
+        P.NotesSlide notes)
+    {
+        var notesSlidePart = slidePart.AddNewPart<NotesSlidePart>();
+        notesSlidePart.NotesSlide = notes;
+        notesSlidePart.AddPart(notesMasterPart);
+        notesSlidePart.AddPart(slidePart);
+        notesSlidePart.NotesSlide.Save();
     }
 
     private static PresentationPart GetPresentationPart(PresentationDocument document) =>

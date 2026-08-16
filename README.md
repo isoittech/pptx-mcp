@@ -17,6 +17,7 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - `nativeDiagram`でtree・flow・cycle・concentric・networkを、既存工程系でloop・stepped・pyramidを編集可能なネイティブ図形として生成
 - `pptx_prepare_visual_objects`で意味を持つ矢印・曲線矢印・枠・吹き出し・括弧・リング・リボンを最大8件まとめて準備し、会話scope付きopaque IDでAsset Planへ束縛
 - ユーザー提供JPEG/PNGを会話scope付きopaque assetへ無害化登録し、`Media/split`へcrop・代替テキスト・出典付きで埋め込み
+- 各Visual Slideへ「このスライドの狙い」とトークスクリプトをPowerPoint発表者ノートとして保存し、refine時は省略されたノートを継承
 - 文字量の多い説明を2〜3列へ構造化する `structuredBrief`、評価軸×選択肢の `scorecard`、汎用の `dataTable` を編集可能なPowerPoint表として生成
 - `density=detailed` で外周余白、見出し領域、罫線、カード影、内部間隔を一体的に切り替える高密度デザイン
 - 企業テンプレートのマスター、ロゴ、フッター、ページ設定を保ち、テーマを自動抽出して意味ベースのVisual Deckを合成
@@ -118,6 +119,8 @@ LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書
 `musicScore`は1〜8小節、合計64イベントまでの五線譜とウクレレTABを上下に併記します。各イベントへ`duration`、各音へ科学的音高の`pitch`、1=A/2=E/3=C/4=Gの`string`、`fret`、任意の`finger`を指定します。`tuning`は`high-g`または`low-g`です。音高と弦・フレットの不一致は入力検証で拒否します。ト音記号、拍子数字、符頭、旗、付点、休符、臨時記号はSIL Open Font LicenseのBravura 1.392から輪郭を取得し、画像やフォントではなくPowerPointカスタム図形として生成します。その他の五線、符幹、小節線、TAB線、フレット番号、指色マーカーも個別編集できるPowerPointネイティブ要素です。PowerPoint自体に楽譜の意味モデルはないため、移調やリズム変更に伴う自動再配置は行いません。Bravuraの原本ライセンスは`visual-renderer/assets/bravura/LICENSE.txt`に同梱しています。
 
 新規Visual Deckは、完成ページ数とクリエイティブ方針を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。addの`startSlideNumber`は省略でき、サーバーが受理済み末尾から自動計算します。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。`visual_draft_not_found`、`visual_draft_expired`、`visual_draft_not_editable`は再試行不能な終了エラーであり、同じdraft IDでadd／finishを繰り返しません。成功済みデッキがある会話では通常のstartを拒否し、初回生成が失敗した場合の全体再試行も1回に制限します。ユーザーが別資料を明示的に求めた場合だけ`userRequestedNewWorkflow=true`で新しいワークフローを開始できます。
+
+各`VisualSlideSpec`には任意の`speakerNotes`を指定できます。`purpose`はそのページで訴えることを1文で、`talkScript`は見える本文の読み上げではない発表用原稿として渡します。レンダラーは固定見出し「このスライドの狙い」「トークスクリプト」とともにPowerPointの発表者ノートへ保存し、スライド面へ描画しません。refineで`speakerNotes`を省略すると元ページのノートを継承し、明示した場合だけ更新します。job resultの`speaker_notes_count`で保持件数を確認できます。ノートはPPTX受領者が閲覧できるため、内部思考、秘密情報、内部URL、不要な個人情報、未開示の仮定を含めません。strict placeholder型の`pptx_create_deck`は今回の対象外です。詳細は[ADR 0018](docs/adr/0018-speaker-notes.md)を参照してください。
 
 企業テンプレートを使いつつ同じ視覚表現が必要な場合は、テンプレートをstart時に選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、未指定のテーマ項目だけを補完して、プレースホルダーのない白紙レイアウトへ各スライドを接続します。startで明示した色とフォントはテンプレート抽出値より優先されます。これにより企業マスターのロゴ・フッターと、資料固有の配色、カード、工程、マトリクス、編集可能グラフ等を両立します。
 

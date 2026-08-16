@@ -249,6 +249,7 @@ public sealed class JobWorker(
                         composition.TemplateLayoutId,
                         composition.TemplateLayoutName,
                         templateSummary.Theme is not null,
+                        visualCreation.SpeakerNotesCount,
                         visualCreation.DesignWarnings);
                     return (
                         JsonSerializer.SerializeToElement(result, SerializerOptions),

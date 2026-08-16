@@ -394,9 +394,21 @@ for (const [index, slideSpec] of spec.slides.entries()) {
       throw new Error(`Unsupported slide kind: ${kind}`);
   }
   renderPreparedVisualObjects(slide, slideSpec);
+  addSpeakerNotes(slide, slideSpec.speakerNotes);
 }
 
 await pptx.writeFile({ fileName: path.resolve(outputPath) });
+
+function addSpeakerNotes(slide, speakerNotes) {
+  if (!speakerNotes) {
+    return;
+  }
+
+  slide.addNotes(
+    `【このスライドの狙い】\n${speakerNotes.purpose.trim()}\n\n`
+    + `【トークスクリプト】\n${speakerNotes.talkScript.trim()}`,
+  );
+}
 
 function renderTitle(slide, data, index) {
   background(slide, theme.primary);

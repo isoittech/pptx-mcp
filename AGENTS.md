@@ -47,6 +47,7 @@
 - `visual_draft_not_found`／`visual_draft_expired`／`visual_draft_not_editable`はterminal errorとして再試行を明示的に禁止する。汎用の「入力を直して同じtoolを再実行」案内へフォールバックさせない。
 - PptxGenJSを含む外部レンダラーの生成物は、LibreOfficeで表示できてもPowerPoint互換とは限らない。生成直後と企業テンプレートへの合成後にOpenXmlValidatorを通し、新規検証エラーがある成果物は配布しない。
 - rendererの色role、surface、style profileを拡張するときは`visual-v5`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。dark surface、明色role、v4代表XMLのNode回帰テストを維持する。
+- `VisualSlideSpec.speakerNotes`はvisible canvasとは別のPowerPoint発表者ノートである。`purpose`は1文、`talkScript`は発表用原稿として検証する。refineで省略されたノートは元ページから継承し、明示値だけを更新する。結果の`speaker_notes_count`で保持件数を返す。詳細はADR 0018を参照する。
 
 ## セキュリティと制約
 
@@ -80,4 +81,4 @@
 - `variant`を公開するときは必ず専用描画分岐と件数条件を同時に実装し、受理値が`auto`へ黙って退化しない回帰テストを追加する。NativeDiagramのnode/edge上限とacyclic検証を緩めず、巨大schemaや座標修正ループを再導入しない。
 - `addTable`の垂直中央揃えは`valign: "middle"`を使う。`"mid"`は表セルへ不正な`anchor="mid"`として出力されるため、正規化処理と回帰テストも維持する。
 - PptxGenJSの棒グラフは系列内の`c:dPt`を`c:dLbls`より後ろへ出力する場合がある。Open XMLの要素順に合わせて個別データ点をラベルより前へ移し、実データ点を含む回帰テストを維持する。
-- PptxGenJSは空のノートスライドとPowerPointが修復を要求するノートマスターを自動生成する。`VisualDeckSpec`は発表者ノートを扱わないため、白紙生成では`PptxGenJsOpenXmlNormalizer`がノート関連パーツを完全に削除し、企業テンプレートへの合成時も生成側のノートスライドを削除してテンプレート側のノートマスターだけを保持する。
+- PptxGenJSはノート未指定ページにも空のノートスライドを生成する。`PptxGenJsOpenXmlNormalizer`は空のノートだけを削除し、非空ノートは正規化済みの単一ノートマスターへ接続する。企業テンプレートへの合成時も非空ノートを保持し、テンプレート側または生成側のノートマスターをページごとに複製しない。ノートはPPTX受領者が読めるため、秘密情報や内部思考を保存しない。

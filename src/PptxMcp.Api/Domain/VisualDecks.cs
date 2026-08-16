@@ -138,7 +138,15 @@ public sealed record VisualSlideSpec(
     [property: Description("Optional per-slide information density override: airy, balanced, or detailed. Omit to inherit deck design.density.")]
     string? Density = null,
     [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
-    string? RecipeId = null);
+    string? RecipeId = null,
+    [property: Description("Optional PowerPoint speaker notes stored outside the visible slide canvas. For MSI-generated decks, provide both the slide purpose and presentation-ready talk script on every slide.")]
+    VisualSpeakerNotesSpec? SpeakerNotes = null);
+
+public sealed record VisualSpeakerNotesSpec(
+    [property: Description("One concise sentence stating what this slide must communicate or persuade the audience to understand. This appears under the fixed 'このスライドの狙い' heading in PowerPoint speaker notes.")]
+    string Purpose,
+    [property: Description("Presentation-ready narration for this slide. Do not include hidden chain-of-thought, credentials, internal-only URLs, or content that recipients must not see.")]
+    string TalkScript);
 
 public sealed record VisualMediaSpec(
     [property: Description("Opaque asset_id returned by pptx_register_uploaded_image_asset in the same user and conversation scope.")]
@@ -346,6 +354,7 @@ public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
     [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
     [property: JsonPropertyName("renderer")] string Renderer,
+    [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
     [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
 
 public sealed record BrandedVisualDeckCreationResult(
@@ -355,6 +364,7 @@ public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId,
     [property: JsonPropertyName("template_layout_name")] string TemplateLayoutName,
     [property: JsonPropertyName("template_theme_applied")] bool TemplateThemeApplied,
+    [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
     [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
 
 public sealed record VisualSlideRevision(
@@ -802,6 +812,7 @@ public static partial class VisualDeckValidator
         ValidateOptionalText(slide.Attribution, $"{prefix}.attribution", 120);
         ValidateOptionalText(slide.Takeaway, $"{prefix}.takeaway", 280);
         ValidateOptionalText(slide.RecipeId, $"{prefix}.recipeId", 128);
+        ValidateSpeakerNotes(slide.SpeakerNotes, prefix);
         if (slide.RecipeId is not null && !OpaqueIdentifierRegex().IsMatch(slide.RecipeId))
         {
             throw new PptxValidationException(
@@ -1939,6 +1950,17 @@ public static partial class VisualDeckValidator
         {
             ValidateText(value, path, 0, maximumLength);
         }
+    }
+
+    private static void ValidateSpeakerNotes(VisualSpeakerNotesSpec? speakerNotes, string prefix)
+    {
+        if (speakerNotes is null)
+        {
+            return;
+        }
+
+        ValidateSingleLineText(speakerNotes.Purpose, $"{prefix}.speakerNotes.purpose", 1, 240);
+        ValidateText(speakerNotes.TalkScript, $"{prefix}.speakerNotes.talkScript", 1, 1_200);
     }
 
     private static void ValidateText(string? value, string path, int minimumLength, int maximumLength)

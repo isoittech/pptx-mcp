@@ -679,6 +679,7 @@ public sealed class JobService(
         }
 
         var materializedRevisions = MaterializeVisualObjectReferences(originalDeck, revisions);
+        materializedRevisions = MaterializeSpeakerNotes(originalDeck, materializedRevisions);
         ValidateBrandProfileRevisions(originalDeck, materializedRevisions);
         var revisionsBySlide = materializedRevisions.ToDictionary(static revision => revision.SlideNumber);
         var slides = originalDeck.Slides
@@ -724,6 +725,21 @@ public sealed class JobService(
 
         return materialized;
     }
+
+    private static VisualSlideRevision[] MaterializeSpeakerNotes(
+        VisualDeckSpec originalDeck,
+        IReadOnlyList<VisualSlideRevision> revisions) =>
+        revisions
+            .Select(revision => revision.Slide.SpeakerNotes is not null
+                ? revision
+                : revision with
+                {
+                    Slide = revision.Slide with
+                    {
+                        SpeakerNotes = originalDeck.Slides[revision.SlideNumber - 1].SpeakerNotes,
+                    },
+                })
+            .ToArray();
 
     internal static VisualDeckSpec InsertVisualSlides(
         VisualDeckSpec originalDeck,

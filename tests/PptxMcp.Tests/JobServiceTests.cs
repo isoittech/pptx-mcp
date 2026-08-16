@@ -102,6 +102,38 @@ public sealed class JobServiceTests
     }
 
     [Fact]
+    public void VisualSlideRevisionPreservesSpeakerNotesWhenReplacementOmitsThem()
+    {
+        var originalNotes = new VisualSpeakerNotesSpec(
+            "意思決定の理由を伝える。",
+            "このページでは判断基準を説明します。");
+        var original = new VisualDeckSpec(
+            "Speaker notes",
+            [new VisualSlideSpec(VisualSlideKind.Statement, "判断", Body: "初版", SpeakerNotes: originalNotes)]);
+
+        var inherited = JobService.ApplyVisualDeckRevisions(
+            original,
+            [new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Statement, "判断", Body: "修正版"))],
+            50);
+        var replacedNotes = new VisualSpeakerNotesSpec("修正理由を伝える。", "修正後の説明です。");
+        var replaced = JobService.ApplyVisualDeckRevisions(
+            original,
+            [
+                new VisualSlideRevision(
+                    1,
+                    new VisualSlideSpec(
+                        VisualSlideKind.Statement,
+                        "判断",
+                        Body: "修正版",
+                        SpeakerNotes: replacedNotes)),
+            ],
+            50);
+
+        Assert.Same(originalNotes, inherited.Slides[0].SpeakerNotes);
+        Assert.Same(replacedNotes, replaced.Slides[0].SpeakerNotes);
+    }
+
+    [Fact]
     public void RejectsDuplicateVisualDeckRevisionSlideNumbers()
     {
         var original = new VisualDeckSpec(
