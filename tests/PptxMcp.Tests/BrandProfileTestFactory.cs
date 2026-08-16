@@ -70,6 +70,15 @@ internal static class BrandProfileTestFactory
                 backgrounds = new[] { "Reserve dark backgrounds for section messages." },
                 emphasis = new[] { "Use accent color sparingly." },
             },
+            visual_object_policy = new
+            {
+                allowed_archetypes = new[] { "arrow", "curvedArrow", "frame", "callout", "bracket", "ring", "ribbon" },
+                allowed_styles = new[] { "quietCorporate", "editorial", "technical" },
+                default_style = "quietCorporate",
+                maximum_per_slide = 3,
+                maximum_per_deck = 16,
+                strong_requires_focal_purpose = true,
+            },
             prohibited_rules = new[]
             {
                 "Do not use decorative placeholders as finished visuals.",
@@ -172,7 +181,8 @@ internal static class BrandProfileTestFactory
         new(CreateOptions(root, requireDesignBrief));
 
     public static (DesignBriefSpec Brief, AssetPlanItem[] AssetPlan) CreateBrief(
-        BrandProfileReference profileReference)
+        BrandProfileReference profileReference,
+        IReadOnlyList<string>? visualObjectAssetIds = null)
     {
         var brief = new DesignBriefSpec(
             "Business leaders",
@@ -206,7 +216,8 @@ internal static class BrandProfileTestFactory
                 AssetPreferredMedium.NativeDiagram,
                 AssetAcquisition.NativeDraw,
                 AssetFallback.None,
-                AssetPlanStatus.Ready),
+                AssetPlanStatus.Ready,
+                VisualObjectAssetIds: visualObjectAssetIds),
         };
         return (brief, assetPlan);
     }

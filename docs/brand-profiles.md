@@ -57,6 +57,14 @@ bundleディレクトリ名とmanifestの`id`は完全一致させます。ID、
     "backgrounds": ["Reserve dark backgrounds for section messages."],
     "emphasis": ["Use accent color sparingly."]
   },
+  "visual_object_policy": {
+    "allowed_archetypes": ["arrow", "curvedArrow", "frame", "callout", "bracket", "ring", "ribbon"],
+    "allowed_styles": ["quietCorporate", "editorial", "technical"],
+    "default_style": "quietCorporate",
+    "maximum_per_slide": 3,
+    "maximum_per_deck": 16,
+    "strong_requires_focal_purpose": true
+  },
   "prohibited_rules": [
     "Do not use decorative placeholders as finished visuals."
   ],
@@ -129,7 +137,9 @@ bundleディレクトリ名とmanifestの`id`は完全一致させます。ID、
 
 manifestは256KB以下、profileは最大32件です。style directionは最大8件、recipeは最大64件、sampleは最大96件です。`data_series`は1〜8色を指定します。textとbackground/surfaceは4.5:1以上、muted textとbackground/surfaceは3.0:1以上のコントラストが必要です。
 
-`semantic_kind`、`design_style`、`density`、`motif`、`theme_preset`、`variant`は現行Visual Deckレンダラーが実装する値だけを受け付けます。variantは意味layoutと一致するだけでなく、slide追加時に内容件数等の実装条件も検証されます。`Metrics`の`spotlight`は縦方向の重なりを防ぐため正確に3件だけを受理し、recipeにも`item_count: 3`を必須とします。第1段階の`item_count`はこの組合せ以外には指定できません。
+`semantic_kind`、`design_style`、`density`、`motif`、`theme_preset`、`variant`は現行Visual Deckレンダラーが実装する値だけを受け付けます。variantは意味layoutと一致するだけでなく、slide追加時に内容件数等の実装条件も検証されます。`Metrics`の`spotlight`は縦方向の重なりを防ぐため正確に3件だけを受理し、recipeにも`item_count: 3`を必須とします。Processの`loop`、Timeline/Roadmapの`stepped`、Funnelの`pyramid`は3〜6件だけを受理します。`NativeDiagram` recipeはvariant=`auto`とし、実slideのdiagram kind/node/edge上限を別途検証します。第1段階の`item_count`はMetrics spotlight以外には指定できません。
+
+`visual_object_policy`は導入環境が使える補助図形と強さを制限します。server capは1ページ3件、1デッキ24件で、profileはそれ以下にだけ狭められます。`strong_requires_focal_purpose=true`ではstrong objectを`visualPurpose=emphasis`だけに限定します。ブランド準拠は図形を増やすことではありません。通常は`quietCorporate`と`subtle`を既定とし、矢印は方向・成長・循環、枠／吹き出しは1つの判断や数値を示す場合だけ使ってください。
 
 style directionの`theme_preset`はrenderer対応値として必須ですが、現schemaはprofileの`color_roles`を全方向へ明示してpresetの基礎paletteを上書きします。したがってpreset名だけを変えても実効palette差にはなりません。方向差は`design_style`、`motif`、用途別recipeの構造差で作り、方向別paletteは将来のschema拡張までprofile内で表現できると誤認しないでください。
 
@@ -166,6 +176,6 @@ Asset Planで素材を使わないページを表す正規形は、`preferred_me
 
 `template_source=default`はtemplate IDを固定しますが、現段階のprofile hashは既定template PPTX本体のbytesを含みません。template差替え時もversionを上げ、profile bundleとtemplateをatomicに配備してください。
 
-無引数のcatalog呼出しは常にsummaryだけです。`purpose`、`density`、`styleDirectionId`で絞る場合も、先に一覧から選んだ正確な`profileId`が必要です。これにより複数profileのrule、recipe、sampleを1応答へ展開しません。
+無引数のcatalog呼出しはsummaryとcompactな`style_directions`候補だけです。そこで正確な`profileId`と`styleDirectionId`を選び、2回目かつ最後の呼出しでdetail、recipe、sample要約を取得します。単一用途だけ`purpose`／`density`も指定でき、複数用途は方向だけで全用途recipeを取得します。これにより複数profileのrule、recipe、sampleや、全方向のrecipeを1応答へ展開しません。
 
-生成後はprofile version/hash、style direction、各slideのrecipe契約と、検証済みDesign Briefの最小監査snapshotをjob payloadへ残します。監査snapshotにはsource policy、確定・推定assumption、Asset Planの意味token、`selection_source=agentDefault|userCard`、opaque参照だけを保存し、期限付き`brief_id`、choice session、option、URL、path、認証情報は保存しません。refineでもこのbindingを保持し、追加ページの新しいAsset Planを検証できない第2段階ではprofile-bound deckへのinsertを拒否します。
+生成後はprofile version/hash、style direction、各slideのrecipe契約と、検証済みDesign Briefの最小監査snapshotをjob payloadへ残します。監査snapshotにはsource policy、確定・推定assumption、Asset Planの意味token、`selection_source=agentDefault|userCard`、opaque参照だけを保存し、期限付き`brief_id`、choice session、option、URL、path、認証情報は保存しません。refineでもこのbindingを保持し、prepared visual object参照は置換slideで省略された場合に元ページからmaterializeします。明示された異なるIDは拒否します。追加ページの新しいAsset Planを検証できない第2段階ではprofile-bound deckへのinsertを拒否します。

@@ -9,7 +9,8 @@ namespace PptxMcp.Jobs;
 public sealed class VisualDeckDraftService(
     IOptions<PptxMcpOptions> options,
     TimeProvider timeProvider,
-    ImageAssetRepository? imageAssets = null)
+    ImageAssetRepository? imageAssets = null,
+    VisualObjectAssetRepository? visualObjectAssets = null)
 {
     public const int MaximumBatchSlides = 4;
     private const int MaximumActiveDrafts = 128;
@@ -140,10 +141,12 @@ public sealed class VisualDeckDraftService(
                     $"startSlideNumber must be {expectedStart} for this draft. Do not resend an accepted batch.");
             }
 
-            ValidateBrandRecipes(current, slides, expectedStart);
-            ValidateImageAssets(caller, current, slides, expectedStart);
+            var materializedSlides = MaterializePlannedVisualObjects(current, slides, expectedStart);
+            ValidateBrandRecipes(current, materializedSlides, expectedStart);
+            ValidateImageAssets(caller, current, materializedSlides, expectedStart);
+            ValidateVisualObjectAssets(caller, current, materializedSlides, expectedStart);
 
-            var combined = current.Slides.Concat(slides).ToArray();
+            var combined = current.Slides.Concat(materializedSlides).ToArray();
             if (combined.Length > current.ExpectedSlideCount)
             {
                 throw new PptxValidationException(
@@ -158,6 +161,34 @@ public sealed class VisualDeckDraftService(
                 return CreateView(updated);
             }
         }
+    }
+
+    private static IReadOnlyList<VisualSlideSpec> MaterializePlannedVisualObjects(
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides,
+        int startSlideNumber)
+    {
+        if (draft.DesignBrief is null)
+        {
+            return slides;
+        }
+
+        return slides.Select((slide, index) =>
+        {
+            if (slide.VisualObjects is { Count: > 0 }
+                || !draft.DesignBrief.AssetPlan.TryGetValue(startSlideNumber + index, out var plan)
+                || plan.VisualObjectAssetIds is not { Count: > 0 } plannedIds)
+            {
+                return slide;
+            }
+
+            return slide with
+            {
+                VisualObjects = plannedIds
+                    .Select(static assetId => new VisualObjectAssetReference(assetId))
+                    .ToArray(),
+            };
+        }).ToArray();
     }
 
     public VisualDeckDraftSubmission AcquireForSubmission(
@@ -283,7 +314,7 @@ public sealed class VisualDeckDraftService(
         }
     }
 
-    private static VisualDeckSpec CreateDeck(DraftState draft, IReadOnlyList<VisualSlideSpec> slides) =>
+    private VisualDeckSpec CreateDeck(DraftState draft, IReadOnlyList<VisualSlideSpec> slides) =>
         new(
             draft.Title,
             slides,
@@ -292,7 +323,35 @@ public sealed class VisualDeckDraftService(
             draft.Language,
             draft.Design,
             "visual-v5",
-            CreatePersistedBrandBinding(draft));
+            CreatePersistedBrandBinding(draft),
+            CreateVisualObjectSnapshots(draft, slides));
+
+    private VisualObjectRenderSpec[]? CreateVisualObjectSnapshots(
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides)
+    {
+        var references = slides
+            .SelectMany(static slide => slide.VisualObjects ?? [])
+            .Select(static item => item.AssetId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (references.Length == 0)
+        {
+            return null;
+        }
+
+        if (visualObjectAssets is null)
+        {
+            throw new PptxValidationException(
+                "visual_object_assets_unavailable",
+                "Visual object asset resolution is unavailable in this server configuration.");
+        }
+
+        return references
+            .Select(assetId => visualObjectAssets.GetOwnedByScope(draft.UserScope, draft.ConversationScope, assetId))
+            .Select(static asset => new VisualObjectRenderSpec(asset.AssetId, asset.Brief, asset.Fingerprint))
+            .ToArray();
+    }
 
     private static VisualDeckBrandProfileBinding? CreatePersistedBrandBinding(DraftState draft)
     {
@@ -330,7 +389,8 @@ public sealed class VisualDeckDraftService(
                 pair.Value.CropIntent,
                 pair.Value.AspectRatio,
                 pair.Value.TextSafeArea,
-                pair.Value.AssetId))
+                pair.Value.AssetId,
+                pair.Value.VisualObjectAssetIds))
             .ToArray();
         var audit = new VisualDeckDesignBriefAudit(
             draft.DesignBrief.Brief.SourcePolicy,
@@ -506,6 +566,74 @@ public sealed class VisualDeckDraftService(
                     throw new PptxValidationException(
                         "visual_media_asset_plan_mismatch",
                         $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
+                }
+            }
+        }
+    }
+
+    private void ValidateVisualObjectAssets(
+        CallerContext caller,
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides,
+        int startSlideNumber)
+    {
+        var policy = draft.DesignBrief?.Profile.Detail.VisualObjectPolicy;
+        var existingCount = draft.Slides.Sum(static slide => slide.VisualObjects?.Count ?? 0);
+        var incomingCount = slides.Sum(static slide => slide.VisualObjects?.Count ?? 0);
+        if (policy is not null && existingCount + incomingCount > policy.MaximumPerDeck)
+        {
+            throw new PptxValidationException(
+                "visual_object_brand_limit_exceeded",
+                $"The active Brand Profile allows at most {policy.MaximumPerDeck} visual objects per deck.");
+        }
+
+        for (var index = 0; index < slides.Count; index++)
+        {
+            var slideNumber = startSlideNumber + index;
+            var actual = slides[index].VisualObjects?.Select(static item => item.AssetId).ToArray() ?? [];
+            if (policy is not null && actual.Length > policy.MaximumPerSlide)
+            {
+                throw new PptxValidationException(
+                    "visual_object_brand_limit_exceeded",
+                    $"The active Brand Profile allows at most {policy.MaximumPerSlide} visual objects on slide {slideNumber}.");
+            }
+            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true
+                && !actual.Order(StringComparer.Ordinal).SequenceEqual(
+                    (plan.VisualObjectAssetIds ?? []).Order(StringComparer.Ordinal),
+                    StringComparer.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_object_asset_plan_mismatch",
+                    $"Slide {slideNumber}.visualObjects must exactly preserve the visual_object_asset_ids fixed by the validated Asset Plan.");
+            }
+
+            foreach (var reference in slides[index].VisualObjects ?? [])
+            {
+                if (visualObjectAssets is null)
+                {
+                    throw new PptxValidationException(
+                        "visual_object_assets_unavailable",
+                        "Visual object asset resolution is unavailable in this server configuration.");
+                }
+
+                var asset = visualObjectAssets.GetOwned(caller, reference.AssetId);
+                if (policy is not null
+                    && (!policy.AllowedArchetypes.Contains(asset.Brief.Archetype)
+                        || !policy.AllowedStyles.Contains(asset.Brief.Style)
+                        || policy.StrongRequiresFocalPurpose
+                            && asset.Brief.Emphasis == VisualObjectEmphasis.Strong
+                            && asset.Brief.VisualPurpose != VisualObjectPurpose.Emphasis))
+                {
+                    throw new PptxValidationException(
+                        "visual_object_brand_policy_mismatch",
+                        $"Visual object {reference.AssetId} is not permitted by the active Brand Profile's archetype, style, or focal-emphasis policy.");
+                }
+
+                if (asset.Brief.SlideNumber != slideNumber)
+                {
+                    throw new PptxValidationException(
+                        "visual_object_slide_mismatch",
+                        $"Visual object {reference.AssetId} was prepared for slide {asset.Brief.SlideNumber}, not slide {slideNumber}.");
                 }
             }
         }

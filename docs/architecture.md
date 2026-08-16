@@ -57,14 +57,16 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 最大50ページの完全な`VisualDeckSpec`を1回のツール入力で生成させると、公開JSON Schemaで`deck`を必須にしてもBedrock Claude Opus 5が空呼び出しを先行することをE2Eで確認しました。このため一括作成ツールは公開せず、概要、最大4ページの連続バッチ、生成確定へ分割します。ドラフトは利用者と会話で分離し、1時間で失効します。addの`startSlideNumber`は任意とし、省略時は受理済み末尾からサーバーが算出します。明示値がある場合は正しい次番号との一致を検証します。
 
 - title、agenda、section、statement、bullets
-- cards、metrics、comparison、structuredBrief、scorecard、dataTable、media、musicScore
+- cards、metrics、comparison、structuredBrief、scorecard、dataTable、media、nativeDiagram、musicScore
 - process、timeline
 - matrix、funnel、roadmap、chart、dashboard
 - quote、closing
 
-テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。通常の公開入力にファイルパス、URL、画像bytes、JavaScript、任意座標を持たせません。例外となる`media.assetId`は事前登録済みのopaque IDだけで、serverがcaller scopeとSHA-256を検証し、metadataなしPNGを埋め込みます。
+テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。通常の公開入力にファイルパス、URL、画像bytes、JavaScript、任意座標を持たせません。例外となる`media.assetId`は事前登録済みのopaque IDだけで、serverがcaller scopeとSHA-256を検証し、metadataなしPNGを埋め込みます。`visualObjects.assetId`も同じcaller scopeで解決しますが、保存対象は画像ではなく上限付きの意味仕様で、job payloadへimmutable snapshotを保存し、PowerPointネイティブ図形へ展開します。
 
 `media`は最初の実装として`split`だけを提供します。ユーザー提供JPEG/PNGを`pptx_register_uploaded_image_asset`で検証・無害化してから、実asset ID、crop intent、text positionを指定します。画像がない状態を空欄や仮画像で完成扱いせず、native diagramまたは画像なしrecipeへ切り替えます。詳細は[ADR 0016](adr/0016-conversation-scoped-image-assets-and-media-split.md)に記録します。
+
+`nativeDiagram`はtree/flow 3〜12 nodes、cycle 3〜6、concentric 2〜4、network 3〜9、edge最大18を受け、座標をレンダラー側で決めます。既存Processの`loop`、Timeline/Roadmapの`stepped`、Funnelの`pyramid`は、受理されるだけの別名ではなく専用描画分岐を持ちます。補助オブジェクトは`pptx_prepare_visual_objects`へ1回最大8件をまとめ、1ページ最大3件・strong最大1件・会話最大24件です。tool resultはopaque IDと短い説明のJSON textだけを返し、PPTX本体はネイティブ図形です。詳細は[ADR 0017](adr/0017-native-semantic-diagrams-and-visual-objects.md)に記録します。
 
 固定レイアウトはモデルのデザイン判断を置き換えるものではなく、安全に実行できる視覚語彙です。モデルがストーリー、強調対象、構図、視覚モチーフを決め、レンダラーは整列、最小余白、編集可能性、ファイル整合性を保証します。文字量の多い説明では`structuredBrief`が本文を2〜3個の見出し付きセクションへ分け、`scorecard`が評価軸×選択肢を編集可能なPowerPoint表へ変換します。`density=detailed`は単一のフォント倍率ではなく、外周余白、見出し領域、内部間隔、罫線、カード形状、影をまとめて切り替えます。6枚以上で構図が4種類未満、同一構図が3枚連続、文字中心ページが過半数の場合に加え、500文字以上のページでdetailedを使っていない場合や全セクションを強調している場合は `design_warnings` を返します。詳細は [ADR 0010](adr/0010-readable-information-density.md) に記録します。
 
@@ -80,7 +82,7 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 4. 問題があれば厳密なプレースホルダー資料は `pptx_refine_deck`、白紙資料とブランドVisual Deckは `pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡して再生成する。
 5. 最大2巡で収束させ、視覚確認後にダウンロードリンクを提示する。
 
-`pptx_refine_visual_slide` は `jobId=latest` で同じ利用者・会話の最新成功Visual Deckだけを解決します。各Visual DeckジョブはルートID、親ID、修正巡、同巡の修正済みページを永続化します。これにより複数ページの逐次修正を累積しつつ、古い成功ジョブからの分岐、複数ページ一括修正、同一ページの3回目の修正を拒否します。`pptx_refine_visual_deck`は互換用に維持しますが、同じ1ページ制約を適用します。成功後の全体startは拒否し、初回生成が失敗した場合の全体再試行は1回だけ許可します。
+`pptx_refine_visual_slide` は `jobId=latest` で同じ利用者・会話の最新成功Visual Deckだけを解決します。置換slideが`visualObjects`を省略した場合は元ページの参照をjob snapshotからmaterializeし、異なるIDの明示は拒否します。各Visual DeckジョブはルートID、親ID、修正巡、同巡の修正済みページを永続化します。これにより複数ページの逐次修正を累積しつつ、古い成功ジョブからの分岐、複数ページ一括修正、同一ページの3回目の修正を拒否します。`pptx_refine_visual_deck`は互換用に維持しますが、同じ1ページ制約を適用します。成功後の全体startは拒否し、初回生成が失敗した場合の全体再試行は1回だけ許可します。
 
 ページ数を増やす場合は `pptx_refine_visual_slide` ではなく `pptx_insert_visual_slides` を使います。同ツールは追加する `VisualSlideSpec` だけを受け取り、同じ利用者・会話にある成功済みVisual Deckの仕様へサーバー側で挿入します。`afterSlideNumber` は既存ページを基準とし、省略時は末尾へ追加します。ブランドVisual Deckでは元ジョブのテンプレートファイルと `templateLayoutId` も再利用します。第1段階では完成版の `VisualDeckSpec` をPptxGenJSへ再投入するためファイル生成・Open XML検証・プレビュー生成は全ページ分行いますが、モデルが既存ページを再構築・再送する必要はありません。
 

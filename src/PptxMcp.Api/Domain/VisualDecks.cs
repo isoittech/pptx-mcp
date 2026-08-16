@@ -29,6 +29,7 @@ public enum VisualSlideKind
     Scorecard,
     DataTable,
     Media,
+    NativeDiagram,
     MusicScore,
 }
 
@@ -51,7 +52,9 @@ public sealed record VisualDeckSpec(
     [property: Description("Server-owned renderer contract. New staged decks use visual-v5; omitted legacy payloads retain visual-v4 behavior during their stored lineage.")]
     string? RendererContract = null,
     [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
-    VisualDeckBrandProfileBinding? BrandProfileBinding = null);
+    VisualDeckBrandProfileBinding? BrandProfileBinding = null,
+    [property: JsonPropertyName("visual_object_assets"), Description("Server-owned immutable semantic visual object snapshots. Callers provide only slide.visualObjects asset IDs.")]
+    IReadOnlyList<VisualObjectRenderSpec>? VisualObjectAssets = null);
 
 public sealed record VisualDeckDraftView(
     [property: JsonPropertyName("draft_id")] string DraftId,
@@ -120,7 +123,7 @@ public sealed record VisualSlideSpec(
     IReadOnlyList<VisualBriefSectionSpec>? Sections = null,
     [property: Description("Editable comparison table for a scorecard slide. Each criterion must have exactly one cell per option.")]
     VisualScorecardSpec? Scorecard = null,
-    [property: Description("Implemented layout variant. Use auto normally; split for Media with one verified image asset or Bullets with at least four bullets and no takeaway; spotlight only for Metrics with exactly three metrics or Cards with three to four cards; editorial only for StructuredBrief with exactly three sections.")]
+    [property: Description("Implemented layout variant. Use auto normally; split for Media or qualifying Bullets; spotlight for qualifying Metrics/Cards; editorial for a three-section StructuredBrief; loop for Process; stepped for Timeline/Roadmap; pyramid for Funnel. Other combinations are rejected rather than silently ignored.")]
     string Variant = "auto",
     [property: Description("Editable native standard-notation and ukulele TAB score for a music_score slide. Use semantic pitches, durations, strings, frets, and fingers instead of coordinates.")]
     VisualMusicScoreSpec? MusicScore = null,
@@ -128,6 +131,10 @@ public sealed record VisualSlideSpec(
     VisualDataTableSpec? DataTable = null,
     [property: Description("Verified user-uploaded image content for a media slide. The assetId is opaque and conversation-bound; placeholders, URLs, and paths are never valid substitutes.")]
     VisualMediaSpec? Media = null,
+    [property: Description("Editable semantic diagram for a nativeDiagram slide. Coordinates, SVG, and XML are not accepted.")]
+    VisualDiagramSpec? Diagram = null,
+    [property: Description("Optional prepared native visual objects. Use at most three per slide and only opaque IDs returned by pptx_prepare_visual_objects in this conversation. A validated Design Brief materializes its planned IDs when omitted; any explicit list must match exactly.")]
+    IReadOnlyList<VisualObjectAssetReference>? VisualObjects = null,
     [property: Description("Optional per-slide information density override: airy, balanced, or detailed. Omit to inherit deck design.density.")]
     string? Density = null,
     [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
@@ -460,6 +467,9 @@ public static partial class VisualDeckValidator
         "spotlight",
         "split",
         "editorial",
+        "stepped",
+        "pyramid",
+        "loop",
     };
 
     private static readonly HashSet<string> LegacySlideVariants = new(StringComparer.OrdinalIgnoreCase)
@@ -520,6 +530,58 @@ public static partial class VisualDeckValidator
                 index + 1,
                 deck.Design?.Density,
                 rendererContract == "visual-v5");
+        }
+
+        ValidateVisualObjectAssets(deck);
+    }
+
+    private static void ValidateVisualObjectAssets(VisualDeckSpec deck)
+    {
+        var references = deck.Slides
+            .SelectMany(static slide => slide.VisualObjects ?? [])
+            .Select(static item => item.AssetId)
+            .ToArray();
+        if (references.Length == 0)
+        {
+            if (deck.VisualObjectAssets is { Count: > 0 })
+            {
+                throw new PptxValidationException(
+                    "visual_object_assets_unreferenced",
+                    "Server-owned visual_object_assets must not contain unreferenced objects.");
+            }
+
+            return;
+        }
+
+        if (references.Length > VisualObjectAssetRepository.MaximumConversationObjects
+            || deck.VisualObjectAssets is null
+            || deck.VisualObjectAssets.Count != references.Distinct(StringComparer.Ordinal).Count())
+        {
+            throw new PptxValidationException(
+                "visual_object_assets_missing",
+                "Every slide.visualObjects asset ID must have exactly one server-owned semantic snapshot.");
+        }
+
+        var assets = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var asset in deck.VisualObjectAssets)
+        {
+            if (asset is null
+                || !ImageAssetIdRegex().IsMatch(asset.AssetId)
+                || !assets.Add(asset.AssetId)
+                || asset.Fingerprint.Length != 64
+                || !asset.Fingerprint.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f'))
+            {
+                throw new PptxValidationException(
+                    "visual_object_assets_invalid",
+                    "Server-owned visual_object_assets contain an invalid ID or fingerprint.");
+            }
+        }
+
+        if (references.Any(reference => !assets.Contains(reference)))
+        {
+            throw new PptxValidationException(
+                "visual_object_assets_missing",
+                "Every slide.visualObjects asset ID must have exactly one server-owned semantic snapshot.");
         }
     }
 
@@ -615,6 +677,8 @@ public static partial class VisualDeckValidator
             + (slide.Cards?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Value?.Length ?? 0)) ?? 0)
             + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0)
             + (slide.Media?.Caption?.Length ?? 0)
+            + (slide.Diagram?.Nodes.Sum(static node => node.Label.Length + (node.Description?.Length ?? 0)) ?? 0)
+            + (slide.Diagram?.Edges?.Sum(static edge => edge.Label?.Length ?? 0) ?? 0)
             + (slide.MusicScore?.Caption?.Length ?? 0)
             + (slide.MusicScore?.Measures.Sum(static measure =>
                 measure.Events.Sum(static item => item.Annotation?.Length ?? 0)) ?? 0);
@@ -758,7 +822,7 @@ public static partial class VisualDeckValidator
             throw new PptxValidationException(
                 "visual_slide_variant_invalid",
                 usesModernRendererContract
-                    ? $"{prefix}.variant must be auto, spotlight, split, or editorial."
+                    ? $"{prefix}.variant must be auto, spotlight, split, editorial, stepped, pyramid, or loop."
                     : $"{prefix}.variant is not recognized by the stored legacy renderer contract.");
         }
 
@@ -858,6 +922,8 @@ public static partial class VisualDeckValidator
             !string.IsNullOrWhiteSpace(slide.Takeaway));
         ValidateMatrix(slide.Matrix, prefix);
         ValidateMedia(slide.Media, prefix);
+        ValidateDiagram(slide.Diagram, prefix);
+        ValidateVisualObjectReferences(slide.VisualObjects, prefix);
         ValidateMusicScore(slide.MusicScore, prefix);
 
         ValidateChart(slide.Chart, prefix);
@@ -909,6 +975,8 @@ public static partial class VisualDeckValidator
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.dataTable is required for a dataTable slide.");
             case VisualSlideKind.Media when slide.Media is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.media with a verified assetId is required for a Media slide; placeholders are not accepted.");
+            case VisualSlideKind.NativeDiagram when slide.Diagram is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.diagram is required for a NativeDiagram slide.");
             case VisualSlideKind.MusicScore when slide.MusicScore is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.musicScore is required for a musicScore slide.");
         }
@@ -1056,6 +1124,12 @@ public static partial class VisualDeckValidator
                 && slide.Cards?.Count is >= 3 and <= 4,
             "editorial" => slide.Kind == VisualSlideKind.StructuredBrief
                 && slide.Sections?.Count == 3,
+            "stepped" => slide.Kind is VisualSlideKind.Timeline or VisualSlideKind.Roadmap
+                && slide.Steps?.Count is >= 3 and <= 6,
+            "pyramid" => slide.Kind == VisualSlideKind.Funnel
+                && slide.Steps?.Count is >= 3 and <= 6,
+            "loop" => slide.Kind == VisualSlideKind.Process
+                && slide.Steps?.Count is >= 3 and <= 6,
             _ => false,
         };
         if (!supported)
@@ -1063,6 +1137,171 @@ public static partial class VisualDeckValidator
             throw new PptxValidationException(
                 "visual_slide_variant_kind_mismatch",
                 $"{prefix}.variant={variant} is not implemented for this slide's kind, content count, or takeaway state; use auto or satisfy the documented variant conditions.");
+        }
+    }
+
+    private static void ValidateVisualObjectReferences(
+        IReadOnlyList<VisualObjectAssetReference>? visualObjects,
+        string prefix)
+    {
+        if (visualObjects is null)
+        {
+            return;
+        }
+
+        if (visualObjects.Count is < 1 or > 3)
+        {
+            throw new PptxValidationException(
+                "visual_object_reference_count_invalid",
+                $"{prefix}.visualObjects must contain between 1 and 3 prepared object references.");
+        }
+
+        if (visualObjects.Any(static item => item is null || !ImageAssetIdRegex().IsMatch(item.AssetId))
+            || visualObjects.Select(static item => item.AssetId).Distinct(StringComparer.Ordinal).Count() != visualObjects.Count)
+        {
+            throw new PptxValidationException(
+                "visual_object_reference_invalid",
+                $"{prefix}.visualObjects must contain unique lowercase opaque asset IDs returned by pptx_prepare_visual_objects.");
+        }
+    }
+
+    private static void ValidateDiagram(VisualDiagramSpec? diagram, string prefix)
+    {
+        if (diagram is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.diagram";
+        if (diagram.Nodes is null || diagram.Nodes.Count is < 2 or > 12)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_nodes_out_of_range",
+                $"{path}.nodes must contain between 2 and 12 nodes.");
+        }
+
+        var countValid = diagram.Kind switch
+        {
+            VisualDiagramKind.Cycle => diagram.Nodes.Count is >= 3 and <= 6,
+            VisualDiagramKind.Concentric => diagram.Nodes.Count is >= 2 and <= 4,
+            VisualDiagramKind.Network => diagram.Nodes.Count is >= 3 and <= 9,
+            VisualDiagramKind.Tree or VisualDiagramKind.Flow => diagram.Nodes.Count is >= 3 and <= 12,
+            _ => false,
+        };
+        if (!countValid)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_kind_density_invalid",
+                $"{path}.nodes count is unsafe for {diagram.Kind}; use cycle 3-6, concentric 2-4, network 3-9, or tree/flow 3-12.");
+        }
+
+        var directionValid = diagram.Kind == VisualDiagramKind.Cycle
+            ? diagram.Direction.Equals("clockwise", StringComparison.OrdinalIgnoreCase)
+            : diagram.Direction.Equals("leftToRight", StringComparison.OrdinalIgnoreCase)
+                || diagram.Direction.Equals("topToBottom", StringComparison.OrdinalIgnoreCase);
+        if (!directionValid)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_direction_invalid",
+                $"{path}.direction is not supported for {diagram.Kind}.");
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var emphasized = 0;
+        for (var index = 0; index < diagram.Nodes.Count; index++)
+        {
+            var node = diagram.Nodes[index];
+            var nodePath = $"{path}.nodes[{index}]";
+            if (node is null || !OpaqueIdentifierRegex().IsMatch(node.Id) || !ids.Add(node.Id))
+            {
+                throw new PptxValidationException(
+                    "visual_diagram_node_id_invalid",
+                    $"{nodePath}.id must be unique and contain only ASCII letters, digits, hyphens, or underscores.");
+            }
+
+            ValidateText(node.Label, $"{nodePath}.label", 1, 48);
+            ValidateOptionalText(node.Description, $"{nodePath}.description", 100);
+            if (!IsSupportedTone(node.Tone))
+            {
+                throw new PptxValidationException(
+                    "visual_diagram_node_tone_invalid",
+                    $"{nodePath}.tone must be a supported semantic tone or a #RRGGBB color.");
+            }
+
+            emphasized += node.Emphasize ? 1 : 0;
+        }
+
+        if (emphasized > 2)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_emphasis_invalid",
+                $"{path} may emphasize at most two nodes.");
+        }
+
+        var edges = diagram.Edges ?? [];
+        if (edges.Count > 18)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_edges_out_of_range",
+                $"{path}.edges must not contain more than 18 relationships.");
+        }
+
+        if (diagram.Kind is VisualDiagramKind.Tree or VisualDiagramKind.Flow && edges.Count < diagram.Nodes.Count - 1)
+        {
+            throw new PptxValidationException(
+                "visual_diagram_edges_missing",
+                $"{path}.edges must connect the tree or flow nodes.");
+        }
+
+        var edgeKeys = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < edges.Count; index++)
+        {
+            var edge = edges[index];
+            var edgePath = $"{path}.edges[{index}]";
+            if (edge is null
+                || !ids.Contains(edge.From)
+                || !ids.Contains(edge.To)
+                || edge.From == edge.To
+                || !edgeKeys.Add($"{edge.From}\0{edge.To}"))
+            {
+                throw new PptxValidationException(
+                    "visual_diagram_edge_invalid",
+                    $"{edgePath} must reference two different known node IDs and must not duplicate a relationship.");
+            }
+
+            ValidateOptionalText(edge.Label, $"{edgePath}.label", 32);
+        }
+
+
+        if (diagram.Kind is VisualDiagramKind.Tree or VisualDiagramKind.Flow)
+        {
+            var indegrees = ids.ToDictionary(static id => id, static _ => 0, StringComparer.Ordinal);
+            foreach (var edge in edges)
+            {
+                indegrees[edge.To]++;
+            }
+
+            var queue = new Queue<string>(indegrees.Where(static pair => pair.Value == 0).Select(static pair => pair.Key));
+            var visited = 0;
+            while (queue.TryDequeue(out var nodeId))
+            {
+                visited++;
+                foreach (var edge in edges.Where(edge => edge.From == nodeId))
+                {
+                    indegrees[edge.To]--;
+                    if (indegrees[edge.To] == 0)
+                    {
+                        queue.Enqueue(edge.To);
+                    }
+                }
+            }
+
+            if (visited != ids.Count)
+            {
+                throw new PptxValidationException(
+                    "visual_diagram_cycle_invalid",
+                    $"{path}.edges for tree/flow must be acyclic. Use diagram.kind=cycle for a loop.");
+            }
         }
     }
 

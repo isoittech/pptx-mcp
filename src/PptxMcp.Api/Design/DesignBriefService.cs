@@ -971,6 +971,7 @@ public sealed partial class DesignBriefService(
             CropIntent = null,
             AspectRatio = null,
             TextSafeArea = null,
+            VisualObjectAssetIds = null,
         };
     }
 
@@ -1123,6 +1124,7 @@ public sealed partial class DesignBriefService(
             ValidateOptionalToken(item.TextSafeArea, SupportedTextSafeAreas, $"assetPlan[{index}].text_safe_area");
             ValidateOptionalIdentifier(item.AttributionRef, $"assetPlan[{index}].attribution_ref");
             ValidateOptionalAssetId(item.AssetId, $"assetPlan[{index}].asset_id");
+            ValidateVisualObjectAssetIds(item.VisualObjectAssetIds, $"assetPlan[{index}].visual_object_asset_ids");
             ValidateOptionalIdentifier(
                 item.ApprovedAssetCollectionId,
                 $"assetPlan[{index}].approved_asset_collection_id");
@@ -1168,6 +1170,7 @@ public sealed partial class DesignBriefService(
                     || item.CropIntent is not null
                     || item.AspectRatio is not null
                     || item.TextSafeArea is not null
+                    || item.VisualObjectAssetIds is { Count: > 0 }
                     || recipe.RequiredAssetRoles.Count > 0)
                 {
                     throw new PptxValidationException(
@@ -1207,6 +1210,7 @@ public sealed partial class DesignBriefService(
                 }
 
                 if (item.ApprovedAssetCollectionId is not null
+                    || item.VisualObjectAssetIds is { Count: > 0 }
                     || item.LicenseStatus is not (AssetLicenseStatus.UserProvided or AssetLicenseStatus.Unknown))
                 {
                     throw new PptxValidationException(
@@ -1222,6 +1226,12 @@ public sealed partial class DesignBriefService(
                     throw new PptxValidationException(
                         "asset_plan_approved_library_invalid",
                         $"{path} approvedLibrary cannot use a user-uploaded asset_id.");
+                }
+                if (item.VisualObjectAssetIds is { Count: > 0 })
+                {
+                    throw new PptxValidationException(
+                        "asset_plan_visual_objects_invalid",
+                        $"{path} approvedLibrary cannot bind native visual object assets.");
                 }
                 if (item.ApprovedAssetCollectionId is null
                     || !profile.Detail.ApprovedAssetCollectionIds.Contains(
@@ -1271,6 +1281,23 @@ public sealed partial class DesignBriefService(
             throw new PptxValidationException(
                 "asset_plan_asset_id_invalid",
                 $"{path} must be the lowercase opaque asset_id returned by pptx_register_uploaded_image_asset.");
+        }
+    }
+
+    private static void ValidateVisualObjectAssetIds(IReadOnlyList<string>? values, string path)
+    {
+        if (values is null)
+        {
+            return;
+        }
+
+        if (values.Count is < 1 or > VisualObjectAssetRepository.MaximumObjectsPerSlide
+            || values.Any(static value => !ImageAssetIdRegex().IsMatch(value))
+            || values.Distinct(StringComparer.Ordinal).Count() != values.Count)
+        {
+            throw new PptxValidationException(
+                "asset_plan_visual_objects_invalid",
+                $"{path} must contain 1-{VisualObjectAssetRepository.MaximumObjectsPerSlide} unique lowercase opaque IDs returned by pptx_prepare_visual_objects.");
         }
     }
 

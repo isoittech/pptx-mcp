@@ -678,14 +678,51 @@ public sealed class JobService(
                 "Provide 1 or more distinct visual slide revisions within the source deck slide range.");
         }
 
-        ValidateBrandProfileRevisions(originalDeck, revisions);
-        var revisionsBySlide = revisions.ToDictionary(static revision => revision.SlideNumber);
+        var materializedRevisions = MaterializeVisualObjectReferences(originalDeck, revisions);
+        ValidateBrandProfileRevisions(originalDeck, materializedRevisions);
+        var revisionsBySlide = materializedRevisions.ToDictionary(static revision => revision.SlideNumber);
         var slides = originalDeck.Slides
             .Select((slide, index) => revisionsBySlide.TryGetValue(index + 1, out var revision)
                 ? revision.Slide
                 : slide)
             .ToArray();
         return originalDeck with { Slides = slides };
+    }
+
+    private static VisualSlideRevision[] MaterializeVisualObjectReferences(
+        VisualDeckSpec originalDeck,
+        IReadOnlyList<VisualSlideRevision> revisions)
+    {
+        var materialized = new VisualSlideRevision[revisions.Count];
+        for (var index = 0; index < revisions.Count; index++)
+        {
+            var revision = revisions[index];
+            var originalReferences = originalDeck.Slides[revision.SlideNumber - 1].VisualObjects ?? [];
+            var replacementReferences = revision.Slide.VisualObjects;
+
+            if (replacementReferences is not { Count: > 0 })
+            {
+                materialized[index] = originalReferences.Count == 0
+                    ? revision
+                    : revision with
+                    {
+                        Slide = revision.Slide with { VisualObjects = originalReferences },
+                    };
+                continue;
+            }
+
+            if (!replacementReferences.Select(static item => item.AssetId)
+                    .SequenceEqual(originalReferences.Select(static item => item.AssetId), StringComparer.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_object_binding_mismatch",
+                    $"Slide {revision.SlideNumber} must preserve its prepared visual object asset IDs during refinement. Omit visualObjects to inherit the stored list.");
+            }
+
+            materialized[index] = revision;
+        }
+
+        return materialized;
     }
 
     internal static VisualDeckSpec InsertVisualSlides(

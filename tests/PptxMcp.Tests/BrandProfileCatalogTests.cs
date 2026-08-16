@@ -29,12 +29,17 @@ public sealed class BrandProfileCatalogTests
             Assert.Empty(compactProfile.Recipes);
             Assert.Empty(compactProfile.Samples);
             Assert.Matches("^[0-9a-f]{64}$", compactProfile.Summary.ContentHash);
+            var direction = Assert.Single(compactProfile.Summary.StyleDirections);
+            Assert.Equal("standard", direction.Id);
+            Assert.Equal("executive", direction.DesignStyle);
+            Assert.Contains("exactly once more", compact.Instruction, StringComparison.Ordinal);
 
             var selected = Assert.Single(filtered.Profiles);
             Assert.NotNull(selected.Detail);
             Assert.Equal("kpi-balanced", Assert.Single(selected.Recipes).Id);
             Assert.Equal("sample-kpi-medium", Assert.Single(selected.Samples).Id);
             Assert.Equal(compactProfile.Summary.ContentHash, selected.Summary.ContentHash);
+            Assert.Contains("Do not call pptx_get_design_catalog again", filtered.Instruction, StringComparison.Ordinal);
         }
         finally
         {

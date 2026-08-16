@@ -6,6 +6,101 @@ namespace PptxMcp.Tests;
 public sealed class VisualDeckValidatorTests
 {
     [Fact]
+    public void NativeDiagramAcceptsBoundedAcyclicTree()
+    {
+        var deck = new VisualDeckSpec(
+            "Decision",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.NativeDiagram,
+                    "Decision tree",
+                    Diagram: new VisualDiagramSpec(
+                        VisualDiagramKind.Tree,
+                        [
+                            new VisualDiagramNodeSpec("root", "Need", Emphasize: true),
+                            new VisualDiagramNodeSpec("a", "Option A"),
+                            new VisualDiagramNodeSpec("b", "Option B"),
+                        ],
+                        [
+                            new VisualDiagramEdgeSpec("root", "a", "low risk"),
+                            new VisualDiagramEdgeSpec("root", "b", "high value"),
+                        ])),
+            ],
+            RendererContract: "visual-v5");
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void NativeDiagramRejectsCyclesAndUnsafeDensity()
+    {
+        var cyclic = new VisualDeckSpec(
+            "Invalid",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.NativeDiagram,
+                    "Cycle disguised as tree",
+                    Diagram: new VisualDiagramSpec(
+                        VisualDiagramKind.Tree,
+                        [
+                            new VisualDiagramNodeSpec("a", "A"),
+                            new VisualDiagramNodeSpec("b", "B"),
+                            new VisualDiagramNodeSpec("c", "C"),
+                        ],
+                        [
+                            new VisualDiagramEdgeSpec("a", "b"),
+                            new VisualDiagramEdgeSpec("b", "c"),
+                            new VisualDiagramEdgeSpec("c", "a"),
+                        ])),
+            ],
+            RendererContract: "visual-v5");
+        Assert.Equal(
+            "visual_diagram_cycle_invalid",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(cyclic, 50)).Code);
+
+        var oversizedCycle = cyclic with
+        {
+            Slides =
+            [
+                cyclic.Slides[0] with
+                {
+                    Diagram = new VisualDiagramSpec(
+                        VisualDiagramKind.Cycle,
+                        Enumerable.Range(0, 7).Select(index => new VisualDiagramNodeSpec($"n{index}", $"Node {index}")).ToArray(),
+                        Direction: "clockwise"),
+                },
+            ],
+        };
+        Assert.Equal(
+            "visual_diagram_kind_density_invalid",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(oversizedCycle, 50)).Code);
+    }
+
+    [Theory]
+    [InlineData(VisualSlideKind.Process, "loop")]
+    [InlineData(VisualSlideKind.Timeline, "stepped")]
+    [InlineData(VisualSlideKind.Funnel, "pyramid")]
+    [InlineData(VisualSlideKind.Roadmap, "stepped")]
+    public void NewVariantsAreAcceptedOnlyForImplementedKinds(VisualSlideKind kind, string variant)
+    {
+        var steps = new[]
+        {
+            new VisualStepSpec("A"),
+            new VisualStepSpec("B"),
+            new VisualStepSpec("C"),
+        };
+        var valid = new VisualDeckSpec(
+            "Variants",
+            [new VisualSlideSpec(kind, "Implemented", Steps: steps, Variant: variant)],
+            RendererContract: "visual-v5");
+        VisualDeckValidator.Validate(valid, 50);
+
+        var invalid = valid with { Slides = [new VisualSlideSpec(VisualSlideKind.Bullets, "Wrong", Bullets: ["A", "B"], Variant: variant)] };
+        Assert.Equal(
+            "visual_slide_variant_kind_mismatch",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(invalid, 50)).Code);
+    }
+    [Fact]
     public void AcceptsVerifiedMediaSplitAndRejectsPlaceholderOnlyMedia()
     {
         var verified = new VisualDeckSpec(
