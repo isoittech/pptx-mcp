@@ -114,7 +114,62 @@ internal static class TestPresentationFactory
         return path;
     }
 
-    private static P.Shape CreateShape(IReadOnlyList<string> runs, bool isPlaceholder)
+    public static string CreateWithSpeakerNotes(string notesText, params string[] runs)
+    {
+        var path = Create(runs);
+        using var document = PresentationDocument.Open(path, true);
+        var presentationPart = document.PresentationPart!;
+        var slidePart = presentationPart.SlideParts.Single();
+        var notesSlidePart = slidePart.AddNewPart<NotesSlidePart>();
+        var notesMasterPart = notesSlidePart.AddNewPart<NotesMasterPart>();
+        notesMasterPart.NotesMaster = new P.NotesMaster(
+            new P.CommonSlideData(CreateShapeTree()),
+            new P.ColorMap
+            {
+                Background1 = A.ColorSchemeIndexValues.Light1,
+                Text1 = A.ColorSchemeIndexValues.Dark1,
+                Background2 = A.ColorSchemeIndexValues.Light2,
+                Text2 = A.ColorSchemeIndexValues.Dark2,
+                Accent1 = A.ColorSchemeIndexValues.Accent1,
+                Accent2 = A.ColorSchemeIndexValues.Accent2,
+                Accent3 = A.ColorSchemeIndexValues.Accent3,
+                Accent4 = A.ColorSchemeIndexValues.Accent4,
+                Accent5 = A.ColorSchemeIndexValues.Accent5,
+                Accent6 = A.ColorSchemeIndexValues.Accent6,
+                Hyperlink = A.ColorSchemeIndexValues.Hyperlink,
+                FollowedHyperlink = A.ColorSchemeIndexValues.FollowedHyperlink,
+            });
+        notesSlidePart.NotesSlide = new P.NotesSlide(
+            new P.CommonSlideData(CreateShapeTree(CreateShape(
+                [notesText],
+                isPlaceholder: true,
+                placeholderType: P.PlaceholderValues.Body))),
+            new P.ColorMapOverride(new A.MasterColorMapping()));
+        notesSlidePart.AddPart(slidePart);
+        presentationPart.AddPart(notesMasterPart);
+        var relationshipId = presentationPart.GetIdOfPart(notesMasterPart);
+        var notesMasterId = new P.NotesMasterId();
+        notesMasterId.SetAttribute(new OpenXmlAttribute(
+            "r",
+            "id",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            relationshipId));
+        presentationPart.Presentation!.InsertBefore(
+            new P.NotesMasterIdList(notesMasterId),
+            presentationPart.Presentation.GetFirstChild<P.SlideIdList>());
+        notesMasterPart.NotesMaster.Save();
+        notesSlidePart.NotesSlide.Save();
+        presentationPart.Presentation.Save();
+        return path;
+    }
+
+    private static P.Shape CreateShape(IReadOnlyList<string> runs, bool isPlaceholder) =>
+        CreateShape(runs, isPlaceholder, P.PlaceholderValues.Title);
+
+    private static P.Shape CreateShape(
+        IReadOnlyList<string> runs,
+        bool isPlaceholder,
+        P.PlaceholderValues placeholderType)
     {
         var paragraph = new A.Paragraph();
         foreach (var runText in runs)
@@ -125,7 +180,7 @@ internal static class TestPresentationFactory
         var applicationProperties = new P.ApplicationNonVisualDrawingProperties();
         if (isPlaceholder)
         {
-            applicationProperties.Append(new P.PlaceholderShape { Type = P.PlaceholderValues.Title, Index = 1U });
+            applicationProperties.Append(new P.PlaceholderShape { Type = placeholderType, Index = 1U });
         }
 
         return new P.Shape(

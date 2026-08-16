@@ -365,7 +365,7 @@ public sealed class OpenXmlPresentationEngineTests
     }
 
     [Fact]
-    public async Task RemovesGeneratedNotesPartsDuringBrandedVisualComposition()
+    public async Task RemovesEmptyGeneratedNotesPartsDuringBrandedVisualComposition()
     {
         var template = TestPresentationFactory.CreateBlankBrandedTemplate();
         var visual = TestPresentationFactory.CreateWithGeneratedNotes("VISUAL CONTENT");
@@ -391,6 +391,42 @@ public sealed class OpenXmlPresentationEngineTests
             Assert.DoesNotContain(
                 archive.Entries,
                 static entry => entry.FullName.StartsWith("ppt/notesMasters/", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(template);
+            File.Delete(visual);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
+    public async Task PreservesSpeakerNotesDuringBrandedVisualComposition()
+    {
+        const string speakerNotes = "【このスライドの狙い】\n提案の価値を伝える。\n\n【トークスクリプト】\nここで承認事項を説明します。";
+        var template = TestPresentationFactory.CreateBlankBrandedTemplate();
+        var visual = TestPresentationFactory.CreateWithSpeakerNotes(speakerNotes, "VISUAL CONTENT");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            await new OpenXmlPresentationEngine().CreateBrandedVisualDeckAsync(
+                template,
+                visual,
+                destination,
+                "auto",
+                CancellationToken.None);
+
+            using var document = PresentationDocument.Open(destination, false);
+            var presentationPart = document.PresentationPart!;
+            var notesSlidePart = presentationPart.SlideParts.Single().NotesSlidePart;
+            Assert.NotNull(notesSlidePart);
+            Assert.Contains(
+                speakerNotes,
+                notesSlidePart!.NotesSlide!.Descendants<A.Text>().Select(static text => text.Text));
+            Assert.Single(
+                presentationPart.Parts
+                    .Select(static relationship => relationship.OpenXmlPart)
+                    .OfType<NotesMasterPart>());
         }
         finally
         {

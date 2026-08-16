@@ -19,6 +19,9 @@ if (!specificationPath || !outputPath) {
 
 const spec = JSON.parse(await readFile(specificationPath, "utf8"));
 const imageAssets = await loadImageAssets(spec.imageAssets ?? {});
+const visualObjectAssets = new Map(
+  (spec.visual_object_assets ?? []).map((asset) => [asset.asset_id, asset]),
+);
 const rendererContract = String(spec.rendererContract ?? "visual-v4").toLowerCase();
 if (!["visual-v4", "visual-v5"].includes(rendererContract)) {
   throw new Error(`Unsupported renderer contract: ${rendererContract}`);
@@ -379,6 +382,10 @@ for (const [index, slideSpec] of spec.slides.entries()) {
     case "media":
       renderMedia(slide, slideSpec, index);
       break;
+    case "nativediagram":
+    case "native_diagram":
+      renderNativeDiagram(slide, slideSpec, index);
+      break;
     case "musicscore":
     case "music_score":
       renderMusicScore(slide, slideSpec, index);
@@ -386,9 +393,22 @@ for (const [index, slideSpec] of spec.slides.entries()) {
     default:
       throw new Error(`Unsupported slide kind: ${kind}`);
   }
+  renderPreparedVisualObjects(slide, slideSpec);
+  addSpeakerNotes(slide, slideSpec.speakerNotes);
 }
 
 await pptx.writeFile({ fileName: path.resolve(outputPath) });
+
+function addSpeakerNotes(slide, speakerNotes) {
+  if (!speakerNotes) {
+    return;
+  }
+
+  slide.addNotes(
+    `【このスライドの狙い】\n${speakerNotes.purpose.trim()}\n\n`
+    + `【トークスクリプト】\n${speakerNotes.talkScript.trim()}`,
+  );
+}
 
 function renderTitle(slide, data, index) {
   background(slide, theme.primary);
@@ -1779,9 +1799,326 @@ function musicRestGlyph(duration) {
   return glyph;
 }
 
+function visualObjectColor(role) {
+  const colors = {
+    primary: theme.primary,
+    secondary: theme.secondary,
+    accent: theme.accent,
+    positive: theme.positive,
+    warning: theme.warning,
+    critical: theme.critical,
+    muted: theme.muted,
+  };
+  return colors[String(role ?? "accent").toLowerCase()] ?? theme.accent;
+}
+
+function visualObjectShape(archetype, orientation) {
+  const direction = String(orientation ?? "right").toLowerCase();
+  if (archetype === "curvedarrow") return pptx.ShapeType.circularArrow;
+  if (archetype === "frame") return pptx.ShapeType.roundRect;
+  if (archetype === "callout") return pptx.ShapeType.wedgeRoundRectCallout;
+  if (archetype === "bracket") return pptx.ShapeType.bracketPair;
+  if (archetype === "ring") return pptx.ShapeType.ellipse;
+  if (archetype === "ribbon") return pptx.ShapeType.ribbon;
+  return {
+    left: pptx.ShapeType.leftArrow,
+    up: pptx.ShapeType.upArrow,
+    down: pptx.ShapeType.downArrow,
+    right: pptx.ShapeType.rightArrow,
+  }[direction] ?? pptx.ShapeType.rightArrow;
+}
+
+function visualObjectPlacement(data, brief, placement, objectIndex) {
+  const kind = String(data.kind ?? "").toLowerCase();
+  const variant = String(data.variant ?? "auto").toLowerCase();
+  const archetype = String(brief.archetype ?? "").toLowerCase();
+  const diagramDirection = String(data.diagram?.direction ?? "leftToRight").toLowerCase();
+
+  // Semantic objects must attach to an existing layout region. The generic
+  // fallback is intentionally small, but diagram/KPI/roadmap layouts reserve
+  // safer anchors so an object never reads as a floating placeholder.
+  if (kind === "nativediagram" || kind === "native_diagram") {
+    if (placement === "contentconnector"
+      && archetype === "bracket"
+      && diagramDirection === "toptobottom") {
+      return { x: 3.26, y: 5.3, w: 6.82, h: 0.14, labelPlacement: "insideBottom" };
+    }
+    if (placement === "contentconnector" && archetype === "bracket") {
+      return { x: 4.72, y: 6.16, w: 3.88, h: 0.12, labelPlacement: "insideBottom" };
+    }
+  }
+  if (kind === "metrics" && variant === "spotlight" && placement === "focusframe") {
+    return { x: 0.82, y: 2.17, w: 4.94, h: 4.14, labelPlacement: "insideBottom" };
+  }
+  if (kind === "roadmap"
+    && variant === "stepped"
+    && (placement === "chartannotation" || archetype === "callout")) {
+    return { x: 5.52, y: 2.92, w: 2.16, h: 0.62, labelPlacement: "inside" };
+  }
+  if (["arrow", "callout", "ribbon"].includes(archetype) && brief.label) {
+    return { x: 7.92, y: 2.54 + objectIndex * 0.66, w: 1.72, h: 0.58, labelPlacement: "inside" };
+  }
+
+  const placements = {
+    headeraccent: { x: 10.72, y: 1.43, w: 1.65, h: 0.2, labelPlacement: "below" },
+    contentconnector: { x: 6.18 + objectIndex * 0.58, y: 3.58, w: 0.54, h: 0.34, labelPlacement: "below" },
+    focusframe: { x: 0.82, y: 2.17, w: 4.94, h: 4.14, labelPlacement: "insideBottom" },
+    chartannotation: { x: 8.02, y: 2.54 + objectIndex * 0.66, w: 1.62, h: 0.58, labelPlacement: "inside" },
+    sectiondivider: { x: 0.72, y: 1.72 + objectIndex * 0.13, w: 11.9, h: 0.08, labelPlacement: "below" },
+    backgroundmotif: { x: 10.92, y: 5.8, w: 1.38, h: 0.78, labelPlacement: "none" },
+  };
+  return placements[placement] ?? placements.contentconnector;
+}
+
+function renderPreparedVisualObjects(slide, data) {
+  const references = data.visualObjects ?? [];
+  references.forEach((reference, objectIndex) => {
+    const asset = visualObjectAssets.get(reference.assetId);
+    if (!asset) throw new Error(`Missing prepared visual object: ${reference.assetId}`);
+    const brief = asset.brief;
+    const archetype = String(brief.archetype).toLowerCase();
+    const placement = String(brief.placementRole).toLowerCase();
+    const emphasis = String(brief.emphasis).toLowerCase();
+    const color = visualObjectColor(brief.paletteRole);
+    const subtle = emphasis === "subtle";
+    const strong = emphasis === "strong";
+    const box = visualObjectPlacement(data, brief, placement, objectIndex);
+    const { labelPlacement, ...geometry } = box;
+    const isOutline = ["frame", "bracket", "ring"].includes(archetype);
+    const containsLabel = ["arrow", "callout", "ribbon"].includes(archetype)
+      && Boolean(brief.label)
+      && labelPlacement === "inside";
+    const objectStyle = String(brief.style ?? "quietCorporate").toLowerCase();
+    const transparency = subtle ? 90 : strong ? 72 : objectStyle === "editorial" ? 88 : 82;
+    const widthScale = objectStyle === "technical" ? 0.8 : objectStyle === "roundedFriendly" ? 1.15 : 1;
+    const shapeOptions = {
+      ...geometry,
+      rotate: archetype === "curvedarrow" ? 18 : 0,
+      fill: { color, transparency: isOutline ? 100 : transparency },
+      line: {
+        color,
+        transparency: subtle ? 72 : strong ? 14 : objectStyle === "editorial" ? 54 : 38,
+        width: (subtle ? 0.72 : strong ? 1.4 : 1.05) * widthScale,
+        dash: objectStyle === "technical" ? "dash" : "solid",
+      },
+    };
+    if (containsLabel) {
+      slide.addText(brief.label, {
+        shape: visualObjectShape(archetype, brief.orientation),
+        ...shapeOptions,
+        fontFace: theme.bodyFont,
+        fontSize: scaled(9.5),
+        bold: strong,
+        color: readableToneOnBackground(color, theme.background, theme.text),
+        margin: 0.08,
+        align: "center",
+        valign: "mid",
+        fit: "shrink",
+      });
+    } else {
+      slide.addShape(visualObjectShape(archetype, brief.orientation), shapeOptions);
+    }
+    if (brief.label && labelPlacement !== "none" && !containsLabel) {
+      const insideBottom = labelPlacement === "insideBottom";
+      slide.addText(brief.label, {
+        x: box.x + (insideBottom ? 0.2 : 0.08),
+        y: insideBottom ? box.y + box.h - 0.38 : box.y + box.h + 0.04,
+        w: Math.max(0.65, box.w - (insideBottom ? 0.4 : 0.16)),
+        h: insideBottom ? 0.24 : 0.22,
+        fontFace: theme.bodyFont,
+        fontSize: scaled(insideBottom ? 8.5 : 9),
+        bold: strong,
+        color: readableToneOnBackground(color, theme.background, theme.text),
+        margin: 0,
+        align: "center",
+        fit: "shrink",
+      });
+    }
+  });
+}
+
+function diagramTone(node, index) {
+  if (node.emphasize) return theme.accent;
+  const tone = String(node.tone ?? "neutral").toLowerCase();
+  if (tone === "neutral" || tone === "muted") return theme.secondary;
+  return toneColor(tone, index);
+}
+
+function diagramNode(slide, node, x, y, w, h, index, shape = pptx.ShapeType.roundRect) {
+  const color = diagramTone(node, index);
+  slide.addShape(shape, {
+    x, y, w, h,
+    rectRadius: 0.06,
+    fill: { color, transparency: node.emphasize ? 5 : 88 },
+    line: { color, transparency: node.emphasize ? 0 : 35, width: node.emphasize ? 2 : 1.15 },
+  });
+  slide.addText(node.label, {
+    x: x + 0.14, y: y + 0.13, w: w - 0.28, h: node.description ? 0.36 : h - 0.26,
+    fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 14 : 12.5), bold: true,
+    color: theme.text, margin: 0, align: "center", valign: "mid", fit: "shrink",
+  });
+  if (node.description) {
+    slide.addText(node.description, {
+      x: x + 0.14, y: y + 0.55, w: w - 0.28, h: h - 0.68,
+      fontFace: theme.bodyFont, fontSize: scaled(9.5), color: theme.muted,
+      margin: 0, align: "center", valign: "mid", fit: "shrink",
+    });
+  }
+}
+
+function diagramConnector(slide, x1, y1, x2, y2, label) {
+  slide.addShape(pptx.ShapeType.line, {
+    x: x1, y: y1, w: x2 - x1, h: y2 - y1,
+    line: { color: theme.secondary, transparency: 30, width: 1.5, endArrowType: "triangle" },
+  });
+  if (label) {
+    slide.addText(label, {
+      x: (x1 + x2) / 2 - 0.55, y: (y1 + y2) / 2 - 0.17, w: 1.1, h: 0.26,
+      fontFace: theme.bodyFont, fontSize: scaled(8.5), bold: true,
+      color: theme.secondaryTextOnBackground, fill: { color: theme.background, transparency: 8 },
+      margin: 0.03, align: "center", fit: "shrink",
+    });
+  }
+}
+
+function renderNativeDiagram(slide, data, index) {
+  contentBase(slide, data, index);
+  const diagram = data.diagram;
+  const nodes = diagram.nodes ?? [];
+  const edges = diagram.edges ?? [];
+  const kind = String(diagram.kind).toLowerCase();
+  if (kind === "cycle") {
+    const cx = 6.65;
+    const cy = 4.36;
+    const rx = 4.25;
+    const ry = 1.58;
+    slide.addShape(pptx.ShapeType.circularArrow, {
+      x: cx - 2.18, y: cy - 2.18, w: 4.36, h: 4.36,
+      rotate: 18,
+      fill: { color: theme.secondary, transparency: 86 },
+      line: { color: theme.secondary, transparency: 100 },
+    });
+    const positions = nodes.map((_, nodeIndex) => {
+      const angle = -Math.PI / 2 + nodeIndex * Math.PI * 2 / nodes.length;
+      return { x: cx + Math.cos(angle) * rx - 0.9, y: cy + Math.sin(angle) * ry - 0.48 };
+    });
+    nodes.forEach((node, nodeIndex) => {
+      const current = positions[nodeIndex];
+      diagramNode(slide, node, current.x, current.y, 1.8, 0.96, nodeIndex);
+    });
+  } else if (kind === "concentric") {
+    const cx = 5.25;
+    const cy = 4.32;
+    [...nodes].reverse().forEach((node, reverseIndex) => {
+      const nodeIndex = nodes.length - 1 - reverseIndex;
+      const size = 1.35 + nodeIndex * 0.82;
+      const color = diagramTone(node, nodeIndex);
+      slide.addShape(pptx.ShapeType.ellipse, {
+        x: cx - size / 2, y: cy - size / 2, w: size, h: size,
+        fill: { color, transparency: 82 + Math.min(12, nodeIndex * 3) },
+        line: { color, transparency: 26, width: node.emphasize ? 2.2 : 1.2 },
+      });
+    });
+    nodes.forEach((node, nodeIndex) => {
+      slide.addText(node.label, {
+        x: 8.25, y: 2.42 + nodeIndex * 0.78, w: 3.62, h: 0.5,
+        fontFace: theme.bodyFont, fontSize: scaled(12.5), bold: node.emphasize,
+        color: theme.text, margin: 0.05, fit: "shrink",
+        bullet: { indent: 11 },
+      });
+    });
+  } else if (kind === "network") {
+    const center = { x: 5.58, y: 3.58, w: 2.18, h: 1.18 };
+    const positions = nodes.slice(1).map((_, spokeIndex) => {
+      const angle = -Math.PI / 2 + spokeIndex * Math.PI * 2 / Math.max(1, nodes.length - 1);
+      return { x: 6.67 + Math.cos(angle) * 4.5 - 0.88, y: 4.18 + Math.sin(angle) * 1.78 - 0.45 };
+    });
+    positions.forEach((position) => diagramConnector(slide, 6.67, 4.18, position.x + 0.88, position.y + 0.45, null));
+    nodes.slice(1).forEach((node, nodeIndex) => diagramNode(slide, node, positions[nodeIndex].x, positions[nodeIndex].y, 1.76, 0.9, nodeIndex + 1));
+    diagramNode(slide, nodes[0], center.x, center.y, center.w, center.h, 0, pptx.ShapeType.ellipse);
+  } else {
+    const nodeMap = new Map(nodes.map((node, nodeIndex) => [node.id, nodeIndex]));
+    const incoming = new Map(nodes.map((node) => [node.id, 0]));
+    edges.forEach((edge) => incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1));
+    const levels = new Map(nodes.filter((node) => incoming.get(node.id) === 0).map((node) => [node.id, 0]));
+    for (let pass = 0; pass < nodes.length; pass += 1) {
+      edges.forEach((edge) => {
+        if (levels.has(edge.from)) levels.set(edge.to, Math.max(levels.get(edge.to) ?? 0, levels.get(edge.from) + 1));
+      });
+    }
+    nodes.forEach((node, nodeIndex) => { if (!levels.has(node.id)) levels.set(node.id, nodeIndex); });
+    const maxLevel = Math.max(...levels.values(), 1);
+    const vertical = String(diagram.direction).toLowerCase() === "toptobottom";
+    const positions = new Map();
+    for (let level = 0; level <= maxLevel; level += 1) {
+      const levelNodes = nodes.filter((node) => levels.get(node.id) === level);
+      levelNodes.forEach((node, itemIndex) => {
+        const cross = (itemIndex + 1) / (levelNodes.length + 1);
+        const x = vertical ? 1.05 + cross * 9.4 : 0.86 + level * 10.2 / maxLevel;
+        const y = vertical ? 2.12 + level * 3.28 / maxLevel : 2.0 + cross * 3.65;
+        positions.set(node.id, { x, y });
+      });
+    }
+    edges.forEach((edge) => {
+      const from = positions.get(edge.from);
+      const to = positions.get(edge.to);
+      diagramConnector(
+        slide,
+        vertical ? from.x + 0.92 : from.x + 1.84,
+        vertical ? from.y + 0.98 : from.y + 0.49,
+        vertical ? to.x + 0.92 : to.x,
+        vertical ? to.y : to.y + 0.49,
+        edge.label,
+      );
+    });
+    nodes.forEach((node, nodeIndex) => {
+      const position = positions.get(node.id);
+      diagramNode(slide, node, position.x, position.y, 1.84, 0.98, nodeMap.get(node.id) ?? nodeIndex);
+    });
+  }
+  if (data.takeaway) {
+    slide.addText(data.takeaway, {
+      x: 1.05, y: 6.64, w: 11.25, h: 0.3,
+      fontFace: theme.bodyFont, fontSize: scaled(11), bold: true,
+      color: theme.secondaryTextOnBackground, margin: 0, align: "center", fit: "shrink",
+    });
+  }
+}
+
 function renderProcess(slide, data, index) {
   contentBase(slide, data, index);
   const steps = data.steps ?? [];
+  if (String(data.variant ?? "auto").toLowerCase() === "loop") {
+    const cx = 6.66;
+    const cy = 4.28;
+    const rx = 4.25;
+    const ry = 1.55;
+    const positions = steps.map((_, stepIndex) => {
+      const angle = -Math.PI / 2 + stepIndex * Math.PI * 2 / steps.length;
+      return { x: cx + Math.cos(angle) * rx - 0.92, y: cy + Math.sin(angle) * ry - 0.49 };
+    });
+    positions.forEach((current, stepIndex) => {
+      const next = positions[(stepIndex + 1) % positions.length];
+      diagramConnector(slide, current.x + 0.92, current.y + 0.49, next.x + 0.92, next.y + 0.49, null);
+    });
+    steps.forEach((step, stepIndex) => diagramNode(
+      slide,
+      { label: step.title, description: step.description, tone: stepIndex === steps.length - 1 ? "accent" : "neutral", emphasize: stepIndex === steps.length - 1 },
+      positions[stepIndex].x,
+      positions[stepIndex].y,
+      1.84,
+      0.98,
+      stepIndex,
+    ));
+    if (data.takeaway) {
+      slide.addText(data.takeaway, {
+        x: 4.4, y: 3.93, w: 4.52, h: 0.7,
+        fontFace: theme.bodyFont, fontSize: scaled(12), bold: true,
+        color: theme.secondaryTextOnBackground, margin: 0, align: "center", valign: "mid", fit: "shrink",
+      });
+    }
+    return;
+  }
   if (steps.length <= 4) {
     const width = (11.55 - 0.32 * (steps.length - 1)) / steps.length;
     steps.forEach((step, stepIndex) => {
@@ -1816,6 +2153,30 @@ function renderProcess(slide, data, index) {
 function renderTimeline(slide, data, index) {
   contentBase(slide, data, index);
   const steps = data.steps ?? [];
+  if (String(data.variant ?? "auto").toLowerCase() === "stepped") {
+    const stepWidth = 10.7 / steps.length;
+    steps.forEach((step, stepIndex) => {
+      const x = 1.0 + stepIndex * stepWidth;
+      const y = 5.78 - stepIndex * 0.58;
+      const color = stepIndex === steps.length - 1 ? theme.accent : theme.secondary;
+      slide.addShape(pptx.ShapeType.rect, {
+        x, y, w: stepWidth - 0.08, h: 6.32 - y,
+        fill: { color, transparency: 78 - Math.min(28, stepIndex * 6) },
+        line: { color, transparency: 52, width: 1 },
+      });
+      slide.addText(step.label ?? String(stepIndex + 1).padStart(2, "0"), {
+        x: x + 0.12, y: y + 0.12, w: 0.55, h: 0.3,
+        fontFace: theme.bodyFont, fontSize: scaled(9.5), bold: true, color: theme.secondaryTextOnBackground,
+        margin: 0, fit: "shrink",
+      });
+      slide.addText(step.title, {
+        x: x + 0.12, y: y - 0.72, w: stepWidth - 0.24, h: 0.55,
+        fontFace: theme.bodyFont, fontSize: scaled(11.5), bold: true, color: theme.text,
+        margin: 0, align: "center", valign: "bottom", fit: "shrink",
+      });
+    });
+    return;
+  }
   const startX = 1.08;
   const endX = 12.2;
   const spacing = (endX - startX) / (steps.length - 1);
@@ -2044,10 +2405,11 @@ function renderFunnel(slide, data, index) {
   const minWidth = 4.2;
   const rowHeight = Math.min(0.82, 4.24 / steps.length);
   steps.forEach((step, stepIndex) => {
+    const pyramid = String(data.variant ?? "auto").toLowerCase() === "pyramid";
     const ratio = steps.length === 1 ? 0 : stepIndex / (steps.length - 1);
     const width = maxWidth - (maxWidth - minWidth) * ratio;
     const x = 0.78 + (maxWidth - width) / 2;
-    const y = 2.08 + stepIndex * rowHeight;
+    const y = 2.08 + (pyramid ? steps.length - 1 - stepIndex : stepIndex) * rowHeight;
     const color = stepIndex % 2 === 0 ? theme.secondary : theme.primary;
     slide.addShape(pptx.ShapeType.trapezoid, {
       x, y, w: width, h: rowHeight - 0.08,
@@ -2070,6 +2432,37 @@ function renderFunnel(slide, data, index) {
 function renderRoadmap(slide, data, index) {
   contentBase(slide, data, index);
   const steps = data.steps ?? [];
+  if (String(data.variant ?? "auto").toLowerCase() === "stepped") {
+    const width = 10.95 / steps.length;
+    steps.forEach((step, stepIndex) => {
+      const x = 0.88 + stepIndex * width;
+      const y = 5.76 - stepIndex * 0.54;
+      const color = stepIndex === steps.length - 1 ? theme.accent : theme.secondary;
+      slide.addShape(pptx.ShapeType.chevron, {
+        x, y, w: width + 0.12, h: 0.72,
+        fill: { color, transparency: stepIndex === steps.length - 1 ? 12 : 62 },
+        line: { color, transparency: 100 },
+      });
+      slide.addText(step.label ?? String(stepIndex + 1), {
+        x: x + 0.58, y: y + 0.2, w: 0.42, h: 0.26,
+        fontFace: theme.bodyFont, fontSize: scaled(9), bold: true,
+        color: readableForeground(color), margin: 0, align: "center", fit: "shrink",
+      });
+      slide.addText(step.title, {
+        x: x + 0.05, y: y - 0.72, w: width - 0.12, h: 0.52,
+        fontFace: theme.bodyFont, fontSize: scaled(11.5), bold: true,
+        color: theme.text, margin: 0, align: "center", valign: "bottom", fit: "shrink",
+      });
+      if (step.description) {
+        slide.addText(step.description, {
+          x: x + 0.08, y: y + 0.82, w: width - 0.2, h: 0.52,
+          fontFace: theme.bodyFont, fontSize: scaled(8.5), color: theme.muted,
+          margin: 0, align: "center", valign: "top", fit: "shrink",
+        });
+      }
+    });
+    return;
+  }
   const gap = 0.18;
   const width = (11.86 - gap * (steps.length - 1)) / steps.length;
   slide.addShape(pptx.ShapeType.rightArrow, {

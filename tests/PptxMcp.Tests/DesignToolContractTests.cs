@@ -6,6 +6,7 @@ using ModelContextProtocol.Server;
 using PptxMcp.Design;
 using PptxMcp.Domain;
 using PptxMcp.Security;
+using PptxMcp.Storage;
 using PptxMcp.Tools;
 using Xunit.Abstractions;
 
@@ -39,8 +40,10 @@ public sealed class DesignToolContractTests(ITestOutputHelper output)
         Assert.Contains("purpose", schema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
         Assert.Contains("density", schema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
         Assert.Contains("styleDirectionId", schema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
-        Assert.Contains("無引数ではcompactなprofile一覧だけ", tool.ProtocolTool.Description, StringComparison.Ordinal);
-        Assert.Contains("profileIdと任意のpurpose", tool.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("正確に2回だけ", tool.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("style_directions", tool.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("複数用途", tool.ProtocolTool.Description, StringComparison.Ordinal);
+        Assert.Contains("2回目の後は再呼出しません", tool.ProtocolTool.Description, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -177,7 +180,35 @@ public sealed class DesignToolContractTests(ITestOutputHelper output)
     private static ServiceProvider CreateToolServices() => new ServiceCollection()
         .AddSingleton<CallerContextAccessor>(_ => throw new InvalidOperationException("Schema-only service."))
         .AddSingleton<DesignBriefService>(_ => throw new InvalidOperationException("Schema-only service."))
+        .AddSingleton<VisualObjectAssetRepository>(_ => throw new InvalidOperationException("Schema-only service."))
         .BuildServiceProvider();
+
+    [Fact]
+    public void VisualObjectToolIsBoundedSemanticAndCompact()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.PrepareVisualObjects),
+            BindingFlags.Public | BindingFlags.Static);
+        Assert.NotNull(method);
+        using var services = CreateToolServices();
+        var tool = McpServerTool.Create(
+            method,
+            (object)null!,
+            new McpServerToolCreateOptions { Services = services }).ProtocolTool;
+        var schema = tool.InputSchema.GetRawText();
+        var bytes = Encoding.UTF8.GetByteCount(tool.Description ?? string.Empty)
+            + Encoding.UTF8.GetByteCount(schema);
+
+        Assert.Equal("pptx_prepare_visual_objects", tool.Name);
+        Assert.Contains("objects", tool.InputSchema.GetProperty("required").EnumerateArray().Select(static item => item.GetString()));
+        Assert.Contains("visualPurpose", schema, StringComparison.Ordinal);
+        Assert.Contains("placementRole", schema, StringComparison.Ordinal);
+        Assert.Contains("paletteRole", schema, StringComparison.Ordinal);
+        Assert.DoesNotContain("svg", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
+        Assert.DoesNotContain("url", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
+        Assert.DoesNotContain("path", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
+        Assert.True(bytes <= 9_000, $"visual object tool contract is {bytes} bytes");
+    }
 
     [Fact]
     public void DesignEnumsSerializeAsStableCamelCaseTokens()

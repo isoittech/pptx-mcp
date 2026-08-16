@@ -29,6 +29,85 @@ public sealed class BrandProfileJobBindingTests
     }
 
     [Fact]
+    public void RefinementMaterializesStoredVisualObjectReferencesWhenReplacementOmitsThem()
+    {
+        const string assetId = "0123456789abcdef0123456789abcdef";
+        var brief = new VisualObjectBrief(
+            1,
+            VisualObjectPurpose.Grouping,
+            VisualObjectArchetype.Bracket,
+            PlacementRole: VisualObjectPlacementRole.ContentConnector);
+        var baseDeck = CreateBoundDeck();
+        var original = baseDeck with
+        {
+            Slides =
+            [
+                baseDeck.Slides[0] with
+                {
+                    VisualObjects = [new VisualObjectAssetReference(assetId)],
+                },
+                baseDeck.Slides[1],
+            ],
+            VisualObjectAssets = [new VisualObjectRenderSpec(assetId, brief, new string('b', 64))],
+        };
+        var revision = new VisualSlideRevision(
+            1,
+            new VisualSlideSpec(
+                VisualSlideKind.Title,
+                "Updated decision",
+                Density: "airy",
+                RecipeId: "cover-airy"));
+
+        var result = JobService.ApplyVisualDeckRevisions(original, [revision], 50);
+
+        Assert.Equal(assetId, Assert.Single(result.Slides[0].VisualObjects!).AssetId);
+        Assert.Equal(assetId, Assert.Single(result.VisualObjectAssets!).AssetId);
+        VisualDeckValidator.Validate(result, 50);
+    }
+
+    [Fact]
+    public void RefinementRejectsChangingStoredVisualObjectReferences()
+    {
+        const string assetId = "0123456789abcdef0123456789abcdef";
+        var baseDeck = CreateBoundDeck();
+        var original = baseDeck with
+        {
+            Slides =
+            [
+                baseDeck.Slides[0] with
+                {
+                    VisualObjects = [new VisualObjectAssetReference(assetId)],
+                },
+                baseDeck.Slides[1],
+            ],
+            VisualObjectAssets =
+            [
+                new VisualObjectRenderSpec(
+                    assetId,
+                    new VisualObjectBrief(
+                        1,
+                        VisualObjectPurpose.Grouping,
+                        VisualObjectArchetype.Bracket,
+                        PlacementRole: VisualObjectPlacementRole.ContentConnector),
+                    new string('b', 64)),
+            ],
+        };
+        var revision = new VisualSlideRevision(
+            1,
+            new VisualSlideSpec(
+                VisualSlideKind.Title,
+                "Updated decision",
+                VisualObjects: [new VisualObjectAssetReference("1123456789abcdef0123456789abcdef")],
+                Density: "airy",
+                RecipeId: "cover-airy"));
+
+        var error = Assert.Throws<PptxValidationException>(() =>
+            JobService.ApplyVisualDeckRevisions(original, [revision], 50));
+
+        Assert.Equal("visual_object_binding_mismatch", error.Code);
+    }
+
+    [Fact]
     public void ProfileBoundRefinementRejectsRecipeKindDensityAndVariantDrift()
     {
         var original = CreateBoundDeck();

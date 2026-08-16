@@ -158,8 +158,8 @@ public sealed partial class BrandProfileCatalog
             "available",
             views,
             includeDetails
-                ? "Select exact recipe IDs for every slide, then call pptx_validate_design_brief with the immutable profile version and content_hash shown here."
-                : "Call pptx_get_design_catalog again with profileId and optional purpose, density, or styleDirectionId filters to retrieve compact recipes and sample guidance.");
+                ? "This is the final catalog detail response for this workflow. Do not call pptx_get_design_catalog again. Select exact recipe IDs for every slide, then call pptx_validate_design_brief with the immutable profile version and content_hash shown here."
+                : "Choose one style_directions entry, then call pptx_get_design_catalog exactly once more with profileId and that styleDirectionId. A mixed-purpose deck must omit purpose and density so the response contains every required recipe.");
     }
 
     public BrandProfileSnapshot GetSnapshot(BrandProfileReference reference)
@@ -342,6 +342,7 @@ public sealed partial class BrandProfileCatalog
         ValidateTypography(manifest.Typography);
         ValidateTextList(manifest.VoiceRules, "voice_rules", 1, 16, 300);
         ValidateVisualRules(manifest.VisualRules);
+        ValidateVisualObjectPolicy(manifest.VisualObjectPolicy);
         ValidateTextList(manifest.ProhibitedRules, "prohibited_rules", 0, 24, 300);
         ValidateTextList(manifest.RequiresConfirmationRules, "requires_confirmation_rules", 0, 24, 300);
         ValidateIdentifierList(
@@ -408,13 +409,22 @@ public sealed partial class BrandProfileCatalog
             contentHash,
             manifest.Description,
             manifest.TemplateSource.ToLowerInvariant(),
-            styleDirections.Select(static direction => direction.Id).ToArray());
+            styleDirections.Select(static direction => direction.Id).ToArray(),
+            styleDirections.Select(static direction => new BrandStyleDirectionSummary(
+                direction.Id,
+                direction.Name,
+                direction.Summary,
+                direction.RecommendedFor,
+                direction.DesignStyle,
+                direction.DefaultDensity,
+                direction.Motif)).ToArray());
         var detail = new BrandProfileCatalogDetail(
             summary,
             manifest.ColorRoles,
             manifest.Typography,
             manifest.VoiceRules.ToArray(),
             manifest.VisualRules,
+            manifest.VisualObjectPolicy,
             manifest.ProhibitedRules.ToArray(),
             manifest.RequiresConfirmationRules.ToArray(),
             manifest.ApprovedAssetCollectionIds.ToArray(),
@@ -524,7 +534,13 @@ public sealed partial class BrandProfileCatalog
             || recipe.Variant.Equals("spotlight", StringComparison.OrdinalIgnoreCase)
                 && recipe.SemanticKind is VisualSlideKind.Metrics or VisualSlideKind.Cards
             || recipe.Variant.Equals("editorial", StringComparison.OrdinalIgnoreCase)
-                && recipe.SemanticKind == VisualSlideKind.StructuredBrief;
+                && recipe.SemanticKind == VisualSlideKind.StructuredBrief
+            || recipe.Variant.Equals("loop", StringComparison.OrdinalIgnoreCase)
+                && recipe.SemanticKind == VisualSlideKind.Process
+            || recipe.Variant.Equals("stepped", StringComparison.OrdinalIgnoreCase)
+                && recipe.SemanticKind is VisualSlideKind.Timeline or VisualSlideKind.Roadmap
+            || recipe.Variant.Equals("pyramid", StringComparison.OrdinalIgnoreCase)
+                && recipe.SemanticKind == VisualSlideKind.Funnel;
         if (!variantSupported)
         {
             throw new InvalidOperationException(
@@ -634,6 +650,32 @@ public sealed partial class BrandProfileCatalog
         ValidateTextList(rules.Charts, "visual_rules.charts", 0, 16, 300);
         ValidateTextList(rules.Backgrounds, "visual_rules.backgrounds", 0, 16, 300);
         ValidateTextList(rules.Emphasis, "visual_rules.emphasis", 0, 16, 300);
+    }
+
+    private static void ValidateVisualObjectPolicy(BrandVisualObjectPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        if (policy.AllowedArchetypes is null
+            || policy.AllowedArchetypes.Count is < 1 or > 7
+            || policy.AllowedArchetypes.Distinct().Count() != policy.AllowedArchetypes.Count)
+        {
+            throw new InvalidOperationException("visual_object_policy.allowed_archetypes must contain 1-7 unique supported values.");
+        }
+
+        if (policy.AllowedStyles is null
+            || policy.AllowedStyles.Count is < 1 or > 4
+            || policy.AllowedStyles.Distinct().Count() != policy.AllowedStyles.Count
+            || !policy.AllowedStyles.Contains(policy.DefaultStyle))
+        {
+            throw new InvalidOperationException("visual_object_policy.allowed_styles must contain 1-4 unique values including default_style.");
+        }
+
+        if (policy.MaximumPerSlide is < 1 or > VisualObjectAssetRepository.MaximumObjectsPerSlide
+            || policy.MaximumPerDeck is < 1 or > VisualObjectAssetRepository.MaximumConversationObjects
+            || policy.MaximumPerDeck < policy.MaximumPerSlide)
+        {
+            throw new InvalidOperationException("visual_object_policy limits must stay within server caps and maximum_per_deck must be at least maximum_per_slide.");
+        }
     }
 
     private static void ValidateTextList(
@@ -829,6 +871,12 @@ public sealed partial class BrandProfileCatalog
 
         [JsonPropertyName("visual_rules")]
         public BrandVisualRuleSet VisualRules { get; init; } = new([], [], [], [], [], [], [], []);
+
+        [JsonPropertyName("visual_object_policy")]
+        public BrandVisualObjectPolicy VisualObjectPolicy { get; init; } = new(
+            Enum.GetValues<VisualObjectArchetype>(),
+            [VisualObjectStyle.QuietCorporate],
+            VisualObjectStyle.QuietCorporate);
 
         [JsonPropertyName("prohibited_rules")]
         public IReadOnlyList<string> ProhibitedRules { get; init; } = [];

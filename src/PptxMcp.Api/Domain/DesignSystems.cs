@@ -167,7 +167,9 @@ public sealed record AssetPlanItem(
     [property: JsonPropertyName("text_safe_area"), Description("Optional text-safe-area token: none, left, right, top, or bottom.")]
     string? TextSafeArea = null,
     [property: JsonPropertyName("asset_id"), Description("Required opaque image asset ID when acquisition=userUpload and status=ready. Obtain it from pptx_register_uploaded_image_asset in the same conversation. Never provide a URL or path.")]
-    string? AssetId = null);
+    string? AssetId = null,
+    [property: JsonPropertyName("visual_object_asset_ids"), Description("Optional 1-3 opaque native visual object IDs prepared for this slide before brief validation. Valid only with acquisition=nativeDraw and copied unchanged to slide.visualObjects.")]
+    IReadOnlyList<string>? VisualObjectAssetIds = null);
 
 public sealed record DesignBriefStyleAlternative(
     [property: JsonPropertyName("style_direction_id"), Description("Alternative style direction ID from the same immutable Brand Profile.")]
@@ -214,7 +216,18 @@ public sealed record BrandProfileCatalogSummary(
     [property: JsonPropertyName("content_hash")] string ContentHash,
     [property: JsonPropertyName("description")] string Description,
     [property: JsonPropertyName("template_source")] string TemplateSource,
-    [property: JsonPropertyName("style_direction_ids")] IReadOnlyList<string> StyleDirectionIds);
+    [property: JsonPropertyName("style_direction_ids")] IReadOnlyList<string> StyleDirectionIds,
+    [property: JsonPropertyName("style_directions"), Description("Compact design-direction choices used to select the one final filtered catalog detail call.")]
+    IReadOnlyList<BrandStyleDirectionSummary> StyleDirections);
+
+public sealed record BrandStyleDirectionSummary(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("summary")] string Summary,
+    [property: JsonPropertyName("recommended_for")] IReadOnlyList<string> RecommendedFor,
+    [property: JsonPropertyName("design_style")] string DesignStyle,
+    [property: JsonPropertyName("default_density")] string DefaultDensity,
+    [property: JsonPropertyName("motif")] string Motif);
 
 public sealed record BrandColorRoles(
     [property: JsonPropertyName("primary")] string Primary,
@@ -284,12 +297,21 @@ public sealed record BrandVisualRuleSet(
     [property: JsonPropertyName("backgrounds")] IReadOnlyList<string> Backgrounds,
     [property: JsonPropertyName("emphasis")] IReadOnlyList<string> Emphasis);
 
+public sealed record BrandVisualObjectPolicy(
+    [property: JsonPropertyName("allowed_archetypes")] IReadOnlyList<VisualObjectArchetype> AllowedArchetypes,
+    [property: JsonPropertyName("allowed_styles")] IReadOnlyList<VisualObjectStyle> AllowedStyles,
+    [property: JsonPropertyName("default_style")] VisualObjectStyle DefaultStyle,
+    [property: JsonPropertyName("maximum_per_slide")] int MaximumPerSlide = 3,
+    [property: JsonPropertyName("maximum_per_deck")] int MaximumPerDeck = 24,
+    [property: JsonPropertyName("strong_requires_focal_purpose")] bool StrongRequiresFocalPurpose = true);
+
 public sealed record BrandProfileCatalogDetail(
     [property: JsonPropertyName("summary")] BrandProfileCatalogSummary Summary,
     [property: JsonPropertyName("color_roles")] BrandColorRoles ColorRoles,
     [property: JsonPropertyName("typography")] BrandTypography Typography,
     [property: JsonPropertyName("voice_rules")] IReadOnlyList<string> VoiceRules,
     [property: JsonPropertyName("visual_rules")] BrandVisualRuleSet VisualRules,
+    [property: JsonPropertyName("visual_object_policy")] BrandVisualObjectPolicy VisualObjectPolicy,
     [property: JsonPropertyName("prohibited_rules")] IReadOnlyList<string> ProhibitedRules,
     [property: JsonPropertyName("requires_confirmation_rules")] IReadOnlyList<string> RequiresConfirmationRules,
     [property: JsonPropertyName("approved_asset_collection_ids")] IReadOnlyList<string> ApprovedAssetCollectionIds,
@@ -365,7 +387,8 @@ public sealed record VisualSlideAssetAudit(
     [property: JsonPropertyName("crop_intent")] string? CropIntent,
     [property: JsonPropertyName("aspect_ratio")] string? AspectRatio,
     [property: JsonPropertyName("text_safe_area")] string? TextSafeArea,
-    [property: JsonPropertyName("asset_id")] string? AssetId = null);
+    [property: JsonPropertyName("asset_id")] string? AssetId = null,
+    [property: JsonPropertyName("visual_object_asset_ids")] IReadOnlyList<string>? VisualObjectAssetIds = null);
 
 public sealed class CamelCaseJsonStringEnumConverter<TEnum>()
     : JsonStringEnumConverter<TEnum>(JsonNamingPolicy.CamelCase, allowIntegerValues: false)
