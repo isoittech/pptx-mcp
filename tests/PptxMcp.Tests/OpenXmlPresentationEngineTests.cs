@@ -63,6 +63,29 @@ public sealed class OpenXmlPresentationEngineTests
     }
 
     [Fact]
+    public async Task RejectsAReplacementJobThatWouldReturnAnUnchangedPresentation()
+    {
+        var source = TestPresentationFactory.Create("before");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            var exception = await Assert.ThrowsAsync<PptxValidationException>(() =>
+                new OpenXmlPresentationEngine().ReplaceTextAsync(
+                    source,
+                    destination,
+                    [new TextReplacement("missing", "after", 1, ShapeId: 2U)],
+                    CancellationToken.None));
+
+            Assert.Equal("replacement_text_not_found", exception.Code);
+        }
+        finally
+        {
+            File.Delete(source);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
     public async Task RejectsOversizedReplacementInstruction()
     {
         var oversized = new string('x', 100_001);
@@ -93,6 +116,68 @@ public sealed class OpenXmlPresentationEngineTests
         finally
         {
             File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public async Task AnalyzeIncludesEditableTableTextWithStableGraphicFrameTarget()
+    {
+        var source = TestPresentationFactory.CreateWithTable(
+            "Number",
+            "Highest ",
+            "Degree",
+            "Number");
+        try
+        {
+            var summary = await new OpenXmlPresentationEngine()
+                .AnalyzeAsync(source, CancellationToken.None);
+
+            var table = Assert.Single(Assert.Single(summary.Slides).Shapes, static shape => shape.Kind == "table");
+            Assert.Equal((uint)3, table.ShapeId);
+            Assert.Equal("Data Table", table.ShapeName);
+            Assert.Equal("Highest DegreeNumber", table.Text);
+            Assert.Equal(["Highest ", "Degree", "Number"], table.ExactTexts);
+        }
+        finally
+        {
+            File.Delete(source);
+        }
+    }
+
+    [Fact]
+    public async Task ReplacesTextInsideEditableTableWithoutChangingAnUntargetedShape()
+    {
+        var source = TestPresentationFactory.CreateWithTable(
+            "Number",
+            "Highest ",
+            "Degree",
+            "Number",
+            "Number");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            var result = await new OpenXmlPresentationEngine().ReplaceTextAsync(
+                source,
+                destination,
+                [
+                    new TextReplacement("Highest Degree", "最終学歴", 1, ShapeId: 3U),
+                    new TextReplacement("Number", "人数", 1, ShapeId: 3U),
+                ],
+                CancellationToken.None);
+
+            using var document = PresentationDocument.Open(destination, false);
+            var slide = document.PresentationPart!.SlideParts.Single().Slide!;
+            var shapeText = string.Concat(slide.Descendants<P.Shape>().SelectMany(static shape => shape.Descendants<A.Text>()).Select(static node => node.Text));
+            var tableText = string.Concat(slide.Descendants<P.GraphicFrame>().SelectMany(static frame => frame.Descendants<A.Text>()).Select(static node => node.Text));
+            Assert.Equal("Number", shapeText);
+            Assert.Equal("最終学歴人数人数", tableText);
+            Assert.Equal(3, result.ReplacementCount);
+            Assert.Equal(["/ppt/slides/slide1.xml"], result.ChangedParts);
+        }
+        finally
+        {
+            File.Delete(source);
+            File.Delete(destination);
         }
     }
 

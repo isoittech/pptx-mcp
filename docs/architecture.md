@@ -106,7 +106,7 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 - LibreChatとのMCP通信は共有秘密で認証し、ユーザーID・会話IDはLibreChatが挿入するヘッダーだけを信頼します。
 - ツール引数でローカルパス、ユーザーID、出力URLを指定できません。
 - `file_id` は該当ユーザーのアップロードディレクトリ内だけで解決し、作業領域へコピーします。Bedrock経由で`file_id`がモデルに提示されない場合、`sourceFileId`省略時に同じユーザー境界内の最新PPTXを選択します。
-- マクロ、ActiveX、外部リレーション、暗号化PPTX、ZIP bombを拒否します。
+- マクロ、ActiveX、外部リソースリレーション、非HTTP(S)ハイパーリンク、暗号化PPTX、ZIP bombを拒否します。HTTP/HTTPSの標準ハイパーリンクは外部データを読み込まないため保持します。
 - 成果物URLはファイル名と期限をHMAC署名した capability URL です。
 - MCP用内部ネットワークは `internal: true` とし、成果物配信だけを認証付きリバースプロキシ経由で公開します。
 - コンテナは非root、read-only、全Linux capability削除、Docker既定seccompで実行します。現行ホストでは `no-new-privileges` と既定seccompの併用がruncのerrno 524で起動失敗するため、seccompを無効化せず同オプションだけを省いています。

@@ -150,7 +150,9 @@ public sealed class JobWorker(
             case JobKind.Analyze:
                 {
                     var summary = await analysisCache.GetAsync(sourcePath, cancellationToken).ConfigureAwait(false);
-                    return (JsonSerializer.SerializeToElement(summary, SerializerOptions), []);
+                    var payload = job.Payload?.Deserialize<AnalyzeJobPayload>(SerializerOptions);
+                    var result = PrepareAnalysisResult(summary, payload?.IncludeLayouts ?? false);
+                    return (JsonSerializer.SerializeToElement(result, SerializerOptions), []);
                 }
 
             case JobKind.RenderPreview:
@@ -161,13 +163,18 @@ public sealed class JobWorker(
 
             case JobKind.ReplaceText:
                 {
-                    var replacements = job.Payload?.Deserialize<List<TextReplacement>>(SerializerOptions)
-                        ?? throw new PptxValidationException("invalid_job_payload", "Replacement instructions are missing.");
+                    var payload = DeserializeReplaceTextPayload(job.Payload);
                     var outputPath = Path.Combine(directory, "presentation.pptx");
-                    var edit = await presentationEngine.ReplaceTextAsync(sourcePath, outputPath, replacements, cancellationToken)
+                    var edit = await presentationEngine.ReplaceTextAsync(
+                            sourcePath,
+                            outputPath,
+                            payload.Replacements,
+                            cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
-                    var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
+                    var images = payload.IsFinalBatch
+                        ? await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false)
+                        : [];
                     return (
                         JsonSerializer.SerializeToElement(edit, SerializerOptions),
                         CreateOutputArtifacts(outputPath, images, directory));
@@ -259,6 +266,42 @@ public sealed class JobWorker(
             default:
                 throw new PptxValidationException("unsupported_job", $"Job type '{job.Kind}' is not supported.");
         }
+    }
+
+    internal static object PrepareAnalysisResult(
+        PresentationSummary summary,
+        bool includeLayouts) => includeLayouts
+        ? summary
+        : new TextEditAnalysisResult(
+            summary.AnalysisTruncated,
+            summary.HasCharts,
+            summary.Slides.Select(static slide => new object[]
+            {
+                slide.SlideNumber,
+                slide.Shapes
+                    .SelectMany(static shape => shape.ExactTexts
+                        ?? (string.IsNullOrWhiteSpace(shape.Text) ? [] : [shape.Text!]))
+                    .Where(static text => !string.IsNullOrWhiteSpace(text))
+                    .ToArray(),
+            }).ToArray(),
+            summary.ValidationErrors.Count > 0 ? summary.ValidationErrors : null);
+
+    internal static ReplaceTextJobPayload DeserializeReplaceTextPayload(JsonElement? serialized)
+    {
+        if (serialized is null)
+        {
+            throw new PptxValidationException("invalid_job_payload", "Replacement instructions are missing.");
+        }
+
+        if (serialized.Value.ValueKind == JsonValueKind.Array)
+        {
+            var legacyReplacements = serialized.Value.Deserialize<List<TextReplacement>>(SerializerOptions)
+                ?? throw new PptxValidationException("invalid_job_payload", "Replacement instructions are missing.");
+            return new ReplaceTextJobPayload(legacyReplacements, IsFinalBatch: true);
+        }
+
+        return serialized.Value.Deserialize<ReplaceTextJobPayload>(SerializerOptions)
+            ?? throw new PptxValidationException("invalid_job_payload", "Replacement instructions are missing.");
     }
 
     private async Task<IReadOnlyList<string>> RenderAsync(

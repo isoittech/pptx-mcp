@@ -39,8 +39,15 @@ public sealed partial class InputFileResolver(
             throw new PptxValidationException("invalid_file_id", "The source file identifier is invalid.");
         }
 
+        if (!useLatestUpload
+            && caller.AttachmentFileIds is not null
+            && !caller.AttachmentFileIds.Contains(fileId))
+        {
+            throw new PptxValidationException("file_not_found", "The uploaded PowerPoint file was not found in the current message attachments.");
+        }
+
         var candidates = useLatestUpload
-            ? FindLatestUpload(userDirectory)
+            ? FindLatestUpload(userDirectory, caller.AttachmentFileIds)
             : Directory
                 .EnumerateFiles(userDirectory, $"{fileId}__*", SearchOption.TopDirectoryOnly)
                 .Where(IsRegularPptxUpload)
@@ -59,13 +66,22 @@ public sealed partial class InputFileResolver(
         return input with { FileId = resolvedFileId };
     }
 
-    private static string[] FindLatestUpload(string userDirectory) => Directory
-        .EnumerateFiles(userDirectory, "*.pptx", SearchOption.TopDirectoryOnly)
+    private static string[] FindLatestUpload(
+        string userDirectory,
+        IReadOnlySet<string>? attachmentFileIds) => Directory
+        // Linux glob matching is case-sensitive. Enumerate the directory and let
+        // IsRegularPptxUpload apply the case-insensitive extension check so an
+        // uploaded *.PPTX file behaves the same as *.pptx.
+        .EnumerateFiles(userDirectory, "*", SearchOption.TopDirectoryOnly)
         .Where(IsRegularPptxUpload)
+        .Where(path => attachmentFileIds is null || attachmentFileIds.Contains(FileIdFromName(path)))
         .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc)
         .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)
         .Take(1)
         .ToArray();
+
+    private static string FileIdFromName(string path) =>
+        Path.GetFileName(path).Split("__", 2, StringSplitOptions.None)[0];
 
     private static bool IsRegularPptxUpload(string path)
     {

@@ -379,6 +379,11 @@ public sealed class JobServiceTests
         var templatesRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-templates-{Guid.NewGuid():N}");
         Directory.CreateDirectory(uploadsRoot);
         Directory.CreateDirectory(templatesRoot);
+        var userUploads = Path.Combine(uploadsRoot, "user-1");
+        Directory.CreateDirectory(userUploads);
+        File.Move(
+            TestPresentationFactory.CreateBlankBrandedTemplate(),
+            Path.Combine(userUploads, "source-file__source.pptx"));
         File.Move(
             TestPresentationFactory.CreateBlankBrandedTemplate(),
             Path.Combine(templatesRoot, "organization-default.pptx"));
@@ -406,7 +411,7 @@ public sealed class JobServiceTests
                 new ArtifactTokenService(options, TimeProvider.System),
                 options,
                 TimeProvider.System);
-            var caller = new CallerContext("user-1", "conversation-1", null);
+            var caller = new CallerContext("user-1", "conversation-1", "message-1");
             var deck = new VisualDeckSpec(
                 "既定テンプレート",
                 [new VisualSlideSpec(VisualSlideKind.Title, "タイトル")]);
@@ -425,6 +430,46 @@ public sealed class JobServiceTests
             Assert.NotNull(analysisJob);
             Assert.Equal(JobKind.Analyze, analysisJob.Kind);
             Assert.Equal("organization-default", analysisJob.SourceFileId);
+
+            var repeatedAnalysis = await service.SubmitAnalyzeAsync(
+                caller,
+                "default",
+                CancellationToken.None);
+
+            var previewException = await Assert.ThrowsAsync<PptxValidationException>(
+                () => service.SubmitRenderAsync(
+                    caller,
+                    "default",
+                    cancellationToken: CancellationToken.None));
+            var firstTextEdit = await service.SubmitReplaceTextAsync(
+                caller,
+                "source-file",
+                [new TextReplacement("Company", "会社", SlideNumber: 1)],
+                CancellationToken.None,
+                isFinalBatch: false);
+            var restartedTextEdit = await Assert.ThrowsAsync<PptxValidationException>(
+                () => service.SubmitReplaceTextAsync(
+                    caller,
+                    "source-file",
+                    [new TextReplacement("Overview", "概要", SlideNumber: 1)],
+                    CancellationToken.None,
+                    isFinalBatch: false));
+            var nextMessageAnalysis = await service.SubmitAnalyzeAsync(
+                caller with { MessageId = "message-2" },
+                "default",
+                CancellationToken.None);
+            var nextMessageSourcePreview = await service.SubmitRenderAsync(
+                caller with { MessageId = "message-3" },
+                "default",
+                CancellationToken.None);
+
+            Assert.Equal(analysisReceipt.JobId, repeatedAnalysis.JobId);
+            Assert.Equal("source_preview_before_text_edit_forbidden", previewException.Code);
+            Assert.Equal("queued", firstTextEdit.Status);
+            Assert.Equal("text_edit_workflow_already_started", restartedTextEdit.Code);
+            Assert.Contains(firstTextEdit.JobId, restartedTextEdit.Message, StringComparison.Ordinal);
+            Assert.NotEqual(analysisReceipt.JobId, nextMessageAnalysis.JobId);
+            Assert.Equal("queued", nextMessageSourcePreview.Status);
         }
         finally
         {
@@ -806,6 +851,30 @@ public sealed class JobServiceTests
 
             Directory.Delete(uploadsRoot, recursive: true);
         }
+    }
+
+    [Fact]
+    public void PreviewSelectionReportsTheActualDeckRange()
+    {
+        var error = Assert.Throws<PptxValidationException>(() =>
+            JobService.ValidatePreviewSelection([9, 10, 11, 12], Enumerable.Range(1, 9).ToArray()));
+
+        Assert.Equal("preview_slide_invalid", error.Code);
+        Assert.Contains("9 slides", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1 through 9", error.Message, StringComparison.Ordinal);
+        Assert.Contains("10, 11, 12", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PreviewSelectionRejectsDuplicateOrOversizedBatches()
+    {
+        var duplicate = Assert.Throws<PptxValidationException>(() =>
+            JobService.ValidatePreviewSelection([1, 1], [1, 2]));
+        var oversized = Assert.Throws<PptxValidationException>(() =>
+            JobService.ValidatePreviewSelection([1, 2, 3, 4, 5], [1, 2, 3, 4, 5]));
+
+        Assert.Equal("preview_selection_invalid", duplicate.Code);
+        Assert.Equal("preview_selection_invalid", oversized.Code);
     }
 
     private static Task<JobRecord> SetStateAsync(

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -14,12 +15,14 @@ namespace PptxMcp.Tools;
 [McpServerToolType]
 public sealed class PowerPointTools
 {
+    private static readonly ConcurrentDictionary<string, byte> DeliveredAnalysisResults = new();
+
     [McpServerTool(Name = "pptx_prepare_visual_objects", Destructive = true),
-     Description("スライド理解を助ける矢印・枠・吹き出し・括弧・リング・リボンを、PowerPointで編集可能なネイティブ図形として一括準備します。ストーリーとAsset Planを組み立てた後、Design Briefをvalidate/prepareする前に必要な場合だけ1回呼び、1〜8件をまとめます。座標、任意色、SVG/XML、URL、path、コードは受け取りません。返ったopaque asset_idを同じslideのassetPlan.visual_object_asset_idsとslide.visualObjectsへコピーします。1ページ最大3個、strongは1個、会話全体最大24個です。装飾目的だけでは使わず、既存レイアウトだけで伝わる場合は呼びません。")]
+     Description("スライド理解を助ける矢印・枠・吹き出し・括弧・リング・リボンを、PowerPointで編集可能なネイティブ図形として一括準備します。ストーリーとAsset Planを組み立てた後、Design Briefをvalidate/prepareする前に必要な場合だけ1回呼び、1〜8件をまとめます。recipe=directionalCue|growthPath|focusCorners|annotationPin|sectionRule|cycleCueでは、安全な意味anchorへ控えめな複合図形を配置します。annotationPinは折れ線Chart上の実在点を、1始まりのcategory／series番号で指定します。autoは従来の単一図形です。座標、任意色、SVG/XML、URL、path、コードは受け取りません。返ったopaque asset_idを同じslideのassetPlan.visual_object_asset_idsとslide.visualObjectsへコピーします。1ページ最大3個、会話全体最大24個です。複合recipeは原則subtleまたはstandardとし、strongはvisualPurpose=emphasisのfocusCornersだけに使えます。装飾目的だけでは使わず、方向・成長・焦点・注釈・区切り・循環のいずれかを説明するときだけ使います。")]
     public static CallToolResult PrepareVisualObjects(
         CallerContextAccessor callerContext,
         VisualObjectAssetRepository visualObjects,
-        [Required, Description("1〜8件の意味仕様。slideNumber、visualPurpose、archetype、style、emphasis、orientation、placementRole、paletteRoleを指定します。生の座標・色・SVG/XML・URL・pathは指定できません。")]
+        [Required, Description("1〜8件の意味仕様。slideNumber、visualPurpose、archetype、style、emphasis、orientation、placementRole、paletteRole、必要ならrecipeを指定します。recipeの正規tuple: directionalCue=direction+arrow+headerAccent/contentConnector、growthPath=growth+arrow+right/up+contentConnector/chartAnnotation、focusCorners=emphasis/grouping+frame+focusFrame、annotationPin=annotation+callout+chartAnnotation+label+anchorCategoryOrdinal(1-12)+anchorSeriesOrdinal(1-4)、sectionRule=emphasis/annotation+ribbon+headerAccent/sectionDivider、cycleCue=cycle+curvedArrow/ring+clockwise+contentConnector/backgroundMotif。annotationPinは同じページの折れ線Chartにある実在点だけを1始まりで指定し、他recipeはanchor番号を省略します。複合recipeのstrongはemphasis+focusCornersだけで、他はsubtle/standardです。生の座標・色・SVG/XML・URL・pathは指定できません。")]
         IReadOnlyList<VisualObjectBrief> objects)
     {
         try
@@ -101,7 +104,7 @@ public sealed class PowerPointTools
         supported_now = new[]
         {
             "PPTX構造・テキストシェイプ・テーマ色・日本語フォント・SmartArt/グラフ/埋め込みExcel有無の解析",
-            "通常シェイプとSmartArt内部テキストの置換",
+            "通常シェイプ・編集可能なPowerPoint表・SmartArt内部テキストの置換",
             "名前付きシェイプを持つ企業テンプレートへのテキスト流し込み",
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
             "白紙からKPI・カード・比較・構造化ブリーフ・編集可能スコアカード・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
@@ -109,7 +112,7 @@ public sealed class PowerPointTools
             "Design Briefと全ページAsset Planを検証し、利用者・会話・Brand Profileへ束縛した期限付きopaque brief_idを発行",
             "条件付きDesign Briefカード、最大3つのサーバー検証済み候補、完成サンプルcarousel、1回限りの利用者選択",
             "会話へ束縛したユーザー提供JPEG/PNGの検証・metadata除去・sRGB PNG化と、Media/splitへの実画像埋め込み、crop、代替テキスト、出典表示",
-            "会話へ束縛した意味仕様から、矢印・曲線矢印・枠・吹き出し・括弧・リング・リボンを編集可能なネイティブ図形として生成",
+            "会話へ束縛した意味仕様から、矢印・曲線矢印・枠・吹き出し・括弧・リング・リボンと、方向線・成長線・コーナー強調枠・注釈ピン・セクション罫線・循環キューの複合レシピを編集可能なネイティブ図形として生成",
             "tree・flow・cycle・concentric・networkの編集可能NativeDiagramと、loop・stepped・pyramidの実装済み構図variant",
             "未選択カードが表示できない場合のcaller-boundな安全なcancelとdirect validationへの復帰",
             "五線、音符、休符、小節線、ウクレレTAB、色分けした指番号をPowerPointネイティブの線・図形・テキストとして生成",
@@ -252,48 +255,91 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_analyze", ReadOnly = true, Idempotent = true),
-     Description("登録済み既定テンプレートまたはLibreChatにアップロード済みのPPTXを安全に検査し、編集候補、企業テーマ色、日本語フォントを非同期で解析します。既定テンプレートはsourceFileId=default、添付のfile_idが不明ならlatestを使ってください。既定テンプレートは起動時解析キャッシュを再利用します。解析結果のthemeは白紙VisualDeckSpecのthemeへ移植できます。")]
-    public static Task<JobReceipt> AnalyzeAsync(
+     Description("登録済み既定テンプレートまたはLibreChatにアップロード済みのPPTXを安全に検査し、編集候補、企業テーマ色、日本語フォントを非同期で解析します。通常の翻訳・文字編集は既定のincludeLayouts=falseで、全スライドの構造化テキストをコンパクトに取得します。同じ利用者メッセージで同じsourceFileIdとincludeLayoutsを再送した場合は新しい解析を作らず、最初のjob_idを返します。pptx_create_deckで既存プレースホルダーへ厳密に流し込む場合だけincludeLayouts=trueを指定します。既定テンプレートはsourceFileId=default、添付のfile_idが不明ならlatestを使ってください。既定テンプレートは起動時解析キャッシュを再利用します。解析結果のthemeは白紙VisualDeckSpecのthemeへ移植できます。")]
+    public static Task<object> AnalyzeAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
         [Description("既定テンプレートはdefault。添付PPTXはLibreChatのfile_id、会話にfile_idが提示されていなければlatest。ファイル名やパスは指定しません。省略時はlatest。")]
-        string sourceFileId = "latest") =>
-        jobs.SubmitAnalyzeAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
+        string sourceFileId = "latest",
+        [Description("通常の翻訳・文字編集はfalse。pptx_create_deck用に既存プレースホルダーのlayout_id一覧が必要な場合だけtrue。省略時false。")]
+        bool includeLayouts = false) =>
+        ExecuteJobSubmissionAsync(
+            "pptx_analyze",
+            () => jobs.SubmitAnalyzeAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                cancellationToken,
+                includeLayouts));
 
     [McpServerTool(Name = "pptx_render_preview", ReadOnly = true, Idempotent = true),
-     Description("登録済み既定テンプレートまたはアップロード済みPPTXの全スライドをPNGへ変換する非同期ジョブを開始します。")]
-    public static Task<JobReceipt> RenderPreviewAsync(
+     Description("登録済み既定テンプレートまたはアップロード済みPPTXの全スライドをPNGへ変換する非同期ジョブを開始します。文字だけの翻訳・置換では、元資料の文字確認に使わず、pptx_analyzeの構造化テキストで置換した後の見た目確認に使ってください。同じユーザーメッセージですでに文字解析した元資料は例外なく拒否します。ユーザーが元資料の画像確認を明示した場合は、同じメッセージでpptx_analyzeを先に呼ばず、このツールを直接使います。")]
+    public static Task<object> RenderPreviewAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         CancellationToken cancellationToken,
         [Description("既定テンプレートはdefault。添付PPTXはLibreChatのfile_idまたはlatest。省略時はlatest。")]
         string sourceFileId = "latest") =>
-        jobs.SubmitRenderAsync(callerContext.GetRequired(), sourceFileId, cancellationToken);
+        ExecuteJobSubmissionAsync(
+            "pptx_render_preview",
+            () => jobs.SubmitRenderAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                cancellationToken));
 
     [McpServerTool(Name = "pptx_replace_text", Destructive = true),
-     Description("PPTXの文字列を置換し、更新版PPTXと全ページプレビューを作る非同期ジョブを開始します。曖昧な対象は先にpptx_analyzeで特定してください。")]
-    public static Task<JobReceipt> ReplaceTextAsync(
+     Description("PPTXの文字列を最大20件ずつ置換する非同期ジョブです。20件を超える翻訳は複数バッチに分けます。最初はpreviousJobIdを省略し、残りがあればisFinalBatch=falseにします。成功後は返されたjob_idを次のpreviousJobIdへ正確に渡すと、直前までの置換を保持して続行します。最後だけisFinalBatch=trueにすると全ページプレビューを作ります。翻訳ではpptx_analyze(includeLayouts=false)の文字を使い、元資料の画像から転記しません。")]
+    public static async Task<object> ReplaceTextAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
-        [Description("検索文字、置換文字、任意の1始まりスライド番号、任意のshapeNameとshapeIdからなる置換指示。名前が重複する場合はshapeIdも指定します。")]
+        [Description("1〜20件の置換指示をJSON配列そのものとして渡します。JSON文字列へ変換してはいけません。各要素は検索文字、置換文字、任意の1始まりスライド番号、任意のshapeNameとshapeIdです。解析結果のslide_numberとshape_idを使います。")]
         IReadOnlyList<TextReplacement> replacements,
         CancellationToken cancellationToken,
-        [Description("LibreChatのアップロード済みPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
-        string sourceFileId = "latest") =>
-        jobs.SubmitReplaceTextAsync(callerContext.GetRequired(), sourceFileId, replacements, cancellationToken);
+        [Description("LibreChatの現在のメッセージへ添付したPPTXのfile_id。省略時は今回の添付内で最新のPPTX。")]
+        string sourceFileId = "latest",
+        [Description("2バッチ目以降だけ、直前に成功したpptx_replace_textのjob_idを指定します。ファイルIDやlatestではありません。")]
+        string? previousJobId = null,
+        [Description("後続バッチがある間はfalse。最後のバッチだけtrueにして全ページプレビューを生成します。省略時true。")]
+        bool isFinalBatch = true)
+    {
+        if (replacements.Count is < 1 or > 20)
+        {
+            return new ToolValidationError(
+                "invalid_input",
+                "pptx_replace_text",
+                "replacement_batch_size_invalid",
+                "Each text replacement batch must contain between 1 and 20 entries.",
+                "Split the complete replacement list into batches of at most 20. Submit the first batch with isFinalBatch=false when more remain, wait for success, then pass its exact job_id as previousJobId on the next batch. Set isFinalBatch=true only on the last batch.");
+        }
+
+        return await ExecuteJobSubmissionAsync(
+            "pptx_replace_text",
+            () => jobs.SubmitReplaceTextAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                replacements,
+                cancellationToken,
+                previousJobId,
+                isFinalBatch)).ConfigureAwait(false);
+    }
 
     [McpServerTool(Name = "pptx_populate_template", Destructive = true),
      Description("企業テンプレートの既存スライドにある名前付きテキストシェイプへ内容を流し込み、PPTXと全ページプレビューを作ります。通常文はtext、箇条書き・番号付き手順はparagraphsを使い、記号や番号を本文へ手入力しないでください。")]
-    public static Task<JobReceipt> PopulateTemplateAsync(
+    public static Task<object> PopulateTemplateAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
         [Description("1始まりのスライド番号、解析で得たshapeNameまたはshapeId、textまたはparagraphsのどちらか一方からなるフィールド一覧。paragraphsは各項目にtext、kind=Plain/Bullet/Numbered、level=0〜4、番号開始時だけstart_atを指定します。名前が重複する場合はshapeIdを指定します。")]
         IReadOnlyList<TemplateField> fields,
         CancellationToken cancellationToken,
-        [Description("LibreChatへアップロード済みのテンプレートPPTXのfile_id。省略時はそのユーザーの最新PPTX。")]
+        [Description("LibreChatの現在のメッセージへ添付したテンプレートPPTXのfile_id。省略時は今回の添付内で最新のPPTX。")]
         string sourceFileId = "latest") =>
-        jobs.SubmitPopulateTemplateAsync(callerContext.GetRequired(), sourceFileId, fields, cancellationToken);
+        ExecuteJobSubmissionAsync(
+            "pptx_populate_template",
+            () => jobs.SubmitPopulateTemplateAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                fields,
+                cancellationToken));
 
     [McpServerTool(Name = "pptx_create_deck", Destructive = true),
      Description("企業テンプレートのマスターと定義済みレイアウトを使い、1〜50枚の新規PPTXと全ページプレビューを作ります。既定テンプレートにはsourceFileId=defaultを使い、厳密な既存プレースホルダー流し込みが必要な場合だけpptx_analyzeへsourceFileId=defaultを渡して起動時解析キャッシュからlayout_idとshape_idを取得します。アップロードした別テンプレートでも先にpptx_analyzeとpptx_wait_for_jobを実行してください。通常文はtext、箇条書き・番号付き手順はparagraphsを使い、記号や番号を本文へ手入力しません。slidesは必須で、完成版の全ページを1回の呼び出しに含めます。sourceFileIdだけで呼んではいけません。slidesが欠けた呼び出しにはinput_requiredを返すので、同じツールを全slides付きで直ちに再実行してください。各layout_id、shape_id、placeholder_indexは解析結果から一字も変更せずコピーし、推測したパスやIDを作らないでください。")]
@@ -315,11 +361,13 @@ public sealed class PowerPointTools
                 "Call pptx_create_deck again now with the complete 1-50 slide array. Do not call it with only sourceFileId.");
         }
 
-        return await jobs.SubmitCreateDeckAsync(
-            callerContext.GetRequired(),
-            sourceFileId,
-            slides,
-            cancellationToken).ConfigureAwait(false);
+        return await ExecuteJobSubmissionAsync(
+            "pptx_create_deck",
+            () => jobs.SubmitCreateDeckAsync(
+                callerContext.GetRequired(),
+                sourceFileId,
+                slides,
+                cancellationToken)).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "pptx_refine_deck", Destructive = true),
@@ -354,11 +402,13 @@ public sealed class PowerPointTools
                 "Call pptx_refine_deck again now with the successful deck jobId and only the changed slides in revisions.");
         }
 
-        return await jobs.SubmitRefineDeckAsync(
-            callerContext.GetRequired(),
-            jobId,
-            requestedRevisions,
-            cancellationToken).ConfigureAwait(false);
+        return await ExecuteJobSubmissionAsync(
+            "pptx_refine_deck",
+            () => jobs.SubmitRefineDeckAsync(
+                callerContext.GetRequired(),
+                jobId,
+                requestedRevisions,
+                cancellationToken)).ConfigureAwait(false);
     }
 
     [McpServerTool(Name = "pptx_start_visual_deck", Destructive = true),
@@ -641,7 +691,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_get_job", ReadOnly = true, Idempotent = true),
-     Description("PowerPointジョブの現在状態を待たずに1回だけ取得します。障害復旧や即時確認用です。待機中・実行中ジョブの通常フローでは、短間隔でこのツールを反復せずpptx_wait_for_jobを使ってください。jobId=latestでは同じ利用者・会話の直近ジョブを安全に選びます。")]
+     Description("PowerPointジョブの現在状態を待たずに1回だけ取得します。障害復旧や即時確認用です。待機中・実行中ジョブの通常フローでは、短間隔でこのツールを反復せずpptx_wait_for_jobを使ってください。完了済み解析の巨大な結果本文は二重返却せず、pptx_wait_for_jobで取得します。jobId=latestでは同じ利用者・会話の直近ジョブを安全に選びます。")]
     public static async Task<object> GetJobAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -651,12 +701,43 @@ public sealed class PowerPointTools
     {
         try
         {
-            return await jobs.GetAsync(callerContext.GetRequired(), jobId, cancellationToken).ConfigureAwait(false);
+            var job = await jobs.GetAsync(callerContext.GetRequired(), jobId, cancellationToken).ConfigureAwait(false);
+            return PrepareGetJobResult(job);
         }
         catch (PptxValidationException exception)
         {
             return CreateValidationError("pptx_get_job", exception);
         }
+    }
+
+    internal static object PrepareGetJobResult(JobView job)
+    {
+        if (job.Kind != JobKind.Analyze || job.Status != JobState.Succeeded)
+        {
+            return job;
+        }
+
+        return new
+        {
+            job_id = job.JobId,
+            kind = job.Kind,
+            status = job.Status,
+            progress_percent = job.ProgressPercent,
+            created_at = job.CreatedAt,
+            completed_at = job.CompletedAt,
+            result_omitted = true,
+            instruction =
+                "The completed analysis body is omitted from pptx_get_job to avoid duplicating a large result. " +
+                "If pptx_wait_for_job already returned this job_id, do not call either status tool again; " +
+                "use that analysis and call pptx_replace_text now. Only if this turn has never received the analysis body, " +
+                "call pptx_wait_for_job once with this job_id to retrieve it.",
+            artifacts = job.Artifacts,
+            error_code = job.ErrorCode,
+            error_message = job.ErrorMessage,
+            visual_root_job_id = job.VisualRootJobId,
+            visual_revision_round = job.VisualRevisionRound,
+            visual_revised_slides_in_round = job.VisualRevisedSlidesInRound,
+        };
     }
 
     [McpServerTool(Name = "pptx_wait_for_job", ReadOnly = true, Idempotent = true),
@@ -680,11 +761,12 @@ public sealed class PowerPointTools
 
         try
         {
-            return await jobs.WaitAsync(
+            var job = await jobs.WaitAsync(
                 callerContext.GetRequired(),
                 jobId,
                 TimeSpan.FromSeconds(waitSeconds),
                 cancellationToken).ConfigureAwait(false);
+            return PrepareWaitForJobResult(job);
         }
         catch (PptxValidationException exception)
         {
@@ -692,8 +774,23 @@ public sealed class PowerPointTools
         }
     }
 
+    internal static object PrepareWaitForJobResult(JobView job)
+    {
+        if (job.Kind != JobKind.Analyze || job.Status != JobState.Succeeded)
+        {
+            return job;
+        }
+
+        if (!DeliveredAnalysisResults.TryAdd(job.JobId, 0))
+        {
+            return PrepareGetJobResult(job);
+        }
+
+        return job.Result is { } result ? result : PrepareGetJobResult(job);
+    }
+
     [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
-     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全スライドを1〜4枚ずつ取得し、文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大2巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
+     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全ページ確認はスライド番号順の連続4枚ずつ、最後の端数だけ1〜3枚で取得し、同じjobの同じページを重複取得しません。文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大2巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
     public static async Task<CallToolResult> GetPreviewImagesAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -703,31 +800,43 @@ public sealed class PowerPointTools
         IReadOnlyList<int> slideNumbers,
         CancellationToken cancellationToken)
     {
-        var images = await jobs.GetPreviewImagesAsync(
-            callerContext.GetRequired(),
-            jobId,
-            slideNumbers,
-            cancellationToken).ConfigureAwait(false);
-        var content = new List<ContentBlock>(images.Count * 2 + 1);
-        foreach (var image in images)
+        try
         {
-            content.Add(new TextContentBlock { Text = $"Slide {image.SlideNumber} visual review image:" });
-            content.Add(ImageContentBlock.FromBytes(image.Bytes, image.MediaType));
-        }
-
-        content.Add(new TextContentBlock
-        {
-            Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck use pptx_refine_visual_slide with one complete replacement slide at a time. Never resend, restart, or rebuild the complete deck after a successful generation. The server permits at most two visual refinement rounds.",
-        });
-        return new CallToolResult
-        {
-            Content = content,
-            StructuredContent = JsonSerializer.SerializeToElement(new
+            var images = await jobs.GetPreviewImagesAsync(
+                callerContext.GetRequired(),
+                jobId,
+                slideNumbers,
+                cancellationToken).ConfigureAwait(false);
+            var content = new List<ContentBlock>(images.Count * 2 + 1);
+            foreach (var image in images)
             {
-                job_id = jobId,
-                reviewed_slide_numbers = images.Select(image => image.SlideNumber).ToArray(),
-            }),
-        };
+                content.Add(new TextContentBlock { Text = $"Slide {image.SlideNumber} visual review image:" });
+                content.Add(ImageContentBlock.FromBytes(image.Bytes, image.MediaType));
+            }
+
+            content.Add(new TextContentBlock
+            {
+                Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck use pptx_refine_visual_slide with one complete replacement slide at a time. Never resend, restart, or rebuild the complete deck after a successful generation. The server permits at most two visual refinement rounds.",
+            });
+            return new CallToolResult
+            {
+                Content = content,
+                StructuredContent = JsonSerializer.SerializeToElement(new
+                {
+                    job_id = jobId,
+                    reviewed_slide_numbers = images.Select(image => image.SlideNumber).ToArray(),
+                }),
+            };
+        }
+        catch (PptxValidationException exception)
+        {
+            var error = CreateValidationError("pptx_get_preview_images", exception);
+            return new CallToolResult
+            {
+                Content = [new TextContentBlock { Text = JsonSerializer.Serialize(error) }],
+                StructuredContent = JsonSerializer.SerializeToElement(error),
+            };
+        }
     }
 
     [McpServerTool(Name = "pptx_cancel_job", Destructive = true),
@@ -818,6 +927,20 @@ public sealed class PowerPointTools
             cancellationToken);
     }
 
+    internal static async Task<object> ExecuteJobSubmissionAsync(
+        string toolName,
+        Func<Task<JobReceipt>> submit)
+    {
+        try
+        {
+            return await submit().ConfigureAwait(false);
+        }
+        catch (PptxValidationException exception)
+        {
+            return CreateValidationError(toolName, exception);
+        }
+    }
+
     private static ToolValidationError CreateValidationError(string tool, PptxValidationException exception)
     {
         var instruction = exception.Code switch
@@ -890,6 +1013,34 @@ public sealed class PowerPointTools
                 "Copy the exact planned recipeId and match its semantic kind, effective density, and implemented variant. Do not start a new draft.",
             "brand_profile_insert_requires_design_brief" =>
                 "Do not insert slides into this Brand Profile-bound deck in phase 1. Explain that inserted pages need a newly validated Asset Plan and recipe contract; keep the latest successful deck unchanged.",
+            "source_preview_before_text_edit_forbidden" =>
+                "Use the complete structured text already returned by pptx_analyze and start pptx_replace_text now. Do not call pptx_render_preview, pptx_get_preview_images, pptx_get_job, pptx_wait_for_job, or pptx_analyze again for the unmodified source. This guard has no model-controlled override. If the user explicitly asks to inspect the original presentation in a later message, call pptx_render_preview directly in that later message before any new analysis.",
+            "text_edit_workflow_already_started" or "text_edit_job_superseded" =>
+                "Do not restart pptx_replace_text from the source presentation. Use the exact latest job_id and final_batch_submitted state in message. If more replacements are needed, pass that job_id as previousJobId; if the final batch is already submitted and no correction remains, use that final job's artifacts and finish the user response.",
+            "preview_slide_invalid" or "preview_selection_invalid" =>
+                "Use only the valid one-based slide numbers stated in message. Continue with the remaining valid slides and never guess slide numbers beyond this job's slide count. Do not call pptx_get_job or restart the workflow.",
+            "file_not_found" =>
+                "Tell the user that no PPTX attached to the current request is available and ask them to attach it once. State that the supported PowerPoint upload format is .pptx only; do not suggest the legacy .ppt format. Do not call another PowerPoint job tool until an upload succeeds.",
+            "invalid_file_id" =>
+                $"Use latest or the exact opaque file_id supplied by LibreChat when calling {tool}. Never use a filename, URL, or local path.",
+            "ambiguous_file_id" =>
+                $"Call {tool} once with the exact opaque file_id returned by LibreChat. Do not use a filename or path.",
+            "file_size_out_of_range" =>
+                "Stop and tell the user in the user's language that the PPTX is empty or exceeds the accepted upload size. Ask them to attach a non-empty PPTX within the size limit shown in message. Do not retry the unchanged file.",
+            "slide_count_out_of_range" =>
+                "Stop and tell the user in the user's language that the PPTX must contain a supported number of slides as shown in message. Ask them to attach a corrected PPTX. Do not retry the unchanged file.",
+            "external_relationship" =>
+                "Stop and reply in the user's language with a simple explanation of what was blocked. Explain that an external image means the slide points to an image stored on a company server or website instead of containing the image itself, so it disappears if the source becomes unavailable. Explain that OLE is the PowerPoint feature for handling an Excel table, chart, or Word document, and a linked OLE object may open or read the original file. Explain that a shared-file reference points to another file on a shared folder, network drive, or SharePoint and reflects that file's contents. State that ordinary HTTP or HTTPS web hyperlinks are allowed and are not treated as these external resources; a non-web hyperlink such as a local or network file link is blocked. Ask the user to remove or embed the blocked reference and upload the corrected PPTX before retrying. Do not retry the unchanged file.",
+            "active_content" =>
+                "Stop and explain in the user's language that the PPTX contains a macro or ActiveX component, which is a program-like feature that can run actions and is not accepted for safety. Ask the user to save and attach a normal .pptx with that active content removed. Do not retry the unchanged file.",
+            "invalid_pptx"
+                or "invalid_zip"
+                or "invalid_xml"
+                or "zip_entry_limit"
+                or "zip_expansion_limit"
+                or "zip_compression_ratio"
+                or "zip_path_traversal" =>
+                "Stop and explain in the user's language that the file is damaged, is not a readable PPTX, or exceeds a package safety limit, using the validation code and message to identify which. Ask the user to reopen and save it as a normal .pptx or attach a corrected copy. Do not retry or modify the rejected file on the user's behalf.",
             _ => $"Correct the field named in message and call {tool} again. Do not repeat the same invalid input.",
         };
         return new(

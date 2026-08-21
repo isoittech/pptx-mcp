@@ -89,6 +89,197 @@ public sealed class VisualObjectAssetRepositoryTests
     }
 
     [Fact]
+    public void CuratedRecipesAcceptOnlyTheirDocumentedSemanticTuples()
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var caller = new CallerContext("user-a", "conversation-a", null);
+        var prepared = repository.Prepare(caller,
+        [
+            new VisualObjectBrief(
+                1,
+                VisualObjectPurpose.Direction,
+                VisualObjectArchetype.Arrow,
+                PlacementRole: VisualObjectPlacementRole.ContentConnector,
+                Recipe: VisualObjectRecipe.DirectionalCue),
+            new VisualObjectBrief(
+                2,
+                VisualObjectPurpose.Growth,
+                VisualObjectArchetype.Arrow,
+                Orientation: VisualObjectOrientation.Up,
+                PlacementRole: VisualObjectPlacementRole.ChartAnnotation,
+                Recipe: VisualObjectRecipe.GrowthPath),
+            new VisualObjectBrief(
+                3,
+                VisualObjectPurpose.Emphasis,
+                VisualObjectArchetype.Frame,
+                PlacementRole: VisualObjectPlacementRole.FocusFrame,
+                Recipe: VisualObjectRecipe.FocusCorners),
+            new VisualObjectBrief(
+                4,
+                VisualObjectPurpose.Annotation,
+                VisualObjectArchetype.Callout,
+                PlacementRole: VisualObjectPlacementRole.ChartAnnotation,
+                Label: "Decision",
+                Recipe: VisualObjectRecipe.AnnotationPin,
+                AnchorCategoryOrdinal: 3,
+                AnchorSeriesOrdinal: 1),
+            new VisualObjectBrief(
+                5,
+                VisualObjectPurpose.Emphasis,
+                VisualObjectArchetype.Ribbon,
+                PlacementRole: VisualObjectPlacementRole.SectionDivider,
+                Recipe: VisualObjectRecipe.SectionRule),
+            new VisualObjectBrief(
+                6,
+                VisualObjectPurpose.Cycle,
+                VisualObjectArchetype.Ring,
+                Orientation: VisualObjectOrientation.Clockwise,
+                PlacementRole: VisualObjectPlacementRole.BackgroundMotif,
+                Recipe: VisualObjectRecipe.CycleCue),
+        ]);
+
+        Assert.Equal(6, prepared.Objects.Count);
+        Assert.Equal(VisualObjectRecipe.DirectionalCue, prepared.Objects[0].Recipe);
+        Assert.Contains("DirectionalCue", prepared.Objects[0].PreviewDescription, StringComparison.Ordinal);
+
+        var labeledContentConnector = Assert.Throws<PptxValidationException>(() => repository.Prepare(caller,
+        [
+            new VisualObjectBrief(
+                7,
+                VisualObjectPurpose.Direction,
+                VisualObjectArchetype.Arrow,
+                PlacementRole: VisualObjectPlacementRole.ContentConnector,
+                Label: "Duplicate relationship label",
+                Recipe: VisualObjectRecipe.DirectionalCue),
+        ]));
+        Assert.Equal("visual_object_recipe_invalid", labeledContentConnector.Code);
+    }
+
+    [Theory]
+    [InlineData(null, 1)]
+    [InlineData(1, null)]
+    [InlineData(0, 1)]
+    [InlineData(13, 1)]
+    [InlineData(1, 0)]
+    [InlineData(1, 5)]
+    public void AnnotationPinRequiresBoundedCategoryAndSeriesOrdinals(
+        int? categoryOrdinal,
+        int? seriesOrdinal)
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var exception = Assert.Throws<PptxValidationException>(() => repository.Prepare(
+            new CallerContext("user-a", "conversation-a", null),
+            [
+                new VisualObjectBrief(
+                    1,
+                    VisualObjectPurpose.Annotation,
+                    VisualObjectArchetype.Callout,
+                    PlacementRole: VisualObjectPlacementRole.ChartAnnotation,
+                    Label: "Decision",
+                    Recipe: VisualObjectRecipe.AnnotationPin,
+                    AnchorCategoryOrdinal: categoryOrdinal,
+                    AnchorSeriesOrdinal: seriesOrdinal),
+            ]));
+
+        Assert.Equal("visual_object_recipe_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void OtherRecipesRejectChartAnchorOrdinals()
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var exception = Assert.Throws<PptxValidationException>(() => repository.Prepare(
+            new CallerContext("user-a", "conversation-a", null),
+            [
+                new VisualObjectBrief(
+                    1,
+                    VisualObjectPurpose.Growth,
+                    VisualObjectArchetype.Arrow,
+                    PlacementRole: VisualObjectPlacementRole.ChartAnnotation,
+                    Recipe: VisualObjectRecipe.GrowthPath,
+                    AnchorCategoryOrdinal: 2,
+                    AnchorSeriesOrdinal: 1),
+            ]));
+
+        Assert.Equal("visual_object_recipe_invalid", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(VisualObjectRecipe.DirectionalCue)]
+    [InlineData(VisualObjectRecipe.GrowthPath)]
+    [InlineData(VisualObjectRecipe.FocusCorners)]
+    [InlineData(VisualObjectRecipe.AnnotationPin)]
+    [InlineData(VisualObjectRecipe.SectionRule)]
+    [InlineData(VisualObjectRecipe.CycleCue)]
+    public void CuratedRecipeMismatchIsRejected(VisualObjectRecipe recipe)
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var caller = new CallerContext("user-a", "conversation-a", null);
+        var exception = Assert.Throws<PptxValidationException>(() => repository.Prepare(caller,
+        [
+            new VisualObjectBrief(
+                1,
+                VisualObjectPurpose.Direction,
+                VisualObjectArchetype.Arrow,
+                PlacementRole: VisualObjectPlacementRole.FocusFrame,
+                Recipe: recipe),
+        ]));
+
+        Assert.Equal("visual_object_recipe_invalid", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(VisualObjectRecipe.DirectionalCue, VisualObjectPurpose.Direction, VisualObjectArchetype.Arrow, VisualObjectPlacementRole.ContentConnector)]
+    [InlineData(VisualObjectRecipe.GrowthPath, VisualObjectPurpose.Growth, VisualObjectArchetype.Arrow, VisualObjectPlacementRole.ChartAnnotation)]
+    [InlineData(VisualObjectRecipe.AnnotationPin, VisualObjectPurpose.Annotation, VisualObjectArchetype.Callout, VisualObjectPlacementRole.ChartAnnotation)]
+    [InlineData(VisualObjectRecipe.SectionRule, VisualObjectPurpose.Annotation, VisualObjectArchetype.Ribbon, VisualObjectPlacementRole.SectionDivider)]
+    [InlineData(VisualObjectRecipe.CycleCue, VisualObjectPurpose.Cycle, VisualObjectArchetype.Ring, VisualObjectPlacementRole.BackgroundMotif)]
+    public void StrongCuratedRecipeIsRejectedBeforeBrandBindingUnlessItIsFocalEmphasis(
+        VisualObjectRecipe recipe,
+        VisualObjectPurpose purpose,
+        VisualObjectArchetype archetype,
+        VisualObjectPlacementRole placementRole)
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var caller = new CallerContext("user-a", "conversation-a", null);
+        var exception = Assert.Throws<PptxValidationException>(() => repository.Prepare(caller,
+        [
+            new VisualObjectBrief(
+                1,
+                purpose,
+                archetype,
+                Emphasis: VisualObjectEmphasis.Strong,
+                Orientation: recipe == VisualObjectRecipe.CycleCue
+                    ? VisualObjectOrientation.Clockwise
+                    : VisualObjectOrientation.Right,
+                PlacementRole: placementRole,
+                Label: recipe == VisualObjectRecipe.AnnotationPin ? "Decision" : null,
+                Recipe: recipe),
+        ]));
+
+        Assert.Equal("visual_object_emphasis_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void StrongFocusCornersWithFocalEmphasisIsAccepted()
+    {
+        var repository = new VisualObjectAssetRepository(TimeProvider.System);
+        var prepared = repository.Prepare(
+            new CallerContext("user-a", "conversation-a", null),
+            [
+                new VisualObjectBrief(
+                    1,
+                    VisualObjectPurpose.Emphasis,
+                    VisualObjectArchetype.Frame,
+                    Emphasis: VisualObjectEmphasis.Strong,
+                    PlacementRole: VisualObjectPlacementRole.FocusFrame,
+                    Recipe: VisualObjectRecipe.FocusCorners),
+            ]);
+
+        Assert.Equal(VisualObjectRecipe.FocusCorners, Assert.Single(prepared.Objects).Recipe);
+    }
+
+    [Fact]
     public void ToolResultKeepsIdsInStructuredTextAndDoesNotEmitUnsupportedImageContent()
     {
         var repository = new VisualObjectAssetRepository(TimeProvider.System);

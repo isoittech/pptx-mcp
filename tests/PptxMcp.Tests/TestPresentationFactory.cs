@@ -82,6 +82,33 @@ internal static class TestPresentationFactory
         return path;
     }
 
+    public static string CreateWithTable(string shapeText, params string[] cellTexts)
+    {
+        var path = Create(shapeText);
+        using var document = PresentationDocument.Open(path, true);
+        var slide = document.PresentationPart!.SlideParts.Single().Slide!;
+        var table = new A.Table(
+            new A.TableProperties { FirstRow = true },
+            new A.TableGrid(cellTexts.Select(static _ => new A.GridColumn { Width = 1_800_000L })),
+            new A.TableRow(cellTexts.Select(CreateTableCell)) { Height = 500_000L });
+        var frame = new P.GraphicFrame(
+            new P.NonVisualGraphicFrameProperties(
+                new P.NonVisualDrawingProperties { Id = 3U, Name = "Data Table" },
+                new P.NonVisualGraphicFrameDrawingProperties(),
+                new P.ApplicationNonVisualDrawingProperties()),
+            new P.Transform(
+                new A.Offset { X = 500_000L, Y = 1_000_000L },
+                new A.Extents { Cx = 5_400_000L, Cy = 500_000L }),
+            new A.Graphic(
+                new A.GraphicData(table)
+                {
+                    Uri = "http://schemas.openxmlformats.org/drawingml/2006/table",
+                }));
+        slide.CommonSlideData!.ShapeTree!.Append(frame);
+        slide.Save();
+        return path;
+    }
+
     public static string CreateWithGeneratedNotes(params string[] runs)
     {
         var path = Create(runs);
@@ -191,6 +218,16 @@ internal static class TestPresentationFactory
             new P.ShapeProperties(),
             new P.TextBody(new A.BodyProperties(), new A.ListStyle(), paragraph));
     }
+
+    private static A.TableCell CreateTableCell(string text) => new(
+        new A.TextBody(
+            new A.BodyProperties(),
+            new A.ListStyle(),
+            new A.Paragraph(
+                new A.Run(
+                    new A.RunProperties { Language = "en-US" },
+                    new A.Text(text)))),
+        new A.TableCellProperties());
 
     private static P.ShapeTree CreateShapeTree(params P.Shape[] shapes)
     {

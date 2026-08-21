@@ -94,6 +94,41 @@ public sealed class ImageAssetRepositoryTests
     }
 
     [Fact]
+    public async Task UploadedImageResolverDoesNotReuseAnImageOutsideCurrentMessageAttachments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"pptx-message-image-scope-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(root, "uploads");
+        var userDirectory = Path.Combine(uploadsRoot, "user-a");
+        Directory.CreateDirectory(userDirectory);
+        var options = Options.Create(new PptxMcpOptions
+        {
+            LibreChatUploadsRoot = uploadsRoot,
+            StorageRoot = Path.Combine(root, "storage"),
+        });
+        var resolver = new UploadedImageResolver(options);
+
+        try
+        {
+            var imagePath = Path.Combine(userDirectory, "older-image__approved.png");
+            await File.WriteAllBytesAsync(imagePath, [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+            var caller = new CallerContext(
+                "user-a",
+                "conversation-b",
+                null,
+                new HashSet<string>(StringComparer.Ordinal));
+
+            var error = await Assert.ThrowsAsync<PptxValidationException>(() =>
+                resolver.ResolveAsync(caller, "latest", CancellationToken.None));
+
+            Assert.Equal("image_file_not_found", error.Code);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task StoredAssetIsBoundToUserConversationAndExpiry()
     {
         var root = Path.Combine(Path.GetTempPath(), $"pptx-image-asset-{Guid.NewGuid():N}");

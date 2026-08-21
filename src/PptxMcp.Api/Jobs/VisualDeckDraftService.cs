@@ -635,7 +635,33 @@ public sealed class VisualDeckDraftService(
                         "visual_object_slide_mismatch",
                         $"Visual object {reference.AssetId} was prepared for slide {asset.Brief.SlideNumber}, not slide {slideNumber}.");
                 }
+
+                ValidateChartAnnotationAnchor(slides[index], slideNumber, asset);
             }
+        }
+    }
+
+    private static void ValidateChartAnnotationAnchor(
+        VisualSlideSpec slide,
+        int slideNumber,
+        VisualObjectAssetManifest asset)
+    {
+        var brief = asset.Brief;
+        if (brief.Recipe != VisualObjectRecipe.AnnotationPin)
+        {
+            return;
+        }
+
+        if (slide.Kind != VisualSlideKind.Chart
+            || slide.Chart?.Kind != VisualChartKind.Line
+            || brief.AnchorCategoryOrdinal is not int categoryOrdinal
+            || brief.AnchorSeriesOrdinal is not int seriesOrdinal
+            || categoryOrdinal > slide.Chart.Categories.Count
+            || seriesOrdinal > slide.Chart.Series.Count)
+        {
+            throw new PptxValidationException(
+                "visual_object_chart_anchor_invalid",
+                $"Slide {slideNumber} annotationPin must target an existing one-based category and series ordinal on a line Chart slide. Prepare a new bounded object for the actual chart data.");
         }
     }
 

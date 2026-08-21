@@ -3,7 +3,11 @@ using System.Text;
 
 namespace PptxMcp.Domain;
 
-public sealed record CallerContext(string UserId, string ConversationId, string? MessageId)
+public sealed record CallerContext(
+    string UserId,
+    string ConversationId,
+    string? MessageId,
+    IReadOnlySet<string>? AttachmentFileIds = null)
 {
     public string UserScope => Hash(UserId);
 

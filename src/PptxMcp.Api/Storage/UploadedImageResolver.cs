@@ -29,6 +29,8 @@ public sealed partial class UploadedImageResolver(IOptions<PptxMcpOptions> optio
         var candidates = ResolveUserDirectories(caller.UserId)
             .SelectMany(userDirectory => Directory.EnumerateFiles(userDirectory, "*", SearchOption.TopDirectoryOnly))
             .Where(IsRegularImageUpload)
+            .Where(path => caller.AttachmentFileIds is null
+                || caller.AttachmentFileIds.Contains(FileIdFromName(path)))
             .Where(path => latest || FileIdFromName(path).Equals(fileId, StringComparison.Ordinal))
             .OrderByDescending(path => new FileInfo(path).LastWriteTimeUtc)
             .ThenByDescending(Path.GetFileName, StringComparer.Ordinal)

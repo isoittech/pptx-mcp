@@ -1832,6 +1832,7 @@ function visualObjectPlacement(data, brief, placement, objectIndex) {
   const kind = String(data.kind ?? "").toLowerCase();
   const variant = String(data.variant ?? "auto").toLowerCase();
   const archetype = String(brief.archetype ?? "").toLowerCase();
+  const recipe = String(brief.recipe ?? "auto").toLowerCase();
   const diagramDirection = String(data.diagram?.direction ?? "leftToRight").toLowerCase();
 
   // Semantic objects must attach to an existing layout region. The generic
@@ -1850,12 +1851,24 @@ function visualObjectPlacement(data, brief, placement, objectIndex) {
   if (kind === "metrics" && variant === "spotlight" && placement === "focusframe") {
     return { x: 0.82, y: 2.17, w: 4.94, h: 4.14, labelPlacement: "insideBottom" };
   }
+  if (kind === "comparison" && recipe === "directionalcue" && placement === "contentconnector") {
+    return { x: 6.48, y: 3.42, w: 0.36, h: 0.14, labelPlacement: "none" };
+  }
+  if (recipe === "sectionrule" && placement === "sectiondivider") {
+    return {
+      x: density.outerX,
+      y: density.contentTop - 0.12,
+      w: W - density.outerX * 2,
+      h: 0.08,
+      labelPlacement: "inside",
+    };
+  }
   if (kind === "roadmap"
     && variant === "stepped"
     && (placement === "chartannotation" || archetype === "callout")) {
     return { x: 5.52, y: 2.92, w: 2.16, h: 0.62, labelPlacement: "inside" };
   }
-  if (["arrow", "callout", "ribbon"].includes(archetype) && brief.label) {
+  if (recipe === "auto" && ["arrow", "callout", "ribbon"].includes(archetype) && brief.label) {
     return { x: 7.92, y: 2.54 + objectIndex * 0.66, w: 1.72, h: 0.58, labelPlacement: "inside" };
   }
 
@@ -1868,6 +1881,300 @@ function visualObjectPlacement(data, brief, placement, objectIndex) {
     backgroundmotif: { x: 10.92, y: 5.8, w: 1.38, h: 0.78, labelPlacement: "none" },
   };
   return placements[placement] ?? placements.contentconnector;
+}
+
+function visualObjectStroke(objectStyle, subtle, strong, color) {
+  return {
+    color,
+    transparency: subtle ? 62 : strong ? 8 : objectStyle === "editorial" ? 42 : 24,
+    width: (subtle ? 0.9 : strong ? 1.65 : 1.2)
+      * (objectStyle === "technical" ? 0.82 : objectStyle === "roundedfriendly" ? 1.12 : 1),
+    dash: objectStyle === "technical" ? "dash" : "solid",
+  };
+}
+
+function visualObjectLabel(slide, label, box, color, strong, options = {}) {
+  if (!label) return;
+  const x = options.x ?? box.x + 0.08;
+  const y = options.y ?? box.y + box.h + 0.04;
+  const w = options.w ?? Math.max(0.65, box.w - 0.16);
+  const h = options.h ?? 0.24;
+  const usePill = options.pill === true;
+  const pillTransparency = options.fillTransparency ?? 12;
+  const pillFill = mixHex(color, theme.background, pillTransparency / 100);
+  slide.addText(label, {
+    ...(usePill ? { shape: pptx.ShapeType.roundRect } : {}),
+    x, y, w, h,
+    ...(options.objectName ? { objectName: options.objectName } : {}),
+    fontFace: theme.bodyFont,
+    fontSize: scaled(options.fontSize ?? 8.7),
+    bold: strong || options.bold === true,
+    color: usePill
+      ? readableForeground(pillFill)
+      : readableToneOnBackground(color, theme.background, theme.text),
+    ...(usePill
+      ? {
+          fill: { color, transparency: pillTransparency },
+          line: { color, transparency: 100 },
+        }
+      : {}),
+    margin: usePill ? 0.05 : 0,
+    align: options.align ?? "center",
+    valign: "mid",
+    fit: "shrink",
+  });
+}
+
+function visualObjectLine(slide, start, end, line) {
+  addLineBetweenPoints(slide, start, end, line);
+}
+
+function renderDirectionalCue(slide, brief, box, color, objectStyle, subtle, strong) {
+  const direction = String(brief.orientation ?? "right").toLowerCase();
+  const centerX = box.x + box.w / 2;
+  const centerY = box.y + box.h / 2;
+  const inset = Math.min(0.12, box.w * 0.12, box.h * 0.28);
+  const points = {
+    right: [[box.x + inset, centerY], [box.x + box.w - inset, centerY]],
+    left: [[box.x + box.w - inset, centerY], [box.x + inset, centerY]],
+    up: [[centerX, box.y + box.h - inset], [centerX, box.y + inset]],
+    down: [[centerX, box.y + inset], [centerX, box.y + box.h - inset]],
+  }[direction] ?? [[box.x + inset, centerY], [box.x + box.w - inset, centerY]];
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  visualObjectLine(slide, points[0], points[1], { ...stroke, endArrowType: "triangle" });
+  if (objectStyle === "roundedfriendly" || objectStyle === "technical") {
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: points[0][0] - 0.055, y: points[0][1] - 0.055, w: 0.11, h: 0.11,
+      fill: { color, transparency: subtle ? 42 : 8 },
+      line: { color, transparency: 100 },
+    });
+  }
+  if (objectStyle === "editorial") {
+    const offset = direction === "up" || direction === "down" ? [0.06, 0] : [0, 0.06];
+    visualObjectLine(
+      slide,
+      [points[0][0] + offset[0], points[0][1] + offset[1]],
+      [points[1][0] + offset[0], points[1][1] + offset[1]],
+      { color, transparency: 78, width: 0.6 },
+    );
+  }
+  visualObjectLabel(slide, brief.label, box, color, strong);
+}
+
+function renderGrowthPath(slide, brief, box, color, objectStyle, subtle, strong) {
+  const upward = String(brief.orientation ?? "right").toLowerCase() === "up";
+  const start = upward
+    ? [box.x + box.w * 0.28, box.y + box.h * 0.86]
+    : [box.x + box.w * 0.08, box.y + box.h * 0.78];
+  const end = upward
+    ? [box.x + box.w * 0.72, box.y + box.h * 0.12]
+    : [box.x + box.w * 0.92, box.y + box.h * 0.18];
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  visualObjectLine(slide, start, end, { ...stroke, endArrowType: "triangle" });
+  [0, 0.42].forEach((ratio) => {
+    const x = start[0] + (end[0] - start[0]) * ratio;
+    const y = start[1] + (end[1] - start[1]) * ratio;
+    const diameter = objectStyle === "roundedfriendly" ? 0.13 : 0.1;
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: x - diameter / 2, y: y - diameter / 2, w: diameter, h: diameter,
+      fill: { color, transparency: subtle ? 48 : 12 },
+      line: { color, transparency: 100 },
+    });
+  });
+  visualObjectLabel(slide, brief.label, box, color, strong, {
+    y: box.y + box.h - 0.02,
+    h: 0.22,
+  });
+}
+
+function renderFocusCorners(slide, brief, box, color, objectStyle, subtle, strong) {
+  const length = Math.min(0.42, box.w * 0.13, box.h * 0.13);
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  const corners = [
+    [[box.x, box.y + length], [box.x, box.y], [box.x + length, box.y]],
+    [[box.x + box.w - length, box.y], [box.x + box.w, box.y], [box.x + box.w, box.y + length]],
+    [[box.x, box.y + box.h - length], [box.x, box.y + box.h], [box.x + length, box.y + box.h]],
+    [[box.x + box.w - length, box.y + box.h], [box.x + box.w, box.y + box.h], [box.x + box.w, box.y + box.h - length]],
+  ];
+  corners.forEach(([start, turn, end]) => {
+    visualObjectLine(slide, start, turn, stroke);
+    visualObjectLine(slide, turn, end, stroke);
+  });
+  if (objectStyle === "roundedfriendly") {
+    corners.forEach(([, turn]) => slide.addShape(pptx.ShapeType.ellipse, {
+      x: turn[0] - 0.045, y: turn[1] - 0.045, w: 0.09, h: 0.09,
+      fill: { color, transparency: subtle ? 54 : 18 },
+      line: { color, transparency: 100 },
+    }));
+  }
+  visualObjectLabel(slide, brief.label, box, color, strong, {
+    x: box.x + 0.22,
+    y: box.y + box.h - 0.36,
+    w: Math.max(0.65, box.w - 0.44),
+    h: 0.23,
+  });
+}
+
+function niceChartStep(value) {
+  const safeValue = Math.max(Math.abs(value), Number.EPSILON);
+  const magnitude = 10 ** Math.floor(Math.log10(safeValue));
+  const fraction = safeValue / magnitude;
+  const niceFraction = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
+  return niceFraction * magnitude;
+}
+
+function lineChartAxisRange(chart) {
+  const values = (chart?.series ?? []).flatMap((series) => series.values ?? []);
+  if (values.length === 0) return { minimum: 0, maximum: 1, majorUnit: 0.2 };
+  let minimum = Math.min(0, ...values);
+  let maximum = Math.max(0, ...values);
+  if (minimum === maximum) {
+    minimum -= Math.max(1, Math.abs(minimum) * 0.1);
+    maximum += Math.max(1, Math.abs(maximum) * 0.1);
+  }
+  const majorUnit = niceChartStep((maximum - minimum) / 5);
+  minimum = Math.floor(minimum / majorUnit) * majorUnit;
+  maximum = Math.ceil(maximum / majorUnit) * majorUnit;
+  if (minimum === maximum) maximum += majorUnit;
+  return { minimum, maximum, majorUnit };
+}
+
+function chartFrame(data) {
+  const showSidebar = Boolean(data.takeaway || data.body);
+  const chartWidth = showSidebar ? 8.65 : 11.9;
+  const frame = { x: 1.0, y: 2.23, w: chartWidth - 0.58, h: 4.18 };
+  const bottomInset = data.chart?.showLegend ? 0.72 : 0.42;
+  return {
+    showSidebar,
+    chartWidth,
+    frame,
+    plot: {
+      x: frame.x + 0.47,
+      y: frame.y + 0.18,
+      w: frame.w - 0.63,
+      h: frame.h - 0.18 - bottomInset,
+    },
+  };
+}
+
+function anchoredLineChartPoint(data, brief) {
+  const chart = data.chart;
+  if (String(data.kind ?? "").toLowerCase() !== "chart"
+    || String(chart?.kind ?? "").toLowerCase() !== "line") return null;
+  const categoryIndex = Number(brief.anchorCategoryOrdinal) - 1;
+  const seriesIndex = Number(brief.anchorSeriesOrdinal) - 1;
+  if (!Number.isInteger(categoryIndex) || !Number.isInteger(seriesIndex)
+    || categoryIndex < 0 || categoryIndex >= chart.categories.length
+    || seriesIndex < 0 || seriesIndex >= chart.series.length) return null;
+  const value = chart.series[seriesIndex].values[categoryIndex];
+  if (!Number.isFinite(value)) return null;
+  const { plot } = chartFrame(data);
+  const range = lineChartAxisRange(chart);
+  // PowerPoint line charts place category markers at the center of equal-width
+  // slots rather than on the two ends of the category axis.
+  const xRatio = (categoryIndex + 0.5) / chart.categories.length;
+  const yRatio = (range.maximum - value) / (range.maximum - range.minimum);
+  return [plot.x + plot.w * xRatio, plot.y + plot.h * yRatio];
+}
+
+function hasAnchoredAnnotationPin(data) {
+  return (data.visualObjects ?? []).some((reference) => {
+    const brief = visualObjectAssets.get(reference.assetId)?.brief;
+    return String(brief?.recipe ?? "").toLowerCase() === "annotationpin"
+      && Number.isInteger(brief.anchorCategoryOrdinal)
+      && Number.isInteger(brief.anchorSeriesOrdinal);
+  });
+}
+
+function renderAnnotationPin(slide, data, brief, box, color, objectStyle, subtle, strong) {
+  const target = anchoredLineChartPoint(data, brief)
+    ?? [box.x + 0.08, box.y + box.h * 0.64];
+  const elbow = [box.x + 0.08, box.y + box.h * 0.28];
+  const chipX = box.x + 0.16;
+  const chipW = Math.max(0.72, box.x + box.w - chipX);
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  slide.addShape(pptx.ShapeType.ellipse, {
+    x: target[0] - 0.065, y: target[1] - 0.065, w: 0.13, h: 0.13,
+    objectName: "Visual Object annotationPin target",
+    fill: { color, transparency: subtle ? 30 : 4 },
+    line: { color, transparency: 100 },
+  });
+  visualObjectLine(slide, target, elbow, { ...stroke, width: Math.max(0.8, stroke.width * 0.78) });
+  visualObjectLabel(slide, brief.label, box, color, strong, {
+    x: chipX,
+    y: box.y + 0.02,
+    w: chipW,
+    h: Math.max(0.3, box.h * 0.58),
+    pill: true,
+    fillTransparency: subtle ? 68 : objectStyle === "editorial" ? 28 : 18,
+    align: "left",
+    fontSize: 8.5,
+    objectName: "Visual Object annotationPin label",
+  });
+}
+
+function renderSectionRule(slide, brief, box, color, objectStyle, subtle, strong) {
+  const y = box.y + box.h / 2;
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  visualObjectLine(slide, [box.x, y], [box.x + box.w, y], {
+    ...stroke,
+    transparency: subtle ? 76 : 58,
+    width: Math.min(1.15, stroke.width),
+  });
+  visualObjectLine(slide, [box.x, y], [box.x + Math.min(1.18, box.w * 0.22), y], {
+    ...stroke,
+    transparency: subtle ? 28 : 4,
+    width: strong ? 2.4 : 1.8,
+  });
+  if (brief.label) {
+    visualObjectLabel(slide, brief.label, box, color, strong, {
+      x: box.x,
+      y: y - 0.16,
+      w: Math.min(1.8, Math.max(0.9, box.w * 0.2)),
+      h: 0.3,
+      pill: true,
+      fillTransparency: 4,
+      fontSize: 8.3,
+    });
+  }
+}
+
+function renderCycleCue(slide, brief, box, color, objectStyle, subtle, strong) {
+  const size = Math.min(box.w, box.h);
+  const x = box.x + (box.w - size) / 2;
+  const y = box.y + (box.h - size) / 2;
+  const stroke = visualObjectStroke(objectStyle, subtle, strong, color);
+  slide.addShape(pptx.ShapeType.circularArrow, {
+    x, y, w: size, h: size,
+    rotate: objectStyle === "editorial" ? 30 : 18,
+    fill: { color, transparency: subtle ? 91 : strong ? 76 : 84 },
+    line: { color, transparency: 100 },
+  });
+  slide.addShape(pptx.ShapeType.ellipse, {
+    x: x + size * 0.43, y: y + size * 0.43, w: size * 0.14, h: size * 0.14,
+    fill: { color, transparency: subtle ? 58 : 20 },
+    line: { color, transparency: 100 },
+  });
+  if (objectStyle === "technical") {
+    slide.addShape(pptx.ShapeType.ellipse, {
+      x: x - 0.04, y: y - 0.04, w: size + 0.08, h: size + 0.08,
+      fill: { color, transparency: 100 },
+      line: { ...stroke, transparency: 74, width: 0.7, dash: "dash" },
+    });
+  }
+  visualObjectLabel(slide, brief.label, box, color, strong);
+}
+
+function renderPreparedVisualObjectRecipe(slide, data, brief, box, color, objectStyle, subtle, strong) {
+  const recipe = String(brief.recipe ?? "auto").toLowerCase();
+  if (recipe === "directionalcue") renderDirectionalCue(slide, brief, box, color, objectStyle, subtle, strong);
+  else if (recipe === "growthpath") renderGrowthPath(slide, brief, box, color, objectStyle, subtle, strong);
+  else if (recipe === "focuscorners") renderFocusCorners(slide, brief, box, color, objectStyle, subtle, strong);
+  else if (recipe === "annotationpin") renderAnnotationPin(slide, data, brief, box, color, objectStyle, subtle, strong);
+  else if (recipe === "sectionrule") renderSectionRule(slide, brief, box, color, objectStyle, subtle, strong);
+  else if (recipe === "cyclecue") renderCycleCue(slide, brief, box, color, objectStyle, subtle, strong);
+  else return false;
+  return true;
 }
 
 function renderPreparedVisualObjects(slide, data) {
@@ -1889,6 +2196,9 @@ function renderPreparedVisualObjects(slide, data) {
       && Boolean(brief.label)
       && labelPlacement === "inside";
     const objectStyle = String(brief.style ?? "quietCorporate").toLowerCase();
+    if (renderPreparedVisualObjectRecipe(slide, data, brief, box, color, objectStyle, subtle, strong)) {
+      return;
+    }
     const transparency = subtle ? 90 : strong ? 72 : objectStyle === "editorial" ? 88 : 82;
     const widthScale = objectStyle === "technical" ? 0.8 : objectStyle === "roundedFriendly" ? 1.15 : 1;
     const shapeOptions = {
@@ -2233,12 +2543,16 @@ function renderChart(slide, data, index) {
     labels: chart.categories,
     values: item.values,
   }));
-  const showSidebar = Boolean(data.takeaway || data.body);
-  const chartWidth = showSidebar ? 8.65 : 11.9;
+  const { showSidebar, chartWidth, frame } = chartFrame(data);
   card(slide, 0.7, 1.96, chartWidth, 4.78, "FFFFFF");
   const chartRuleColor = usesModernRendererContract ? styleProfile.borderColor : "D9DFE8";
+  const anchoredAxis = usesModernRendererContract
+    && chartType === "line"
+    && hasAnchoredAnnotationPin(data)
+    ? lineChartAxisRange(chart)
+    : null;
   const chartOptions = {
-    x: 1.0, y: 2.23, w: chartWidth - 0.58, h: 4.18,
+    ...frame,
     showTitle: false,
     showLegend: chart.showLegend,
     legendPos: "b",
@@ -2256,6 +2570,13 @@ function renderChart(slide, data, index) {
     valAxisLabelFontSize: 10,
     valAxisLabelColor: cardMutedTextColor,
     valAxisLineColor: chartRuleColor,
+    ...(anchoredAxis
+      ? {
+          valAxisMinVal: anchoredAxis.minimum,
+          valAxisMaxVal: anchoredAxis.maximum,
+          valAxisMajorUnit: anchoredAxis.majorUnit,
+        }
+      : {}),
     catAxisLineColor: chartRuleColor,
     valGridLine: { color: chartRuleColor, size: 1 },
     catGridLine: { style: "none" },
