@@ -41,9 +41,15 @@
 - 生成・編集後は `pptx_get_preview_images` で全ページをClaudeへ渡し、問題時は宣言型仕様を最大2回まで修正する。通常の欠け・重なりに加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。
 - Bedrockから白紙資料とブランドVisual Deckを視覚修正する場合は、`pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡し、各成功後に `jobId=latest` で次ページを直す。ジョブへルート・親・修正巡を保存し、古い版からの分岐、一括ページ修正、3巡目をサーバー側で拒否する。成功後のstart再実行も拒否し、初回生成失敗時の全体再試行だけ1回許可する。
 - 成功済みVisual Deckへページを増やす場合は`pptx_insert_visual_slides`へ追加ページだけを渡す。新規ドラフトを開始せず、既存ページも再送しない。サーバー側で元仕様へ挿入し、ブランド資料では元テンプレートとレイアウトを継承する。第1段階では完成版全体を再レンダリングするため、物理的な差分編集とは区別する。
-- `pptx_get_job(jobId=latest)` は同じ利用者・会話の直近ジョブを状態にかかわらず返す。逐次修正の入力解決は成功済みVisual Deckだけを対象とするため、両者の `latest` の意味を混同しない。
-- 非同期ジョブの通常フローは`pptx_wait_for_job`で最大45秒サーバー内待機し、`pptx_get_job`の短間隔反復でLibreChatの再帰上限を消費しない。`pptx_get_job`は障害復旧や待たない即時確認に使う。
+- `pptx_get_job(jobId=latest)` は同じ利用者・会話の直近ジョブを状態にかかわらず返す。逐次修正の入力解決は成功済みVisual Deckだけを対象とするため、両者の `latest` の意味を混同しない。完了済みAnalyzeの大きな`result`は同一サーバー稼働中の最初の成功`pptx_wait_for_job`だけが返し、その後の`get_job`と同じ`wait`は本文を省略して既存結果から編集へ進む案内を返す。同じ利用者メッセージ・source・includeLayoutsのAnalyze再送は24時間同じjob IDへ束縛し、完全結果の誤認による新規解析を作らない。
+- 非同期ジョブの通常フローは`pptx_wait_for_job`で最大45秒サーバー内待機し、`pptx_get_job`の短間隔反復でLibreChatの再帰上限とモデル出力枠を消費しない。`pptx_get_job`は障害復旧や待たない即時確認に使う。
 - Visual Deckの検証失敗は `ToolValidationError` でコード・対象フィールド・修正指示をモデルへ返す。`PptxValidationException` をMCP境界から未処理のまま出し、モデルに同じ入力を推測再試行させない。
+- 既存PPTXのanalyze、preview、replace、populate、create、refineでも受付時の`PptxValidationException`をMCP境界から漏らさず、`ToolValidationError`でcode、理由、再実行可否を返す。安全性検査で拒否した同一ファイルを推測再試行させない。
+- `external_relationship`では「外部画像」「リンクされたExcel/Word等のOLE」「共有フォルダ・ネットワークドライブ・SharePoint上の別ファイル」が何を意味するかを利用者の言語で平易に説明する。通常のHTTP/HTTPSリンクは許可対象であることも明記し、拒否対象と混同させない。
+- 添付PPTXの検索はLinux上でも`.pptx`と`.PPTX`を同じ拡張子として扱う。受付拒否時は、空・上限超過、ページ数、マクロ／ActiveX、破損・安全上限の違いを利用者の言語で説明し、修正版の再添付が必要かを明示する。
+- 本番LibreChatは`X-LibreChat-Attachment-File-IDs`へ現在のリクエスト添付だけを渡す。`latest`と明示`file_id`はこのscope内で解決し、空scopeでは同じ利用者の過去・別会話の添付を再利用しない。ヘッダーを持たないローカル開発クライアントだけは従来のuser scopeへ後方互換フォールバックする。
+- 翻訳など文字だけの既存PPTX更新は、`pptx_analyze(includeLayouts=false)`が返す全ページの文字入りshapeと編集可能なPowerPoint表のコンパクトな構造化結果から置換指定を作り、`pptx_replace_text`成功後にだけ全ページをプレビューする。解析応答はhostのtool結果圧縮で中間スライドを失わないよう、`slides`の`[slide_number, exact_texts[]]`タプルへ集約し、shape ID・theme・title・kindなど置換に不要な重複情報を含めない。表はセルごとに別のexact textとして投影し、見出しと本文を個別の翻訳対象にする。内部では`p:graphicFrame/a:tbl`の安定したshape IDで解析・置換し、置換指定はslide番号とexact textで行い、置換件数0の変更を成功扱いにしない。画像化された文字は編集可能テキストと誤認しない。元資料の文字起こし目的でプレビュー画像を先に取得し、モデルのコンテキストを消費しない。最初の置換後は同一メッセージの最新job IDをcheckpointとし、元資料から再開したり古いjobから分岐したりしない。同一メッセージで解析済みの元資料previewは例外なく拒否し、ユーザー意図をモデルが自己申告するoverrideを設けない。利用者が元資料の画像確認を明示した場合は、そのメッセージで解析より先にpreviewする。完成jobのpreviewは連続4ページずつ取得し、同じjobの同じページを再取得しない。既存プレースホルダーへ厳密に流し込むときだけ`includeLayouts=true`を使う。
+- 置換が20件を超える場合は、`pptx_replace_text`を最大20件ずつ実行する。中間バッチは`isFinalBatch=false`とし、成功した`job_id`を次の`previousJobId`へ渡して変更を累積する。最後だけ`isFinalBatch=true`として全ページを描画する。
 - `visual_draft_not_found`／`visual_draft_expired`／`visual_draft_not_editable`はterminal errorとして再試行を明示的に禁止する。汎用の「入力を直して同じtoolを再実行」案内へフォールバックさせない。
 - PptxGenJSを含む外部レンダラーの生成物は、LibreOfficeで表示できてもPowerPoint互換とは限らない。生成直後と企業テンプレートへの合成後にOpenXmlValidatorを通し、新規検証エラーがある成果物は配布しない。
 - rendererの色role、surface、style profileを拡張するときは`visual-v5`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。dark surface、明色role、v4代表XMLのNode回帰テストを維持する。
@@ -53,7 +59,7 @@
 
 - `rm`による削除は作業途中で繰り返さず、削除対象を記録して作業終盤に一覧を提示し、ユーザー承認後にまとめて実行する。承認前に実行しない。
 - 入力上限は30MB、50スライド、ジョブ実行上限は10分、同時実行数は3とする。
-- ZIP bomb、パストラバーサル、マクロ、ActiveX、外部リレーション、暗号化ファイルを拒否する。
+- ZIP bomb、パストラバーサル、マクロ、ActiveX、外部リソースリレーション、非HTTP(S)ハイパーリンク、暗号化ファイルを拒否する。HTTP/HTTPSの標準ハイパーリンクは外部データを読み込まないため保持する。
 - 成果物は生成から7日、または最初のダウンロードから24時間の早い方で削除する。
 - MCP コンテナから外部ネットワークへ接続させない。調査や情報収集は LibreChat 側のモデルが担当する。
 - ローカルCodex接続ではMCP本体の内部ネットワークを解除せず、`pptx-codex-proxy`だけを`127.0.0.1`へ公開する。本番LibreChatでは成果物専用プロキシを使い、`/mcp`を公開しない。
@@ -78,6 +84,7 @@
 - LibreChatのmessage attachment画像は文書uploadと異なり`images/<user-id>/`へ保存される。導入時は`LibreChatImagesRoot`と`LibreChatUploadsRoot`を別々に読み取り専用mountし、実UI添付からresolverまでのE2Eを省略しない。
 - 画像layoutを空欄や「ここに画像」のshapeで完成扱いしない。`Media`は同じ利用者・会話の有効なasset ID、alt text、cropを必須にし、素材がなければnative diagramまたは画像なしrecipeへ変更する。詳細は[ADR 0016](docs/adr/0016-conversation-scoped-image-assets-and-media-split.md)を参照する。
 - 意味のある矢印・枠・吹き出し等は`pptx_prepare_visual_objects`で1回最大8件をまとめ、座標・生色・SVG/XML・URL・pathを入力に持たせない。1ページ最大3件、strong最大1件、会話最大24件を守り、Asset PlanへIDを固定する。補助図形は空のプレースホルダとして浮かせず、吹き出しは文字を内包し、枠は既存の焦点領域を囲み、図解の括弧は安全帯へ置くなど意味layout別anchorへ自動配置する。PPTX本体は編集可能なネイティブ図形とし、tool resultはJSON textだけを返す。SVG ImageContentはBedrock／Anthropicへ再送するとprovider errorになるため公開しない。詳細は[ADR 0017](docs/adr/0017-native-semantic-diagrams-and-visual-objects.md)を参照する。
+- 複合Visual Objectは`recipe=directionalCue|growthPath|focusCorners|annotationPin|sectionRule|cycleCue`の正規tupleだけを受理し、`auto`は従来の単一図形を維持する。Agentはアウトライン後に一度だけ全ページを意味分類してbatch prepareし、最低使用数を設けない。複合recipeは原則subtle/standardとし、strongは`visualPurpose=emphasis`のfocusCornersだけに限定してBrand Profile確定後の手戻りを防ぐ。content間の方向キューへ重複labelを置かず、focusCornersは全面枠へ戻さない。annotationPinは折れ線Chartだけに使い、短いlabelと実在する1始まりcategory／series番号を必須にする。他recipeへanchor番号を渡さない。既存layoutの意味が十分ならobjectを追加しない。詳細は[ADR 0019](docs/adr/0019-curated-semantic-visual-object-recipes.md)を参照する。
 - `variant`を公開するときは必ず専用描画分岐と件数条件を同時に実装し、受理値が`auto`へ黙って退化しない回帰テストを追加する。NativeDiagramのnode/edge上限とacyclic検証を緩めず、巨大schemaや座標修正ループを再導入しない。
 - `addTable`の垂直中央揃えは`valign: "middle"`を使う。`"mid"`は表セルへ不正な`anchor="mid"`として出力されるため、正規化処理と回帰テストも維持する。
 - PptxGenJSの棒グラフは系列内の`c:dPt`を`c:dLbls`より後ろへ出力する場合がある。Open XMLの要素順に合わせて個別データ点をラベルより前へ移し、実データ点を含む回帰テストを維持する。

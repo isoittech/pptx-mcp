@@ -7,7 +7,8 @@ public sealed record ShapeSummary(
     [property: JsonPropertyName("shape_id")] uint ShapeId,
     [property: JsonPropertyName("shape_name")] string ShapeName,
     [property: JsonPropertyName("kind")] string Kind,
-    [property: JsonPropertyName("text")] string? Text);
+    [property: JsonPropertyName("text")] string? Text,
+    [property: JsonIgnore] IReadOnlyList<string>? ExactTexts = null);
 
 public sealed record SlideSummary(
     [property: JsonPropertyName("slide_number")] int SlideNumber,
@@ -51,6 +52,13 @@ public sealed record PresentationSummary(
     [property: JsonPropertyName("layouts")] IReadOnlyList<LayoutSummary> Layouts,
     [property: JsonPropertyName("theme")] PresentationThemeSummary? Theme,
     [property: JsonPropertyName("validation_errors")] IReadOnlyList<string> ValidationErrors);
+
+public sealed record TextEditAnalysisResult(
+    [property: JsonPropertyName("analysis_truncated")] bool AnalysisTruncated,
+    [property: JsonPropertyName("charts")] bool HasEditableCharts,
+    [property: JsonPropertyName("slides")] IReadOnlyList<object[]> Slides,
+    [property: JsonPropertyName("validation_errors"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? ValidationErrors);
 
 public sealed record EditResult(
     [property: JsonPropertyName("replacement_count")] int ReplacementCount,

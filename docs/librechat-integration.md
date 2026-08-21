@@ -6,7 +6,7 @@
 
 共有秘密は `apiKey.source: admin` と `authorization_type: bearer` で設定します。LibreChatの起動時インスペクターは管理者提供キーならOAuth検出を省略し、実接続時にだけAuthorizationヘッダーを構成します。`headers.Authorization` を手動設定すると、起動時の未認証プローブをOAuth必須と誤判定するため使用しません。
 
-ユーザーIDと会話IDはLibreChatのヘッダープレースホルダーから渡します。これらをツール引数へ公開しないでください。共有秘密はLibreChatとpptx-mcpの環境変数に同じ値を設定します。
+ユーザーID、会話ID、現在のリクエストへ添付されたopaque file ID一覧はLibreChatのヘッダープレースホルダーから渡します。これらをモデルが自由入力するツール引数へ公開しないでください。添付がない場合も明示的な空scopeを渡し、同じ利用者の別会話・過去メッセージにあるPPTXを`latest`が再利用しないようにします。共有秘密はLibreChatとpptx-mcpの環境変数に同じ値を設定します。
 
 ## アップロード連携
 
@@ -16,7 +16,7 @@
 /app/uploads/<user-id>/<file-id>__<original-name>.pptx
 ```
 
-BedrockはPPTX自体をモデル入力へ渡さないため、Claudeからアップロードの`file_id`が見えない場合があります。入力系ツールの`sourceFileId`を省略すると、信頼済みユーザーヘッダーで限定したディレクトリ内の最新PPTXを選択します。`file_id`を明示した場合はそのファイルを優先します。複数のPPTXから特定ファイルを選ぶ必要がある運用では、アップロード直後に処理するか、`file_id`を明示してください。
+BedrockはPPTX自体をモデル入力へ渡さないため、Claudeからアップロードの`file_id`が見えない場合があります。入力系ツールの`sourceFileId`を省略すると、信頼済みヘッダーで限定された現在のリクエスト添付のうち最新PPTXを選択します。`file_id`を明示した場合も現在の添付scope内だけで解決します。複数のPPTXを同時添付して特定ファイルを選ぶ場合は、LibreChatが提示したopaque `file_id`を明示してください。
 
 LibreChat側にも個別ファイル30MBの上限を設定し、リバースプロキシのリクエストボディ上限はmultipartのオーバーヘッドを含めて32MB以上にします。
 

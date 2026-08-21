@@ -6,16 +6,16 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 
 - Streamable HTTP の MCP サーバー
 - 30MB・50スライドまでの PPTX 入力検証
-- ZIP bomb、パストラバーサル、マクロ、ActiveX、外部参照の拒否
+- ZIP bomb、パストラバーサル、マクロ、ActiveX、外部リソース参照、非Webハイパーリンクの拒否（HTTP/HTTPSハイパーリンクは保持）
 - 最大3並列・10分タイムアウトの永続化された非同期ジョブ
 - スライド、シェイプ、テーマ色、日本語フォント、SmartArt、グラフ、埋め込みExcel有無の解析
-- 通常シェイプと SmartArt 内テキストの置換
+- 通常シェイプ、編集可能な PowerPoint 表、SmartArt 内テキストの置換
 - 名前付きシェイプを持つ企業テンプレートへのテキスト流し込み
 - 企業テンプレート内で編集可能な実箇条書き・自動採番・0〜4段階のインデントを生成
 - 企業テンプレートの定義済みレイアウトから1〜50枚の新規デッキを生成
 - 白紙から意味ベースの23レイアウト、9テーマ、デザイン方針、構図バリエーションを使って視覚的な16:9デッキを生成
 - `nativeDiagram`でtree・flow・cycle・concentric・networkを、既存工程系でloop・stepped・pyramidを編集可能なネイティブ図形として生成
-- `pptx_prepare_visual_objects`で意味を持つ矢印・曲線矢印・枠・吹き出し・括弧・リング・リボンを最大8件まとめて準備し、会話scope付きopaque IDでAsset Planへ束縛
+- `pptx_prepare_visual_objects`で意味を持つ矢印・曲線矢印・枠・吹き出し・括弧・リング・リボンを最大8件まとめて準備し、会話scope付きopaque IDでAsset Planへ束縛。方向線・成長線・コーナー強調枠・セクション罫線・循環キューに加え、折れ線Chartの実在データ点へ結び付く注釈ピンを控えめな複合ネイティブ図形として再利用可能
 - ユーザー提供JPEG/PNGを会話scope付きopaque assetへ無害化登録し、`Media/split`へcrop・代替テキスト・出典付きで埋め込み
 - 各Visual Slideへ「このスライドの狙い」とトークスクリプトをPowerPoint発表者ノートとして保存し、refine時は省略されたノートを継承
 - 文字量の多い説明を2〜3列へ構造化する `structuredBrief`、評価軸×選択肢の `scorecard`、汎用の `dataTable` を編集可能なPowerPoint表として生成
@@ -110,7 +110,13 @@ LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書
 - `pptx_get_preview_images`
 - `pptx_cancel_job`
 
-処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大2巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
+処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。完了済み解析の大きな本文は、同一サーバー稼働中に`pptx_wait_for_job`から1回だけ返します。その後に`pptx_get_job`や同じ`wait`を誤って呼んでも本文を二重返却せず、既に受け取った解析結果から次の編集へ進む案内だけを返します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大2巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
+
+アップロード済みPPTXの受付時検証に失敗した場合、analyze、preview、replace、populate、create、refineは汎用MCP例外ではなく、`status=invalid_input`、検証`code`、理由、再実行可否を返します。安全性検査で拒否された同一ファイルを推測で再実行しません。外部参照を拒否した場合は、外部画像、リンクされたExcel/Word等のOLE、共有フォルダ・ネットワークドライブ・SharePoint上の別ファイルという具体例を平易に説明し、通常のHTTP/HTTPSリンクは許可対象であることを案内します。
+
+翻訳など文字だけの更新では、`pptx_analyze(includeLayouts=false)`が返す全ページの文字入りshapeと、セルごとに分離された編集可能なPowerPoint表のコンパクトな構造化結果から置換指定を作り、`pptx_replace_text`が成功した後に全ページのプレビューを確認します。元資料の文字起こし目的で先にプレビュー画像を取得してモデルのコンテキストを圧迫しません。既存プレースホルダーの厳密な`layout_id`一覧が必要なときだけ`includeLayouts=true`を指定します。
+
+置換が20件を超える場合は、`pptx_replace_text`を最大20件ずつ実行できます。中間バッチは`isFinalBatch=false`とし、成功した`job_id`を次の`previousJobId`へ渡すことで、それまでの置換を保持します。最後のバッチだけ`isFinalBatch=true`にすると全ページプレビューを生成します。
 
 新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`media`、`nativeDiagram`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。`nativeDiagram`はtree・flow・cycle・concentric・networkを、座標なしのnode/edge意味仕様から自動配置します。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none` の場合だけ白紙生成になります。
 

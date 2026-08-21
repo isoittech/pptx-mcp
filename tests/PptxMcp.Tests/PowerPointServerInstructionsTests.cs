@@ -42,6 +42,28 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("included in the downloaded PPTX", instructions, StringComparison.Ordinal);
         Assert.Contains("hidden chain-of-thought", instructions, StringComparison.Ordinal);
         Assert.Contains("omit speakerNotes to inherit", instructions, StringComparison.Ordinal);
+        Assert.Contains("For a text-only edit such as translation", instructions, StringComparison.Ordinal);
+        Assert.Contains("without any model-controlled override", instructions, StringComparison.Ordinal);
+        Assert.Contains("pptx_analyze with includeLayouts=false", instructions, StringComparison.Ordinal);
+        Assert.Contains("fixed slides tuples [slide_number, exact_texts[]]", instructions, StringComparison.Ordinal);
+        Assert.Contains("table cells are returned as separate exact_texts entries", instructions, StringComparison.Ordinal);
+        Assert.Contains("including table body cells", instructions, StringComparison.Ordinal);
+        Assert.Contains("When analysis_truncated=false", instructions, StringComparison.Ordinal);
+        Assert.Contains("charts field means editable PowerPoint charts", instructions, StringComparison.Ordinal);
+        Assert.Contains("If charts=false", instructions, StringComparison.Ordinal);
+        Assert.Contains("part of a picture or flattened graphic", instructions, StringComparison.Ordinal);
+        Assert.Contains("never describe visible chart-like graphics as chart data", instructions, StringComparison.Ordinal);
+        Assert.Contains("do not ask them to choose translation", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not call pptx_get_job after a successful wait", instructions, StringComparison.Ordinal);
+        Assert.Contains("at most 20 entries each", instructions, StringComparison.Ordinal);
+        Assert.Contains("exact returned job_id as previousJobId", instructions, StringComparison.Ordinal);
+        Assert.Contains("Never omit previousJobId again", instructions, StringComparison.Ordinal);
+        Assert.Contains("isFinalBatch=true only on the last batch", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not call pptx_render_preview or pptx_get_preview_images", instructions, StringComparison.Ordinal);
+        Assert.Contains("retrieve that final job's preview images", instructions, StringComparison.Ordinal);
+        Assert.Contains("consecutive groups of four slide numbers", instructions, StringComparison.Ordinal);
+        Assert.Contains("never request the same slide twice", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not end the turn after source analysis", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

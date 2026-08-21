@@ -24,6 +24,18 @@ public enum VisualObjectPlacementRole { HeaderAccent, ContentConnector, FocusFra
 [JsonConverter(typeof(CamelCaseJsonStringEnumConverter<VisualObjectPaletteRole>))]
 public enum VisualObjectPaletteRole { Primary, Secondary, Accent, Positive, Warning, Critical, Muted }
 
+[JsonConverter(typeof(CamelCaseJsonStringEnumConverter<VisualObjectRecipe>))]
+public enum VisualObjectRecipe
+{
+    Auto,
+    DirectionalCue,
+    GrowthPath,
+    FocusCorners,
+    AnnotationPin,
+    SectionRule,
+    CycleCue,
+}
+
 public sealed record VisualObjectBrief(
     [property: Description("Target slide number in the planned deck. It is audit metadata and does not start a draft.")]
     int SlideNumber,
@@ -33,7 +45,7 @@ public sealed record VisualObjectBrief(
     VisualObjectArchetype Archetype,
     [property: Description("Reusable treatment: quietCorporate, roundedFriendly, editorial, or technical.")]
     VisualObjectStyle Style = VisualObjectStyle.QuietCorporate,
-    [property: Description("Visual strength: subtle, standard, or strong. Prefer subtle and reserve strong for one focal object.")]
+    [property: Description("Visual strength: subtle, standard, or strong. Prefer subtle. For curated compound recipes, strong is valid only for focusCorners with visualPurpose=emphasis.")]
     VisualObjectEmphasis Emphasis = VisualObjectEmphasis.Subtle,
     [property: Description("Semantic direction: right, left, up, down, or clockwise.")]
     VisualObjectOrientation Orientation = VisualObjectOrientation.Right,
@@ -42,7 +54,13 @@ public sealed record VisualObjectBrief(
     [property: Description("Brand palette role only; raw colors are not accepted.")]
     VisualObjectPaletteRole PaletteRole = VisualObjectPaletteRole.Accent,
     [property: Description("Optional concise visible label, 1-48 characters.")]
-    string? Label = null);
+    string? Label = null,
+    [property: Description("Optional curated compound recipe: auto preserves the single native shape; directionalCue, growthPath, focusCorners, annotationPin, sectionRule, and cycleCue compose bounded editable native shapes at semantic anchors. A contentConnector directionalCue has no label because the adjacent content already names both sides.")]
+    VisualObjectRecipe Recipe = VisualObjectRecipe.Auto,
+    [property: Description("For annotationPin only, the one-based category ordinal of the target point in a line chart (1-12). Coordinates and category text are not accepted.")]
+    int? AnchorCategoryOrdinal = null,
+    [property: Description("For annotationPin only, the one-based series ordinal of the target point in a line chart (1-4). Coordinates and series text are not accepted.")]
+    int? AnchorSeriesOrdinal = null);
 
 public sealed record VisualObjectAssetReference(
     [property: Description("Opaque asset ID returned by pptx_prepare_visual_objects in the same user and conversation scope.")]
@@ -69,6 +87,7 @@ public sealed record VisualObjectAssetView(
     [property: JsonPropertyName("placement_role")] VisualObjectPlacementRole PlacementRole,
     [property: JsonPropertyName("style")] VisualObjectStyle Style,
     [property: JsonPropertyName("emphasis")] VisualObjectEmphasis Emphasis,
+    [property: JsonPropertyName("recipe")] VisualObjectRecipe Recipe,
     [property: JsonPropertyName("preview_description")] string PreviewDescription,
     [property: JsonPropertyName("expires_at")] DateTimeOffset ExpiresAt);
 

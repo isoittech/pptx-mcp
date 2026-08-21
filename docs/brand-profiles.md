@@ -141,6 +141,21 @@ manifestは256KB以下、profileは最大32件です。style directionは最大8
 
 `visual_object_policy`は導入環境が使える補助図形と強さを制限します。server capは1ページ3件、1デッキ24件で、profileはそれ以下にだけ狭められます。`strong_requires_focal_purpose=true`ではstrong objectを`visualPurpose=emphasis`だけに限定します。ブランド準拠は図形を増やすことではありません。通常は`quietCorporate`と`subtle`を既定とし、矢印は方向・成長・循環、枠／吹き出しは1つの判断や数値を示す場合だけ使ってください。
 
+`pptx_prepare_visual_objects`の`recipe`は、既存archetypeを複数のPowerPointネイティブ図形へ組み立てる再利用可能な意味レシピです。`auto`は従来どおり単一図形を維持します。座標や生色は指定できず、次の組合せだけを受理します。
+
+| recipe | 伝える意味 | 必須tuple | 表現 |
+|---|---|---|---|
+| `directionalCue` | 引継ぎ・移動方向 | `direction` + `arrow` + `headerAccent/contentConnector` | 細い矢印線。content間では重複ラベルを置かない |
+| `growthPath` | 上昇・加速 | `growth` + `arrow` + `right/up` + `contentConnector/chartAnnotation` | 起点と中間点を持つ上昇線 |
+| `focusCorners` | 一つの焦点領域 | `emphasis/grouping` + `frame` + `focusFrame` | 全面枠ではなく四隅だけを示す |
+| `annotationPin` | 折れ線上の一つの判断・データ注釈 | `annotation` + `callout` + `chartAnnotation` + `label` + 1始まりの`anchorCategoryOrdinal`/`anchorSeriesOrdinal` | 実在データ点、リーダー線、短いラベル |
+| `sectionRule` | 含意・論点の区切り | `emphasis/annotation` + `ribbon` + `headerAccent/sectionDivider` | 既存見出し境界へ沿う細い罫線 |
+| `cycleCue` | 実在する循環 | `cycle` + `curvedArrow/ring` + `clockwise` + `contentConnector/backgroundMotif` | 小さな循環矢印と中心点 |
+
+`annotationPin`は折れ線`Chart`だけに使い、カテゴリ1〜12番・系列1〜4番の範囲内かつ生成slideに実在する番号を指定します。カテゴリ名、系列名、座標を渡して曖昧解決させません。他のrecipeは両anchor番号を省略します。
+
+レシピは「各ページへ何か置く」ための装飾一覧ではありません。アウトライン完成後に全ページを一度だけ`none/direction/growth/focal emphasis/annotation/section implication/cycle`へ分類し、`none`以外を1回のbatch prepareへまとめます。すでにProcess loopやNativeDiagram cycleが十分明瞭なら追加しません。`focusCorners`は派手なプレースホルダー枠の代替であり、既存の焦点領域へ沿う四隅だけを描きます。複合recipeは原則`subtle`または`standard`とし、`strong`は`visualPurpose=emphasis`の`focusCorners`だけを準備時点で受理します。これにより、Design Brief確定後にBrand Profileのfocal-emphasis policyで初めて失敗する手戻りを防ぎます。
+
 style directionの`theme_preset`はrenderer対応値として必須ですが、現schemaはprofileの`color_roles`を全方向へ明示してpresetの基礎paletteを上書きします。したがってpreset名だけを変えても実効palette差にはなりません。方向差は`design_style`、`motif`、用途別recipeの構造差で作り、方向別paletteは将来のschema拡張までprofile内で表現できると誤認しないでください。
 
 ## sample thumbnailと素材

@@ -204,6 +204,11 @@ public sealed class DesignToolContractTests(ITestOutputHelper output)
         Assert.Contains("visualPurpose", schema, StringComparison.Ordinal);
         Assert.Contains("placementRole", schema, StringComparison.Ordinal);
         Assert.Contains("paletteRole", schema, StringComparison.Ordinal);
+        Assert.Contains("recipe", schema, StringComparison.Ordinal);
+        Assert.Contains("focusCorners", schema, StringComparison.Ordinal);
+        Assert.Contains("annotationPin", schema, StringComparison.Ordinal);
+        Assert.Contains("anchorCategoryOrdinal", schema, StringComparison.Ordinal);
+        Assert.Contains("anchorSeriesOrdinal", schema, StringComparison.Ordinal);
         Assert.DoesNotContain("svg", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
         Assert.DoesNotContain("url", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
         Assert.DoesNotContain("path", tool.InputSchema.GetProperty("properties").EnumerateObject().Select(static item => item.Name));
@@ -229,5 +234,39 @@ public sealed class DesignToolContractTests(ITestOutputHelper output)
         Assert.Contains("\"acquisition\":\"nativeDraw\"", json, StringComparison.Ordinal);
         Assert.Contains("\"fallback\":\"noAssetLayout\"", json, StringComparison.Ordinal);
         Assert.Contains("\"license_status\":\"notRequired\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VisualObjectRecipeSerializesAsAStableCamelCaseToken()
+    {
+        var visualObject = new VisualObjectBrief(
+            1,
+            VisualObjectPurpose.Emphasis,
+            VisualObjectArchetype.Frame,
+            PlacementRole: VisualObjectPlacementRole.FocusFrame,
+            Recipe: VisualObjectRecipe.FocusCorners);
+
+        var json = JsonSerializer.Serialize(visualObject, SerializerOptions);
+
+        Assert.Contains("\"recipe\":\"focusCorners\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnnotationPinAnchorOrdinalsSerializeAsStableCamelCaseProperties()
+    {
+        var visualObject = new VisualObjectBrief(
+            1,
+            VisualObjectPurpose.Annotation,
+            VisualObjectArchetype.Callout,
+            PlacementRole: VisualObjectPlacementRole.ChartAnnotation,
+            Label: "交差点",
+            Recipe: VisualObjectRecipe.AnnotationPin,
+            AnchorCategoryOrdinal: 3,
+            AnchorSeriesOrdinal: 2);
+
+        var json = JsonSerializer.Serialize(visualObject, SerializerOptions);
+
+        Assert.Contains("\"anchorCategoryOrdinal\":3", json, StringComparison.Ordinal);
+        Assert.Contains("\"anchorSeriesOrdinal\":2", json, StringComparison.Ordinal);
     }
 }

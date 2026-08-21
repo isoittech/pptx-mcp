@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using PptxMcp.Configuration;
@@ -20,6 +21,8 @@ public sealed class JobService(
     ImageAssetRepository? imageAssets = null)
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
+    private readonly ConcurrentDictionary<string, AnalyzeSubmission> analyzeSubmissions = new();
+    private readonly ConcurrentDictionary<string, TextEditWorkflow> textEditWorkflows = new();
     private readonly SemaphoreSlim[] visualMutationLocks = Enumerable.Range(0, 64)
         .Select(static _ => new SemaphoreSlim(1, 1))
         .ToArray();
@@ -29,23 +32,217 @@ public sealed class JobService(
     public Task<JobReceipt> SubmitAnalyzeAsync(
         CallerContext caller,
         string sourceFileId,
+        CancellationToken cancellationToken,
+        bool includeLayouts = false)
+    {
+        var key = CreateAnalyzeSubmissionKey(caller, sourceFileId, includeLayouts);
+        if (key is null)
+        {
+            return SubmitAnalyzeCoreAsync(caller, sourceFileId, includeLayouts, cancellationToken);
+        }
+
+        var now = timeProvider.GetUtcNow();
+        RemoveExpiredAnalyzeSubmissions(now);
+        var submission = analyzeSubmissions.GetOrAdd(
+            key,
+            _ => new AnalyzeSubmission(
+                new Lazy<Task<JobReceipt>>(
+                    () => SubmitAnalyzeCoreAsync(caller, sourceFileId, includeLayouts, cancellationToken),
+                    LazyThreadSafetyMode.ExecutionAndPublication),
+                now.AddHours(24)));
+
+        return AwaitAnalyzeSubmissionAsync(key, submission);
+    }
+
+    private Task<JobReceipt> SubmitAnalyzeCoreAsync(
+        CallerContext caller,
+        string sourceFileId,
+        bool includeLayouts,
         CancellationToken cancellationToken) => string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
-        ? SubmitTemplateAsync<object>(caller, sourceFileId, JobKind.Analyze, payload: null, cancellationToken)
-        : SubmitAsync<object>(caller, sourceFileId, JobKind.Analyze, payload: null, cancellationToken);
+        ? SubmitTemplateAsync(caller, sourceFileId, JobKind.Analyze, new AnalyzeJobPayload(includeLayouts), cancellationToken)
+        : SubmitAsync(caller, sourceFileId, JobKind.Analyze, new AnalyzeJobPayload(includeLayouts), cancellationToken);
+
+    private async Task<JobReceipt> AwaitAnalyzeSubmissionAsync(string key, AnalyzeSubmission submission)
+    {
+        try
+        {
+            return await submission.Receipt.Value.ConfigureAwait(false);
+        }
+        catch
+        {
+            analyzeSubmissions.TryRemove(new KeyValuePair<string, AnalyzeSubmission>(key, submission));
+            throw;
+        }
+    }
+
+    private void RemoveExpiredAnalyzeSubmissions(DateTimeOffset now)
+    {
+        foreach (var entry in analyzeSubmissions)
+        {
+            if (entry.Value.ExpiresAt <= now)
+            {
+                analyzeSubmissions.TryRemove(entry);
+            }
+        }
+    }
 
     public Task<JobReceipt> SubmitRenderAsync(
         CallerContext caller,
         string sourceFileId,
-        CancellationToken cancellationToken) => string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
-        ? SubmitTemplateAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken)
-        : SubmitAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        RemoveExpiredAnalyzeSubmissions(timeProvider.GetUtcNow());
+        var analysisKey = CreateAnalyzeSubmissionKey(caller, sourceFileId, includeLayouts: false);
+        if (analysisKey is not null
+            && analyzeSubmissions.ContainsKey(analysisKey))
+        {
+            throw new PptxValidationException(
+                "source_preview_before_text_edit_forbidden",
+                "The source presentation was already analyzed for text editing in this user message. Do not render or inspect the unmodified source before applying the text replacements.");
+        }
 
-    public Task<JobReceipt> SubmitReplaceTextAsync(
+        return string.Equals(sourceFileId, "default", StringComparison.OrdinalIgnoreCase)
+            ? SubmitTemplateAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken)
+            : SubmitAsync<object>(caller, sourceFileId, JobKind.RenderPreview, payload: null, cancellationToken);
+    }
+
+    private static string? CreateAnalyzeSubmissionKey(
+        CallerContext caller,
+        string sourceFileId,
+        bool includeLayouts) => string.IsNullOrWhiteSpace(caller.MessageId)
+        ? null
+        : string.Join(
+            ':',
+            caller.UserScope,
+            caller.ConversationScope,
+            caller.MessageId,
+            sourceFileId.Trim().ToLowerInvariant(),
+            includeLayouts);
+
+    public async Task<JobReceipt> SubmitReplaceTextAsync(
         CallerContext caller,
         string sourceFileId,
         IReadOnlyList<TextReplacement> replacements,
-        CancellationToken cancellationToken) =>
-        SubmitAsync(caller, sourceFileId, JobKind.ReplaceText, replacements, cancellationToken);
+        CancellationToken cancellationToken,
+        string? previousJobId = null,
+        bool isFinalBatch = true)
+    {
+        var payload = new ReplaceTextJobPayload(replacements, isFinalBatch);
+        var workflowKey = CreateMessageSourceKey(caller, sourceFileId);
+        var now = timeProvider.GetUtcNow();
+        RemoveExpiredTextEditWorkflows(now);
+        if (string.IsNullOrWhiteSpace(previousJobId))
+        {
+            if (workflowKey is not null
+                && textEditWorkflows.TryGetValue(workflowKey, out var existingWorkflow))
+            {
+                var existingJob = await repository.GetAsync(
+                    existingWorkflow.LatestJobId,
+                    cancellationToken).ConfigureAwait(false);
+                if (existingJob is null || existingJob.State is JobState.Failed or JobState.Canceled)
+                {
+                    textEditWorkflows.TryRemove(
+                        new KeyValuePair<string, TextEditWorkflow>(workflowKey, existingWorkflow));
+                }
+                else
+                {
+                    throw new PptxValidationException(
+                        "text_edit_workflow_already_started",
+                        $"Text editing already started for this user message. Continue from latest job_id {existingWorkflow.LatestJobId}; final_batch_submitted={existingWorkflow.FinalBatchSubmitted.ToString().ToLowerInvariant()}. Do not restart from the source presentation.");
+                }
+            }
+
+            var receipt = await SubmitAsync(
+                caller,
+                sourceFileId,
+                JobKind.ReplaceText,
+                payload,
+                cancellationToken).ConfigureAwait(false);
+            if (workflowKey is not null)
+            {
+                textEditWorkflows[workflowKey] = new TextEditWorkflow(
+                    receipt.JobId,
+                    isFinalBatch,
+                    now.AddHours(24));
+            }
+
+            return receipt;
+        }
+
+        if (workflowKey is not null
+            && textEditWorkflows.TryGetValue(workflowKey, out var currentWorkflow)
+            && !string.Equals(currentWorkflow.LatestJobId, previousJobId, StringComparison.Ordinal))
+        {
+            var currentJob = await repository.GetAsync(
+                currentWorkflow.LatestJobId,
+                cancellationToken).ConfigureAwait(false);
+            if (currentJob is null || currentJob.State is JobState.Failed or JobState.Canceled)
+            {
+                textEditWorkflows.TryRemove(
+                    new KeyValuePair<string, TextEditWorkflow>(workflowKey, currentWorkflow));
+            }
+            else
+            {
+                throw new PptxValidationException(
+                    "text_edit_job_superseded",
+                    $"Text-edit job {previousJobId} is not the latest batch for this user message. Continue from latest job_id {currentWorkflow.LatestJobId}; final_batch_submitted={currentWorkflow.FinalBatchSubmitted.ToString().ToLowerInvariant()}.");
+            }
+        }
+
+        var sourceJob = await GetOwnedAsync(caller, previousJobId, cancellationToken).ConfigureAwait(false);
+        if (sourceJob.Kind != JobKind.ReplaceText || sourceJob.State != JobState.Succeeded)
+        {
+            throw new PptxValidationException(
+                "text_edit_job_not_chainable",
+                "Only a successful pptx_replace_text job can be used as the previous text-edit batch.");
+        }
+
+        var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "presentation.pptx");
+        if (!File.Exists(sourcePath))
+        {
+            throw new PptxValidationException(
+                "source_expired",
+                "The previous text-edit result is no longer available.");
+        }
+
+        var nextReceipt = await SubmitFromPathAsync(
+            caller,
+            sourceJob.SourceFileId,
+            sourcePath,
+            JobKind.ReplaceText,
+            payload,
+            cancellationToken).ConfigureAwait(false);
+        if (workflowKey is not null)
+        {
+            textEditWorkflows[workflowKey] = new TextEditWorkflow(
+                nextReceipt.JobId,
+                isFinalBatch,
+                now.AddHours(24));
+        }
+
+        return nextReceipt;
+    }
+
+    private static string? CreateMessageSourceKey(CallerContext caller, string sourceFileId) =>
+        string.IsNullOrWhiteSpace(caller.MessageId)
+            ? null
+            : string.Join(
+                ':',
+                caller.UserScope,
+                caller.ConversationScope,
+                caller.MessageId,
+                sourceFileId.Trim().ToLowerInvariant());
+
+    private void RemoveExpiredTextEditWorkflows(DateTimeOffset now)
+    {
+        foreach (var entry in textEditWorkflows)
+        {
+            if (entry.Value.ExpiresAt <= now)
+            {
+                textEditWorkflows.TryRemove(entry);
+            }
+        }
+    }
 
     public Task<JobReceipt> SubmitPopulateTemplateAsync(
         CallerContext caller,
@@ -537,13 +734,6 @@ public sealed class JobService(
         IReadOnlyList<int> slideNumbers,
         CancellationToken cancellationToken)
     {
-        if (slideNumbers is null || slideNumbers.Count is < 1 or > 4 || slideNumbers.Distinct().Count() != slideNumbers.Count)
-        {
-            throw new PptxValidationException(
-                "preview_selection_invalid",
-                "Select between 1 and 4 distinct slide numbers per visual review call.");
-        }
-
         var job = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
         if (job.State != JobState.Succeeded)
         {
@@ -553,14 +743,18 @@ public sealed class JobService(
         }
 
         var jobDirectory = repository.GetJobDirectory(job.Id);
+        var availableSlideNumbers = job.Artifacts
+            .Where(static artifact => string.Equals(artifact.MediaType, "image/png", StringComparison.Ordinal))
+            .Select(static artifact => TryGetPreviewSlideNumber(artifact.FileName))
+            .Where(static slideNumber => slideNumber.HasValue)
+            .Select(static slideNumber => slideNumber!.Value)
+            .Order()
+            .ToArray();
+        ValidatePreviewSelection(slideNumbers, availableSlideNumbers);
+
         var images = new List<PreviewImageData>(slideNumbers.Count);
         foreach (var slideNumber in slideNumbers)
         {
-            if (slideNumber is < 1 or > 50)
-            {
-                throw new PptxValidationException("preview_slide_invalid", "Slide numbers must be between 1 and 50.");
-            }
-
             var artifact = job.Artifacts.SingleOrDefault(candidate =>
                 string.Equals(candidate.MediaType, "image/png", StringComparison.Ordinal)
                 && TryGetPreviewSlideNumber(candidate.FileName) == slideNumber);
@@ -592,6 +786,38 @@ public sealed class JobService(
         }
 
         return images;
+    }
+
+    internal static void ValidatePreviewSelection(
+        IReadOnlyList<int>? requestedSlideNumbers,
+        IReadOnlyList<int> availableSlideNumbers)
+    {
+        if (requestedSlideNumbers is null
+            || requestedSlideNumbers.Count is < 1 or > 4
+            || requestedSlideNumbers.Distinct().Count() != requestedSlideNumbers.Count)
+        {
+            throw new PptxValidationException(
+                "preview_selection_invalid",
+                "Select between 1 and 4 distinct slide numbers per visual review call.");
+        }
+
+        if (availableSlideNumbers.Count == 0)
+        {
+            throw new PptxValidationException(
+                "preview_slide_not_found",
+                "This job has no preview slides.");
+        }
+
+        var available = availableSlideNumbers.ToHashSet();
+        var invalid = requestedSlideNumbers.Where(slideNumber => !available.Contains(slideNumber)).ToArray();
+        if (invalid.Length > 0)
+        {
+            throw new PptxValidationException(
+                "preview_slide_invalid",
+                $"This job has {availableSlideNumbers.Count} slides; valid slide numbers are " +
+                $"{availableSlideNumbers[0]} through {availableSlideNumbers[^1]}. " +
+                $"Invalid requested slide numbers: {string.Join(", ", invalid)}.");
+        }
     }
 
     internal static int? TryGetPreviewSlideNumber(string fileName)
@@ -1163,6 +1389,21 @@ public sealed class JobService(
         }
     }
 }
+
+internal sealed record AnalyzeJobPayload(bool IncludeLayouts);
+
+internal sealed record AnalyzeSubmission(
+    Lazy<Task<JobReceipt>> Receipt,
+    DateTimeOffset ExpiresAt);
+
+internal sealed record TextEditWorkflow(
+    string LatestJobId,
+    bool FinalBatchSubmitted,
+    DateTimeOffset ExpiresAt);
+
+internal sealed record ReplaceTextJobPayload(
+    IReadOnlyList<TextReplacement> Replacements,
+    bool IsFinalBatch);
 
 public sealed record VisualDeckStartDecision(
     bool AllowSubmittedReplacement,

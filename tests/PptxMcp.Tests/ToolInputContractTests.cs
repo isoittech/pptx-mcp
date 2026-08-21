@@ -243,6 +243,23 @@ public sealed class ToolInputContractTests
             strictMethod.GetParameters().Single(parameter => parameter.Name == "sourceFileId").DefaultValue);
     }
 
+    [Fact]
+    public void RenderPreviewDoesNotExposeAModelControlledSourceGuardOverride()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.RenderPreviewAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        Assert.DoesNotContain(
+            method.GetParameters(),
+            candidate => candidate.Name == "userRequestedSourcePreview");
+        var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.Contains("例外なく拒否", description, StringComparison.Ordinal);
+        Assert.Contains("先に呼ばず", description, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(nameof(PowerPointTools.CreateDeckAsync), "slides")]
     [InlineData(nameof(PowerPointTools.StartVisualDeck), "title")]
@@ -346,6 +363,90 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void CompletedAnalysisGetJobOmitsDuplicateResultBody()
+    {
+        using var resultDocument = JsonDocument.Parse("""{"slides":[{"slide_number":1}]}""");
+        var job = new JobView(
+            "11111111111111111111111111111111",
+            JobKind.Analyze,
+            JobState.Succeeded,
+            100,
+            DateTimeOffset.UtcNow.AddSeconds(-1),
+            DateTimeOffset.UtcNow,
+            resultDocument.RootElement.Clone(),
+            [],
+            null,
+            null,
+            null,
+            0,
+            []);
+
+        var prepared = PowerPointTools.PrepareGetJobResult(job);
+        using var preparedDocument = JsonDocument.Parse(JsonSerializer.Serialize(prepared, SerializerOptions));
+        var root = preparedDocument.RootElement;
+
+        Assert.True(root.GetProperty("result_omitted").GetBoolean());
+        Assert.False(root.TryGetProperty("result", out _));
+        Assert.Contains("pptx_replace_text", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+        Assert.Contains("pptx_wait_for_job", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetJobPreservesResultForNonAnalysisJobs()
+    {
+        using var resultDocument = JsonDocument.Parse("""{"slide_count":1}""");
+        var job = new JobView(
+            "22222222222222222222222222222222",
+            JobKind.ReplaceText,
+            JobState.Succeeded,
+            100,
+            DateTimeOffset.UtcNow.AddSeconds(-1),
+            DateTimeOffset.UtcNow,
+            resultDocument.RootElement.Clone(),
+            [],
+            null,
+            null,
+            null,
+            0,
+            []);
+
+        Assert.Same(job, PowerPointTools.PrepareGetJobResult(job));
+    }
+
+    [Fact]
+    public void SuccessfulAnalysisWaitReturnsTheCompactResultOnlyOnce()
+    {
+        using var resultDocument = JsonDocument.Parse("""{"slides":[{"slide_number":1}]}""");
+        var job = new JobView(
+            Guid.NewGuid().ToString("N"),
+            JobKind.Analyze,
+            JobState.Succeeded,
+            100,
+            DateTimeOffset.UtcNow.AddSeconds(-1),
+            DateTimeOffset.UtcNow,
+            resultDocument.RootElement.Clone(),
+            [],
+            null,
+            null,
+            null,
+            0,
+            []);
+
+        var first = PowerPointTools.PrepareWaitForJobResult(job);
+        using var firstDocument = JsonDocument.Parse(JsonSerializer.Serialize(first, SerializerOptions));
+        var firstRoot = firstDocument.RootElement;
+        Assert.Equal(1, firstRoot.GetProperty("slides")[0].GetProperty("slide_number").GetInt32());
+        Assert.False(firstRoot.TryGetProperty("job_id", out _));
+
+        var repeated = PowerPointTools.PrepareWaitForJobResult(job);
+        using var repeatedDocument = JsonDocument.Parse(JsonSerializer.Serialize(repeated, SerializerOptions));
+        var root = repeatedDocument.RootElement;
+        Assert.True(root.GetProperty("result_omitted").GetBoolean());
+        Assert.False(root.TryGetProperty("result", out _));
+        Assert.Contains("do not call either status tool again", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task WaitForJobRejectsOutOfRangeWaitBeforeAccessingServices()
     {
         var result = await PowerPointTools.WaitForJobAsync(
@@ -357,6 +458,139 @@ public sealed class ToolInputContractTests
         var error = Assert.IsType<ToolValidationError>(result);
         Assert.Equal("wait_seconds_invalid", error.Code);
         Assert.Equal("pptx_wait_for_job", error.Tool);
+    }
+
+    [Theory]
+    [InlineData("pptx_analyze")]
+    [InlineData("pptx_render_preview")]
+    [InlineData("pptx_replace_text")]
+    [InlineData("pptx_populate_template")]
+    [InlineData("pptx_create_deck")]
+    [InlineData("pptx_refine_deck")]
+    public async Task JobSubmissionValidationFailuresReturnStructuredErrors(string toolName)
+    {
+        var result = await PowerPointTools.ExecuteJobSubmissionAsync(
+            toolName,
+            () => Task.FromException<JobReceipt>(
+                new PptxValidationException(
+                    "external_relationship",
+                    "PPTX files with external resources or non-web hyperlinks are not accepted.")));
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal("invalid_input", error.Status);
+        Assert.Equal(toolName, error.Tool);
+        Assert.Equal("external_relationship", error.Code);
+        Assert.Contains("external image", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("Excel table", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("shared folder", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("ordinary HTTP or HTTPS web hyperlinks are allowed", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("user's language", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("do not retry", error.Instruction, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SourcePreviewGuardReturnsAConcreteTextEditingInstruction()
+    {
+        var result = await PowerPointTools.ExecuteJobSubmissionAsync(
+            "pptx_render_preview",
+            () => Task.FromException<JobReceipt>(
+                new PptxValidationException(
+                    "source_preview_before_text_edit_forbidden",
+                    "The unmodified source must not be rendered before text editing.")));
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal("source_preview_before_text_edit_forbidden", error.Code);
+        Assert.Contains("pptx_replace_text", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("Do not call pptx_render_preview", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("no model-controlled override", error.Instruction, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("text_edit_workflow_already_started")]
+    [InlineData("text_edit_job_superseded")]
+    public async Task TextEditCheckpointGuardPreventsRestartingFromTheSource(string code)
+    {
+        var result = await PowerPointTools.ExecuteJobSubmissionAsync(
+            "pptx_replace_text",
+            () => Task.FromException<JobReceipt>(
+                new PptxValidationException(
+                    code,
+                    "Continue from latest job_id 11111111111111111111111111111111; final_batch_submitted=true.")));
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal(code, error.Code);
+        Assert.Contains("Do not restart", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("previousJobId", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("final job's artifacts", error.Instruction, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("file_size_out_of_range", "PPTX files must be between 1 byte and 10 bytes.", "empty or exceeds")]
+    [InlineData("slide_count_out_of_range", "PPTX files must contain between 1 and 50 slides.", "number of slides")]
+    [InlineData("active_content", "Macro-enabled PowerPoint content is not accepted.", "program-like feature")]
+    [InlineData("invalid_zip", "The file is not a readable PPTX package.", "damaged")]
+    public async Task AttachmentValidationFailuresReturnActionableUserInstructions(
+        string code,
+        string message,
+        string expectedInstruction)
+    {
+        var result = await PowerPointTools.ExecuteJobSubmissionAsync(
+            "pptx_analyze",
+            () => Task.FromException<JobReceipt>(new PptxValidationException(code, message)));
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal(code, error.Code);
+        Assert.Contains("user's language", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains(expectedInstruction, error.Instruction, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Do not retry", error.Instruction, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task MissingAttachmentInstructionDoesNotSuggestUnsupportedLegacyPpt()
+    {
+        var result = await PowerPointTools.ExecuteJobSubmissionAsync(
+            "pptx_analyze",
+            () => Task.FromException<JobReceipt>(
+                new PptxValidationException("file_not_found", "The uploaded PowerPoint file was not found.")));
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Contains(".pptx only", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("do not suggest the legacy .ppt", error.Instruction, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ReplaceTextContractRequiresAnArrayInsteadOfAJsonEncodedString()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.ReplaceTextAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var replacements = method.GetParameters().Single(parameter => parameter.Name == "replacements");
+        var description = replacements.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.Contains("JSON配列そのもの", description, StringComparison.Ordinal);
+        Assert.Contains("JSON文字列", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReplaceTextRejectsAnOversizedBatchBeforeAccessingServices()
+    {
+        var replacements = Enumerable.Range(1, 21)
+            .Select(index => new TextReplacement($"English {index}", $"日本語 {index}", SlideNumber: 1))
+            .ToArray();
+
+        var result = await PowerPointTools.ReplaceTextAsync(
+            null!,
+            null!,
+            replacements,
+            CancellationToken.None);
+
+        var error = Assert.IsType<ToolValidationError>(result);
+        Assert.Equal("replacement_batch_size_invalid", error.Code);
+        Assert.Contains("at most 20", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("previousJobId", error.Instruction, StringComparison.Ordinal);
+        Assert.Contains("last batch", error.Instruction, StringComparison.Ordinal);
     }
 
     [Fact]

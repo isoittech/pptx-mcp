@@ -137,6 +137,16 @@ public sealed class VisualObjectAssetRepository(TimeProvider timeProvider)
                     $"objects[{index}] uses an archetype that does not express its visualPurpose. Choose the semantic native shape that matches the message.");
             }
 
+            if (item.Recipe != VisualObjectRecipe.Auto
+                && item.Emphasis == VisualObjectEmphasis.Strong
+                && (item.Recipe != VisualObjectRecipe.FocusCorners
+                    || item.VisualPurpose != VisualObjectPurpose.Emphasis))
+            {
+                throw new PptxValidationException(
+                    "visual_object_emphasis_invalid",
+                    $"objects[{index}].emphasis=strong is allowed only for recipe=focusCorners with visualPurpose=emphasis. Use subtle or standard for the other curated recipes.");
+            }
+
             if (item.Archetype == VisualObjectArchetype.CurvedArrow
                 && item.Orientation != VisualObjectOrientation.Clockwise)
             {
@@ -144,6 +154,57 @@ public sealed class VisualObjectAssetRepository(TimeProvider timeProvider)
                     "visual_object_orientation_invalid",
                     $"objects[{index}].orientation must be clockwise for curvedArrow.");
             }
+
+            ValidateRecipe(item, index);
+        }
+    }
+
+    private static void ValidateRecipe(VisualObjectBrief item, int index)
+    {
+        var hasCompleteChartAnchor = item.AnchorCategoryOrdinal is >= 1 and <= 12
+            && item.AnchorSeriesOrdinal is >= 1 and <= 4;
+        var hasAnyChartAnchor = item.AnchorCategoryOrdinal is not null || item.AnchorSeriesOrdinal is not null;
+        var compatible = item.Recipe switch
+        {
+            VisualObjectRecipe.Auto => !hasAnyChartAnchor,
+            VisualObjectRecipe.DirectionalCue =>
+                item.VisualPurpose == VisualObjectPurpose.Direction
+                && item.Archetype == VisualObjectArchetype.Arrow
+                && item.PlacementRole is VisualObjectPlacementRole.HeaderAccent or VisualObjectPlacementRole.ContentConnector
+                && (item.PlacementRole != VisualObjectPlacementRole.ContentConnector || item.Label is null),
+            VisualObjectRecipe.GrowthPath =>
+                item.VisualPurpose == VisualObjectPurpose.Growth
+                && item.Archetype == VisualObjectArchetype.Arrow
+                && item.Orientation is VisualObjectOrientation.Right or VisualObjectOrientation.Up
+                && item.PlacementRole is VisualObjectPlacementRole.ContentConnector or VisualObjectPlacementRole.ChartAnnotation,
+            VisualObjectRecipe.FocusCorners =>
+                item.VisualPurpose is VisualObjectPurpose.Emphasis or VisualObjectPurpose.Grouping
+                && item.Archetype == VisualObjectArchetype.Frame
+                && item.PlacementRole == VisualObjectPlacementRole.FocusFrame,
+            VisualObjectRecipe.AnnotationPin =>
+                item.VisualPurpose == VisualObjectPurpose.Annotation
+                && item.Archetype == VisualObjectArchetype.Callout
+                && item.PlacementRole == VisualObjectPlacementRole.ChartAnnotation
+                && item.Label is not null
+                && hasCompleteChartAnchor,
+            VisualObjectRecipe.SectionRule =>
+                item.VisualPurpose is VisualObjectPurpose.Emphasis or VisualObjectPurpose.Annotation
+                && item.Archetype == VisualObjectArchetype.Ribbon
+                && item.PlacementRole is VisualObjectPlacementRole.HeaderAccent or VisualObjectPlacementRole.SectionDivider,
+            VisualObjectRecipe.CycleCue =>
+                item.VisualPurpose == VisualObjectPurpose.Cycle
+                && item.Archetype is VisualObjectArchetype.CurvedArrow or VisualObjectArchetype.Ring
+                && item.Orientation == VisualObjectOrientation.Clockwise
+                && item.PlacementRole is VisualObjectPlacementRole.ContentConnector or VisualObjectPlacementRole.BackgroundMotif
+                && !hasAnyChartAnchor,
+            _ => false,
+        };
+        compatible = compatible && (item.Recipe == VisualObjectRecipe.AnnotationPin || !hasAnyChartAnchor);
+        if (!compatible)
+        {
+            throw new PptxValidationException(
+                "visual_object_recipe_invalid",
+                $"objects[{index}].recipe is incompatible with its purpose, archetype, orientation, placementRole, or chart anchor. annotationPin requires one-based anchorCategoryOrdinal=1-12 and anchorSeriesOrdinal=1-4; all other recipes must omit both anchors.");
         }
     }
 
@@ -176,7 +237,8 @@ public sealed class VisualObjectAssetRepository(TimeProvider timeProvider)
             manifest.Brief.PlacementRole,
             manifest.Brief.Style,
             manifest.Brief.Emphasis,
-            $"{manifest.Brief.Style} {manifest.Brief.Archetype} · {manifest.Brief.Emphasis} · {manifest.Brief.PlacementRole}",
+            manifest.Brief.Recipe,
+            $"{manifest.Brief.Recipe} · {manifest.Brief.Style} {manifest.Brief.Archetype} · {manifest.Brief.Emphasis} · {manifest.Brief.PlacementRole}",
             manifest.ExpiresAt);
 
     private static PptxValidationException NotFound() =>

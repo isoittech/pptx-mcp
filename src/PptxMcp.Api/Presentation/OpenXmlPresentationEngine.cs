@@ -10,6 +10,7 @@ namespace PptxMcp.Presentation;
 
 public sealed class OpenXmlPresentationEngine : IPresentationEngine
 {
+    private const string DrawingTableGraphicDataUri = "http://schemas.openxmlformats.org/drawingml/2006/table";
     private const int MaxAnalyzedShapes = 1_000;
     private const int MaxAnalyzedTextCharacters = 1_000;
     private const int MaxInstructionTextCharacters = 100_000;
@@ -67,7 +68,12 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 var graphicUri = frame.Graphic?.GraphicData?.Uri?.Value ?? string.Empty;
                 var kind = graphicUri.EndsWith("/chart", StringComparison.Ordinal) ? "chart"
                     : graphicUri.EndsWith("/diagram", StringComparison.Ordinal) ? "smart_art"
+                    : string.Equals(graphicUri, DrawingTableGraphicDataUri, StringComparison.Ordinal) ? "table"
                     : "graphic_frame";
+                var exactTexts = kind == "table"
+                    ? ReadTableCellTexts(frame, ref analysisTruncated)
+                    : null;
+                var text = exactTexts is null ? null : string.Concat(exactTexts);
                 hasCharts |= kind == "chart";
                 hasSmartArt |= kind == "smart_art";
                 shapes.Add(new ShapeSummary(
@@ -75,7 +81,8 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                     properties?.Id?.Value ?? 0,
                     properties?.Name?.Value ?? string.Empty,
                     kind,
-                    null));
+                    string.IsNullOrEmpty(text) ? null : text,
+                    exactTexts));
                 analyzedShapeCount++;
             }
 
@@ -180,6 +187,23 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                         replacementCount += count;
                     }
 
+                    var matchingTables = slide.Descendants<P.GraphicFrame>()
+                        .Where(IsTableGraphicFrame)
+                        .Where(frame => replacement.ShapeName is null
+                            || string.Equals(
+                                frame.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties?.Name?.Value,
+                                replacement.ShapeName,
+                                StringComparison.Ordinal))
+                        .Where(frame => replacement.ShapeId is null
+                            || frame.NonVisualGraphicFrameProperties?.NonVisualDrawingProperties?.Id?.Value == replacement.ShapeId);
+
+                    foreach (var table in matchingTables)
+                    {
+                        var count = ReplaceAcrossRuns(table.Descendants<A.Text>().ToArray(), replacement.Find, replacement.Replace);
+                        slideReplacementCount += count;
+                        replacementCount += count;
+                    }
+
                     if (replacement.ShapeName is null && replacement.ShapeId is null)
                     {
                         foreach (var diagramPart in slidePart.Parts
@@ -208,6 +232,13 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                     changedParts.Add(slidePart.Uri.ToString());
                 }
             }
+        }
+
+        if (replacementCount == 0)
+        {
+            throw new PptxValidationException(
+                "replacement_text_not_found",
+                "None of the requested text was found. Run pptx_analyze again and use the exact slide_number, shape_id, and text returned by the current source presentation.");
         }
 
         RejectNewValidationErrors(destinationPath, sourceErrorCount);
@@ -801,6 +832,46 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
 
     private static string JoinText(IEnumerable<A.Text> textNodes) =>
         string.Concat(textNodes.Select(static node => node.Text));
+
+    private static List<string> ReadTableCellTexts(
+        P.GraphicFrame frame,
+        ref bool analysisTruncated)
+    {
+        var exactTexts = new List<string>();
+        var remainingCharacters = MaxAnalyzedTextCharacters;
+        foreach (var cell in frame.Descendants<A.TableCell>())
+        {
+            var text = JoinText(cell.Descendants<A.Text>());
+            if (string.IsNullOrEmpty(text))
+            {
+                continue;
+            }
+
+            if (remainingCharacters == 0)
+            {
+                analysisTruncated = true;
+                break;
+            }
+
+            if (text.Length > remainingCharacters)
+            {
+                exactTexts.Add(text[..remainingCharacters]);
+                analysisTruncated = true;
+                break;
+            }
+
+            exactTexts.Add(text);
+            remainingCharacters -= text.Length;
+        }
+
+        return exactTexts;
+    }
+
+    private static bool IsTableGraphicFrame(P.GraphicFrame frame) =>
+        string.Equals(
+            frame.Graphic?.GraphicData?.Uri?.Value,
+            DrawingTableGraphicDataUri,
+            StringComparison.Ordinal);
 
     private static bool IsExcelPackage(EmbeddedPackagePart part) =>
         part.ContentType.Contains("spreadsheet", StringComparison.OrdinalIgnoreCase)

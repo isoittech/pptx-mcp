@@ -8,6 +8,10 @@ namespace PptxMcp.Storage;
 
 public sealed class PptxPackageGuard(IOptions<PptxMcpOptions> options)
 {
+    private const string TransitionalHyperlinkRelationship =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+    private const string StrictHyperlinkRelationship =
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/hyperlink";
     private readonly PptxMcpOptions options = options.Value;
 
     public Task<ValidatedInput> ValidateAsync(string path, CancellationToken cancellationToken)
@@ -27,10 +31,24 @@ public sealed class PptxPackageGuard(IOptions<PptxMcpOptions> options)
         try
         {
             using var document = PresentationDocument.Open(path, false);
-            var presentation = document.PresentationPart?.Presentation;
+            var presentationPart = document.PresentationPart
+                ?? throw new PptxValidationException(
+                    "invalid_pptx",
+                    "The PPTX package does not contain a presentation part.");
+            var presentation = presentationPart.Presentation
+                ?? throw new PptxValidationException(
+                    "invalid_pptx",
+                    "The PPTX package does not contain a presentation root.");
             slideCount = presentation?.SlideIdList?.ChildElements.Count ?? 0;
         }
-        catch (OpenXmlPackageException exception)
+        catch (PptxValidationException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is OpenXmlPackageException
+            or FileFormatException
+            or InvalidDataException
+            or XmlException)
         {
             throw new PptxValidationException("invalid_pptx", $"The PPTX package is invalid: {exception.Message}");
         }
@@ -133,13 +151,28 @@ public sealed class PptxPackageGuard(IOptions<PptxMcpOptions> options)
         {
             if (reader.NodeType == XmlNodeType.Element
                 && string.Equals(reader.LocalName, "Relationship", StringComparison.Ordinal)
-                && string.Equals(reader.GetAttribute("TargetMode"), "External", StringComparison.OrdinalIgnoreCase))
+                && string.Equals(reader.GetAttribute("TargetMode"), "External", StringComparison.OrdinalIgnoreCase)
+                && !IsSafeWebHyperlink(reader))
             {
                 throw new PptxValidationException(
                     "external_relationship",
-                    "PPTX files with external relationships are not accepted.");
+                    "PPTX files with external resources or non-web hyperlinks are not accepted.");
             }
         }
+    }
+
+    private static bool IsSafeWebHyperlink(XmlReader reader)
+    {
+        var relationshipType = reader.GetAttribute("Type");
+        if (!string.Equals(relationshipType, TransitionalHyperlinkRelationship, StringComparison.Ordinal)
+            && !string.Equals(relationshipType, StrictHyperlinkRelationship, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return Uri.TryCreate(reader.GetAttribute("Target"), UriKind.Absolute, out var target)
+            && (target.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || target.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void RejectActiveContentTypes(ZipArchiveEntry entry)
