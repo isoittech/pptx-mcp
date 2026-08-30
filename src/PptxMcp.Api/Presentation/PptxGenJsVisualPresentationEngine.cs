@@ -51,6 +51,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
         string destinationPath,
         VisualDeckSpec deck,
         bool useTemplateChrome,
+        bool useDefaultTemplateCoverOverlay,
         CancellationToken cancellationToken)
     {
         var workingDirectory = Path.GetDirectoryName(destinationPath)
@@ -77,6 +78,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
                     segmentPath,
                     segmentDeck,
                     useTemplateChrome,
+                    useDefaultTemplateCoverOverlay,
                     index,
                     deck.Slides.Count,
                     cancellationToken).ConfigureAwait(false);
@@ -96,6 +98,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
                 destinationPath,
                 deck,
                 useTemplateChrome,
+                useDefaultTemplateCoverOverlay,
                 0,
                 deck.Slides.Count,
                 cancellationToken).ConfigureAwait(false);
@@ -120,6 +123,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
         string outputPath,
         VisualDeckSpec deck,
         bool useTemplateChrome,
+        bool useDefaultTemplateCoverOverlay,
         int slideNumberOffset,
         int deckTotalSlides,
         CancellationToken cancellationToken)
@@ -130,6 +134,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
         var specification = JsonSerializer.SerializeToNode(deck, SerializerOptions)?.AsObject()
             ?? throw new PptxValidationException("invalid_visual_deck", "The visual deck specification could not be serialized.");
         specification["templateChrome"] = useTemplateChrome;
+        specification["defaultTemplateCoverOverlay"] = useDefaultTemplateCoverOverlay;
         specification["slideNumberOffset"] = slideNumberOffset;
         specification["deckTotalSlides"] = deckTotalSlides;
         var assetMetadata = new JsonObject();

@@ -54,7 +54,7 @@ PPTX_MCP_TEMPLATES_PATH=/absolute/path/to/pptx-templates
 PPTX_MCP_DEFAULT_TEMPLATE_ID=organization-default
 ```
 
-テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。
+テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。既定表紙が濃色の場合は `PptxMcp__DefaultTemplateCoverUsesLightForeground=true` を設定し、1枚目のTitle/Sectionを白文字・装飾番号なしで重ねます。添付されたユーザー指定テンプレートにはこの設定を流用しません。
 
 通常の新規資料は `pptx_start_visual_deck` で概要、完成ページ数、テンプレート、テーマ、デザインを確定し、`pptx_add_visual_slides_to_draft` で最大4ページずつ追加した後、`pptx_finish_visual_deck` で生成します。`templateSourceFileId` の既定値は `default` です。テンプレート不要は `none`、添付した別テンプレートは解析後に `latest` または `file_id` をstartへ指定します。選択内容はstart成功時に固定され、finishでは変更しません。
 

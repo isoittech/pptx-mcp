@@ -214,7 +214,7 @@ public sealed class JobWorker(
                         ?? throw new PptxValidationException("invalid_job_payload", "Visual deck specification is missing.");
                     VisualDeckValidator.Validate(deck, options.MaxSlides);
                     var outputPath = Path.Combine(directory, "presentation.pptx");
-                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, false, cancellationToken)
+                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, false, false, cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
                     var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
@@ -231,15 +231,6 @@ public sealed class JobWorker(
                     var templateSummary = await analysisCache.GetAsync(sourcePath, cancellationToken).ConfigureAwait(false);
                     var themedDeck = VisualDeckBranding.ApplyTemplateTheme(branded.Deck, templateSummary.Theme);
                     var visualPath = Path.Combine(directory, "visual-source.pptx");
-                    var visualCreation = await visualPresentationEngine.CreateAsync(
-                            visualPath,
-                            themedDeck,
-                            true,
-                            cancellationToken)
-                        .ConfigureAwait(false);
-                    await packageGuard.ValidateAsync(visualPath, cancellationToken).ConfigureAwait(false);
-
-                    var outputPath = Path.Combine(directory, "presentation.pptx");
                     var defaultTemplateRolePolicy = string.Equals(
                             job.SourceFileId,
                             options.DefaultTemplateId,
@@ -250,6 +241,17 @@ public sealed class JobWorker(
                             options.DefaultTemplateCoverSampleSlideNumber,
                             options.DefaultTemplateBodySampleSlideNumber)
                         : null;
+                    var visualCreation = await visualPresentationEngine.CreateAsync(
+                            visualPath,
+                            themedDeck,
+                            true,
+                            defaultTemplateRolePolicy is not null
+                                && options.DefaultTemplateCoverUsesLightForeground,
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                    await packageGuard.ValidateAsync(visualPath, cancellationToken).ConfigureAwait(false);
+
+                    var outputPath = Path.Combine(directory, "presentation.pptx");
                     var composition = await presentationEngine.CreateBrandedVisualDeckAsync(
                             sourcePath,
                             visualPath,

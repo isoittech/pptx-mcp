@@ -24,6 +24,8 @@ public sealed class PptxMcpOptions
 
     public int DefaultTemplateBodySampleSlideNumber { get; init; }
 
+    public bool DefaultTemplateCoverUsesLightForeground { get; init; }
+
     public string BrandProfilesRoot { get; init; } = "/data/pptx-brand-profiles";
 
     public bool RequireDesignBrief { get; init; }

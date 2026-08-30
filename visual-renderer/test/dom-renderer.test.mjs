@@ -76,6 +76,41 @@ test("server-generated slide HTML escapes content and carries reflection metadat
   assert.match(html, /box-shadow:none!important;text-shadow:none!important/u);
 });
 
+test("the configured default template cover uses a matte white-text overlay without decorative numbering", () => {
+  const html = buildDomDeckHtml({
+    title: "既定表紙",
+    templateChrome: true,
+    defaultTemplateCoverOverlay: true,
+    rendererContract: "visual-v6-dom",
+    theme: { preset: "minimal" },
+    slides: [{
+      kind: "Section",
+      title: "社内研修資料",
+      subtitle: "副題",
+      body: "写真背景の上でも読める導入文",
+    }],
+  });
+
+  assert.match(html, /class="slide template-chrome default-template-cover"/u);
+  assert.match(html, /\.default-template-cover header h1\{[^}]*color:#fff/u);
+  assert.match(html, /\.default-template-cover \.section-number\{display:none\}/u);
+  assert.match(html, /class="section-number">01</u);
+  assert.match(html, /box-shadow:none!important;text-shadow:none!important/u);
+});
+
+test("a user-supplied template does not receive the default-cover overlay", () => {
+  const html = buildDomDeckHtml({
+    title: "ユーザー指定表紙",
+    templateChrome: true,
+    rendererContract: "visual-v6-dom",
+    theme: { preset: "minimal" },
+    slides: [{ kind: "Section", title: "ユーザー指定表紙", body: "本文" }],
+  });
+
+  assert.match(html, /class="slide template-chrome"/u);
+  assert.doesNotMatch(html, /class="slide template-chrome default-template-cover"/u);
+});
+
 test("quality components render semantic, matte DOM without accepting raw HTML", () => {
   const html = buildDomDeckHtml({
     title: "品質部品カタログ",
