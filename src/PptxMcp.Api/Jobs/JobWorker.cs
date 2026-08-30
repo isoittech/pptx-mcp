@@ -240,12 +240,23 @@ public sealed class JobWorker(
                     await packageGuard.ValidateAsync(visualPath, cancellationToken).ConfigureAwait(false);
 
                     var outputPath = Path.Combine(directory, "presentation.pptx");
+                    var defaultTemplateRolePolicy = string.Equals(
+                            job.SourceFileId,
+                            options.DefaultTemplateId,
+                            StringComparison.Ordinal)
+                        && options.DefaultTemplateCoverSampleSlideNumber > 0
+                        && options.DefaultTemplateBodySampleSlideNumber > 0
+                        ? new TemplateLayoutRolePolicy(
+                            options.DefaultTemplateCoverSampleSlideNumber,
+                            options.DefaultTemplateBodySampleSlideNumber)
+                        : null;
                     var composition = await presentationEngine.CreateBrandedVisualDeckAsync(
                             sourcePath,
                             visualPath,
                             outputPath,
                             branded.TemplateLayoutId,
-                            cancellationToken)
+                            cancellationToken,
+                            defaultTemplateRolePolicy)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
                     var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);

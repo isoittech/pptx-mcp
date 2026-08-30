@@ -544,29 +544,59 @@ public sealed class VisualDeckDraftService(
                         "visual_media_required",
                         $"Slide {slideNumber} must include media.assetId={missingMediaPlan.AssetId}; an empty image placeholder is not a completed slide.");
                 }
+            }
+            else
+            {
+                if (imageAssets is null)
+                {
+                    throw new PptxValidationException(
+                        "visual_media_unavailable",
+                        "Image asset resolution is unavailable in this server configuration.");
+                }
 
+                var asset = imageAssets.GetOwned(caller, slide.Media.AssetId);
+                if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true)
+                {
+                    if (!string.Equals(plan.AssetId, slide.Media.AssetId, StringComparison.Ordinal)
+                        || !string.Equals(plan.CropIntent, slide.Media.CropIntent, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(plan.TextSafeArea, slide.Media.TextPosition, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(plan.AttributionRef, asset.AttributionRef, StringComparison.Ordinal))
+                    {
+                        throw new PptxValidationException(
+                            "visual_media_asset_plan_mismatch",
+                            $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
+                    }
+                }
+            }
+
+            var artifactIds = slide.ArtifactShowcase?.Groups
+                .SelectMany(static group => group.Artifacts)
+                .Select(static artifact => artifact.AssetId)
+                .ToArray() ?? [];
+            if (artifactIds.Length == 0)
+            {
                 continue;
             }
 
             if (imageAssets is null)
             {
                 throw new PptxValidationException(
-                    "visual_media_unavailable",
+                    "visual_artifact_assets_unavailable",
                     "Image asset resolution is unavailable in this server configuration.");
             }
 
-            var asset = imageAssets.GetOwned(caller, slide.Media.AssetId);
-            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true)
+            foreach (var artifactId in artifactIds)
             {
-                if (!string.Equals(plan.AssetId, slide.Media.AssetId, StringComparison.Ordinal)
-                    || !string.Equals(plan.CropIntent, slide.Media.CropIntent, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(plan.TextSafeArea, slide.Media.TextPosition, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(plan.AttributionRef, asset.AttributionRef, StringComparison.Ordinal))
-                {
-                    throw new PptxValidationException(
-                        "visual_media_asset_plan_mismatch",
-                        $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
-                }
+                imageAssets.GetOwned(caller, artifactId);
+            }
+
+            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var artifactPlan) == true
+                && artifactPlan.AssetId is { } plannedAssetId
+                && !artifactIds.Contains(plannedAssetId, StringComparer.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_artifact_asset_plan_mismatch",
+                    $"Slide {slideNumber}.artifactShowcase must contain the primary asset_id fixed by the validated Asset Plan.");
             }
         }
     }

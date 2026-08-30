@@ -1106,4 +1106,93 @@ public sealed class VisualDeckValidatorTests
 
         Assert.Equal("visual_music_display_invalid", error.Code);
     }
+
+    [Fact]
+    public void AcceptsSemanticQualityComponentsWithoutCoordinatesOrRawMarkup()
+    {
+        var evidenceTable = new VisualDataTableSpec(
+            [new VisualDataTableColumnSpec("タグ"), new VisualDataTableColumnSpec("値")],
+            [new VisualDataTableRowSpec([new VisualDataTableCellSpec("人物A"), new VisualDataTableCellSpec("村田")])]);
+        var deck = new VisualDeckSpec(
+            "品質部品",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.CoverageMap,
+                    "適用範囲",
+                    CoverageMap: new VisualCoverageMapSpec(
+                        [
+                            new VisualAxisColumnSpec("plan", "企画"),
+                            new VisualAxisColumnSpec("build", "実行"),
+                            new VisualAxisColumnSpec("operate", "運用"),
+                        ],
+                        [
+                            new VisualCoverageGroupSpec(
+                                "security",
+                                "安全性",
+                                null,
+                                [new VisualCoverageRowSpec("review", "継続レビュー")]),
+                        ],
+                        [new VisualSpanBarSpec("review-span", "review", "全期間", 1, 3)])),
+                new VisualSlideSpec(
+                    VisualSlideKind.TransformationEvidence,
+                    "変換と根拠",
+                    TransformationEvidence: new VisualTransformationEvidenceSpec(
+                        "入力",
+                        [new VisualTaggedTextSegmentSpec("村田", "人物A", "warning")],
+                        "変換後",
+                        "[人物A] に置換",
+                        evidenceTable)),
+                new VisualSlideSpec(
+                    VisualSlideKind.ArtifactShowcase,
+                    "成果物",
+                    ArtifactShowcase: new VisualArtifactShowcaseSpec(
+                        [
+                            new VisualArtifactGroupSpec(
+                                "最終報告書",
+                                [new VisualArtifactItemSpec("0123456789abcdef0123456789abcdef", "最終版")]),
+                        ])),
+                new VisualSlideSpec(
+                    VisualSlideKind.GanttSchedule,
+                    "実施計画",
+                    GanttSchedule: new VisualGanttScheduleSpec(
+                        [
+                            new VisualAxisColumnSpec("w1", "W1"),
+                            new VisualAxisColumnSpec("w2", "W2"),
+                            new VisualAxisColumnSpec("w3", "W3"),
+                            new VisualAxisColumnSpec("w4", "W4"),
+                        ],
+                        [
+                            new VisualGanttTaskSpec("design", "設計", "要件合意", null, 1, 2),
+                            new VisualGanttTaskSpec("build", "実装", "試作", null, 2, 4),
+                        ])),
+            ],
+            RendererContract: "visual-v6-dom");
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
+
+    [Fact]
+    public void RejectsGanttThatWouldRequireUnreadableText()
+    {
+        var columns = Enumerable.Range(1, 13)
+            .Select(index => new VisualAxisColumnSpec($"w{index}", $"W{index}"))
+            .ToArray();
+        var deck = new VisualDeckSpec(
+            "過密計画",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.GanttSchedule,
+                    "分割が必要",
+                    GanttSchedule: new VisualGanttScheduleSpec(
+                        columns,
+                        [
+                            new VisualGanttTaskSpec("design", "設計", "要件合意", null, 1, 2),
+                            new VisualGanttTaskSpec("build", "実装", "試作", null, 2, 4),
+                        ])),
+            ]);
+
+        var error = Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(deck, 50));
+
+        Assert.Equal("visual_axis_columns_out_of_range", error.Code);
+    }
 }

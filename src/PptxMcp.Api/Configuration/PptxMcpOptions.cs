@@ -20,6 +20,10 @@ public sealed class PptxMcpOptions
 
     public string DefaultTemplateId { get; init; } = string.Empty;
 
+    public int DefaultTemplateCoverSampleSlideNumber { get; init; }
+
+    public int DefaultTemplateBodySampleSlideNumber { get; init; }
+
     public string BrandProfilesRoot { get; init; } = "/data/pptx-brand-profiles";
 
     public bool RequireDesignBrief { get; init; }
@@ -132,6 +136,16 @@ public sealed class PptxMcpOptions
         {
             throw new InvalidOperationException(
                 "PptxMcp:DefaultTemplateId may contain only ASCII letters, digits, hyphens, and underscores (maximum 128 characters).");
+        }
+
+        var hasCoverSample = DefaultTemplateCoverSampleSlideNumber > 0;
+        var hasBodySample = DefaultTemplateBodySampleSlideNumber > 0;
+        if (hasCoverSample != hasBodySample
+            || DefaultTemplateCoverSampleSlideNumber is < 0 or > 50
+            || DefaultTemplateBodySampleSlideNumber is < 0 or > 50)
+        {
+            throw new InvalidOperationException(
+                "Default template cover/body sample slide numbers must both be unset or both be between 1 and 50.");
         }
 
         if (FirstAssistantNotice.Length > 1_000)

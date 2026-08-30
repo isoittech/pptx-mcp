@@ -13,8 +13,8 @@
 ## 決定
 
 - 新規段階生成のレンダラー契約を`visual-v6-dom`とする。保存済み`visual-v4`／`visual-v5` lineageは従来どおり再生成する。
-- title、section、metrics、comparison、process、timeline、statement、cards、matrix、funnel、roadmap、quote、closing、structuredBrief、mediaだけを、サーバーが生成したoffline HTML/CSSから`dom-to-pptx` 2.1.1で変換する。
-- 箇条書き、PowerPoint表、ネイティブグラフ、dashboard、nativeDiagram、musicScoreを含むdeckは、PptxGenJSの互換レンダラーへdeck単位で切り替える。これらのネイティブ構造をCSS図形へ退化させない。
+- DOM対応layoutは、サーバーが生成したoffline HTML/CSSから`dom-to-pptx` 2.1.1で変換する。対応範囲と選択基準は[ADR 0021](0021-page-level-visual-composition-and-quality-components.md)および[Visual Component Catalog](../visual-component-catalog.md)を参照する。
+- ネイティブグラフ、dashboard、nativeDiagram、musicScoreはPptxGenJSの互換レンダラーを使い、DOM対応ページとページ単位で合成する。これらのネイティブ構造をCSS図形へ退化させず、同じdeckのDOM対応ページまで互換レンダラーへ戻さない。
 - モデルが渡すのは従来の`VisualDeckSpec`だけとする。HTML、CSS、JavaScript、任意SVG／XML、座標、URL、path、browser optionを公開tool入力へ追加しない。
 - DOMは本文をHTML attributeとtext nodeへエスケープし、外部script、外部stylesheet、外部font、外部画像を参照しない。画像は会話scopeとSHA-256を検証済みのmetadataなしPNG data URIだけを使う。
 - Chromiumはコンテナへ固定インストールし、実行時のbrowser自動downloadに依存しない。`dom-to-pptx`のNode exporterは`--no-sandbox`とfile accessを使用するため、非root、read-only、全capability削除、内部network、サーバー生成HTML限定の境界を同時に維持する。

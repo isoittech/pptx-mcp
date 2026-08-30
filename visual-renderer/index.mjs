@@ -315,9 +315,15 @@ pptx.layout = "PPTX_MCP_WIDE";
 
 const W = 13.333;
 const H = 7.5;
-const totalSlides = spec.slides.length;
+const slideNumberOffset = Number.isInteger(spec.slideNumberOffset) && spec.slideNumberOffset >= 0
+  ? spec.slideNumberOffset
+  : 0;
+const totalSlides = Number.isInteger(spec.deckTotalSlides) && spec.deckTotalSlides >= spec.slides.length
+  ? spec.deckTotalSlides
+  : spec.slides.length;
 
 for (const [index, slideSpec] of spec.slides.entries()) {
+  const absoluteIndex = slideNumberOffset + index;
   currentDensityName = String(slideSpec.density ?? deckDensityName).toLowerCase();
   density = densityProfiles[currentDensityName];
   if (!density) {
@@ -328,77 +334,77 @@ for (const [index, slideSpec] of spec.slides.entries()) {
   const kind = String(slideSpec.kind).toLowerCase();
   switch (kind) {
     case "title":
-      renderTitle(slide, slideSpec, index);
+      renderTitle(slide, slideSpec, absoluteIndex);
       break;
     case "agenda":
-      renderAgenda(slide, slideSpec, index);
+      renderAgenda(slide, slideSpec, absoluteIndex);
       break;
     case "section":
-      renderSection(slide, slideSpec, index);
+      renderSection(slide, slideSpec, absoluteIndex);
       break;
     case "bullets":
-      renderBullets(slide, slideSpec, index);
+      renderBullets(slide, slideSpec, absoluteIndex);
       break;
     case "metrics":
-      renderMetrics(slide, slideSpec, index);
+      renderMetrics(slide, slideSpec, absoluteIndex);
       break;
     case "comparison":
-      renderComparison(slide, slideSpec, index);
+      renderComparison(slide, slideSpec, absoluteIndex);
       break;
     case "process":
-      renderProcess(slide, slideSpec, index);
+      renderProcess(slide, slideSpec, absoluteIndex);
       break;
     case "timeline":
-      renderTimeline(slide, slideSpec, index);
+      renderTimeline(slide, slideSpec, absoluteIndex);
       break;
     case "chart":
-      renderChart(slide, slideSpec, index);
+      renderChart(slide, slideSpec, absoluteIndex);
       break;
     case "statement":
-      renderStatement(slide, slideSpec, index);
+      renderStatement(slide, slideSpec, absoluteIndex);
       break;
     case "cards":
-      renderCards(slide, slideSpec, index);
+      renderCards(slide, slideSpec, absoluteIndex);
       break;
     case "matrix":
-      renderMatrix(slide, slideSpec, index);
+      renderMatrix(slide, slideSpec, absoluteIndex);
       break;
     case "funnel":
-      renderFunnel(slide, slideSpec, index);
+      renderFunnel(slide, slideSpec, absoluteIndex);
       break;
     case "roadmap":
-      renderRoadmap(slide, slideSpec, index);
+      renderRoadmap(slide, slideSpec, absoluteIndex);
       break;
     case "dashboard":
-      renderDashboard(slide, slideSpec, index);
+      renderDashboard(slide, slideSpec, absoluteIndex);
       break;
     case "quote":
-      renderQuote(slide, slideSpec, index);
+      renderQuote(slide, slideSpec, absoluteIndex);
       break;
     case "closing":
-      renderClosing(slide, slideSpec, index);
+      renderClosing(slide, slideSpec, absoluteIndex);
       break;
     case "structuredbrief":
     case "structured_brief":
-      renderStructuredBrief(slide, slideSpec, index);
+      renderStructuredBrief(slide, slideSpec, absoluteIndex);
       break;
     case "scorecard":
-      renderScorecard(slide, slideSpec, index);
+      renderScorecard(slide, slideSpec, absoluteIndex);
       break;
     case "datatable":
     case "data_table":
-      renderDataTable(slide, slideSpec, index);
+      renderDataTable(slide, slideSpec, absoluteIndex);
       break;
     case "media":
-      renderMedia(slide, slideSpec, index);
+      renderMedia(slide, slideSpec, absoluteIndex);
       break;
     case "nativediagram":
     case "native_diagram":
-      renderNativeDiagram(slide, slideSpec, index);
+      renderNativeDiagram(slide, slideSpec, absoluteIndex);
       break;
     case "musicscore":
     case "music_score":
-      renderMusicScore(slide, slideSpec, index);
+      renderMusicScore(slide, slideSpec, absoluteIndex);
       break;
     default:
       throw new Error(`Unsupported slide kind: ${kind}`);
@@ -3257,7 +3263,7 @@ function card(slide, x, y, w, h, color) {
         ? density.cardBorderWidth * styleProfile.borderWidthScale
         : density.cardBorderWidth,
     },
-    shadow: usesModernRendererContract
+    shadow: usesModernRendererContract && rendererContract !== "visual-v6-dom"
       ? !styleProfile.cardShadow || !density.cardShadow
         ? undefined
         : { type: "outer", color: "182230", opacity: design.style === "bold" ? 0.16 : 0.09, blur: 2, angle: 45, distance: 1 }
@@ -3302,7 +3308,9 @@ function takeawayCard(slide, text, x, y, w, h) {
     rectRadius: 0.08,
     fill: { color: theme.primary },
     line: { color: theme.primary },
-    shadow: { type: "outer", color: "182230", opacity: 0.16, blur: 2.5, angle: 45, distance: 1.2 },
+    shadow: rendererContract === "visual-v6-dom"
+      ? undefined
+      : { type: "outer", color: "182230", opacity: 0.16, blur: 2.5, angle: 45, distance: 1.2 },
   });
   slide.addText("KEY TAKEAWAY", {
     x: x + 0.3, y: y + 0.38, w: w - 0.6, h: 0.28,

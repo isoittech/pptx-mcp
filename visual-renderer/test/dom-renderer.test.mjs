@@ -21,6 +21,10 @@ const rendererDirectory = dirname(rendererPath);
 test("the DOM renderer supports the bounded business-layout allowlist", () => {
   assert.ok(domSupportedSlideKinds.has("cards"));
   assert.ok(domSupportedSlideKinds.has("media"));
+  assert.ok(domSupportedSlideKinds.has("coverage_map"));
+  assert.ok(domSupportedSlideKinds.has("transformation_evidence"));
+  assert.ok(domSupportedSlideKinds.has("artifact_showcase"));
+  assert.ok(domSupportedSlideKinds.has("gantt_schedule"));
   assert.equal(canRenderDeckWithDom({ slides: [{ kind: "Cards" }, { kind: "Metrics" }] }), true);
   assert.equal(canRenderDeckWithDom({ slides: [{ kind: "Chart" }] }), false);
   assert.equal(canRenderDeckWithDom({ slides: [{ kind: "MusicScore" }] }), false);
@@ -69,6 +73,95 @@ test("server-generated slide HTML escapes content and carries reflection metadat
   assert.match(html, /\.footer>span:last-child\{[^}]*width:88px;[^}]*white-space:nowrap/u);
   assert.match(html, /\.takeaway p\{flex:1;min-width:0;/u);
   assert.doesNotMatch(html, /class="footer"/u);
+  assert.match(html, /box-shadow:none!important;text-shadow:none!important/u);
+});
+
+test("quality components render semantic, matte DOM without accepting raw HTML", () => {
+  const html = buildDomDeckHtml({
+    title: "品質部品カタログ",
+    rendererContract: "visual-v6-dom",
+    theme: { preset: "minimal" },
+    slides: [
+      {
+        kind: "CoverageMap",
+        title: "領域と時点の対応",
+        coverageMap: {
+          columns: [
+            { id: "plan", label: "企画" },
+            { id: "build", label: "実行" },
+            { id: "operate", label: "運用" },
+          ],
+          groups: [{
+            id: "security",
+            label: "安全性",
+            rows: [{ id: "review", label: "レビュー" }],
+          }],
+          bars: [{ id: "review-span", rowId: "review", label: "継続確認", startColumn: 1, endColumn: 3 }],
+          footerChips: [{ label: "標準確認", tone: "accent" }],
+        },
+      },
+      {
+        kind: "TransformationEvidence",
+        title: "入力と検証根拠",
+        transformationEvidence: {
+          inputHeading: "入力",
+          inputSegments: [
+            { text: "村田", tag: "人物A", tone: "warning" },
+            { text: " <script>alert(1)</script>" },
+          ],
+          outputHeading: "変換後",
+          outputText: "[人物A] に置換",
+          evidenceTable: {
+            columns: [{ header: "タグ" }, { header: "値" }],
+            rows: [{ cells: [{ text: "人物A" }, { text: "村田" }] }],
+          },
+        },
+      },
+      {
+        kind: "ArtifactShowcase",
+        title: "成果物",
+        artifactShowcase: {
+          groups: [{
+            title: "報告書",
+            artifacts: [{ assetId: "img_sample", label: "最終版" }],
+          }],
+        },
+      },
+      {
+        kind: "GanttSchedule",
+        title: "実施計画",
+        ganttSchedule: {
+          columns: [
+            { id: "w1", label: "W1", groupLabel: "1月" },
+            { id: "w2", label: "W2", groupLabel: "1月" },
+            { id: "w3", label: "W3", groupLabel: "1月" },
+            { id: "w4", label: "W4", groupLabel: "1月" },
+          ],
+          tasks: [
+            { id: "design", category: "設計", title: "要件合意", startColumn: 1, endColumn: 2 },
+            { id: "build", category: "実装", title: "試作", startColumn: 2, endColumn: 4, tone: "positive" },
+          ],
+        },
+      },
+    ],
+  }, {
+    img_sample: {
+      data: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      altText: "報告書のプレビュー",
+    },
+  });
+
+  assert.match(html, /class="coverage-grid"/u);
+  assert.match(html, /class="transformation-grid"/u);
+  assert.match(html, /class="artifact-grid count-1"/u);
+  assert.match(html, /class="gantt-grid"/u);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/u);
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/u);
+  assert.doesNotMatch(html, /box-shadow:(?!none)/u);
+  assert.match(
+    html,
+    /\.coverage-axis span,\.coverage-group span,\.gantt-axis span,\.gantt-task span,\.gantt-marker span,\.tagged-segment b\{font-size:19px\}/u,
+  );
 });
 
 test("dom-to-pptx exports editable text, react-icons SVG, and speaker notes", {

@@ -36,7 +36,8 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("matching pitch, string, and fret", instructions, StringComparison.Ordinal);
         Assert.Contains("headings alone tell the story", instructions, StringComparison.Ordinal);
         Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
-        Assert.Contains("below 9 pt", instructions, StringComparison.Ordinal);
+        Assert.Contains("visible content appears at least 14pt", instructions, StringComparison.Ordinal);
+        Assert.Contains("12pt exception", instructions, StringComparison.Ordinal);
         Assert.Contains("enforces at most two rounds", instructions, StringComparison.Ordinal);
         Assert.Contains("speakerNotes with both purpose and talkScript", instructions, StringComparison.Ordinal);
         Assert.Contains("included in the downloaded PPTX", instructions, StringComparison.Ordinal);
@@ -66,12 +67,19 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("Do not end the turn after source analysis", instructions, StringComparison.Ordinal);
         Assert.Contains("visual-v6-dom", instructions, StringComparison.Ordinal);
         Assert.Contains("dom-to-pptx", instructions, StringComparison.Ordinal);
+        Assert.Contains("page-level composition", instructions, StringComparison.Ordinal);
+        Assert.Contains("CoverageMap", instructions, StringComparison.Ordinal);
+        Assert.Contains("TransformationEvidence", instructions, StringComparison.Ordinal);
+        Assert.Contains("ArtifactShowcase", instructions, StringComparison.Ordinal);
+        Assert.Contains("GanttSchedule", instructions, StringComparison.Ordinal);
+        Assert.Contains("do not request shadows", instructions, StringComparison.Ordinal);
         Assert.Contains("react-icons/lu", instructions, StringComparison.Ordinal);
         Assert.Contains("never send React code", instructions, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("preserves its master, logo, footer, and page numbering", instructions, StringComparison.Ordinal);
         Assert.Contains("LibreOffice PPTX-to-PDF", instructions, StringComparison.Ordinal);
         Assert.Contains("successfully producing a PDF is not visual reflection", instructions, StringComparison.Ordinal);
         Assert.Contains("not a pixel-perfect guarantee for Microsoft PowerPoint", instructions, StringComparison.Ordinal);
+        Assert.Contains("PowerPoint as the final rendering authority", instructions, StringComparison.Ordinal);
     }
 
     [Fact]
