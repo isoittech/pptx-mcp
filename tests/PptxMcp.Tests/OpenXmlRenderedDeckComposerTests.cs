@@ -1,6 +1,7 @@
 using A = DocumentFormat.OpenXml.Drawing;
 using DocumentFormat.OpenXml.Packaging;
 using PptxMcp.Presentation;
+using PptxMcp.Storage;
 
 namespace PptxMcp.Tests;
 
@@ -44,5 +45,65 @@ public sealed class OpenXmlRenderedDeckComposerTests
             File.Delete(nativeSlide);
             File.Delete(destination);
         }
+    }
+
+    [Fact]
+    public async Task ComposesEquivalentWideSlideSizesWithRendererRounding()
+    {
+        var firstSlide = TestPresentationFactory.Create("POWERPOINT WIDE");
+        var roundedDomSlide = TestPresentationFactory.Create("DOM WIDE");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-rounded-wide-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            SetSlideWidth(roundedDomSlide, 12_191_695);
+
+            await OpenXmlRenderedDeckComposer.ComposeAsync(
+                [firstSlide, roundedDomSlide],
+                destination,
+                CancellationToken.None);
+
+            using var document = PresentationDocument.Open(destination, false);
+            Assert.Equal(12_192_000, document.PresentationPart!.Presentation!.SlideSize!.Cx!.Value);
+            Assert.Equal(2, document.PresentationPart.SlideParts.Count());
+        }
+        finally
+        {
+            File.Delete(firstSlide);
+            File.Delete(roundedDomSlide);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
+    public async Task RejectsMeaningfullyDifferentSlideSizes()
+    {
+        var firstSlide = TestPresentationFactory.Create("POWERPOINT WIDE");
+        var differentSlide = TestPresentationFactory.Create("DIFFERENT SIZE");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-different-size-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            SetSlideWidth(differentSlide, 12_150_000);
+
+            var error = await Assert.ThrowsAsync<PptxValidationException>(() =>
+                OpenXmlRenderedDeckComposer.ComposeAsync(
+                    [firstSlide, differentSlide],
+                    destination,
+                    CancellationToken.None));
+
+            Assert.Equal("incompatible_slide_size", error.Code);
+        }
+        finally
+        {
+            File.Delete(firstSlide);
+            File.Delete(differentSlide);
+            File.Delete(destination);
+        }
+    }
+
+    private static void SetSlideWidth(string path, int width)
+    {
+        using var document = PresentationDocument.Open(path, true);
+        document.PresentationPart!.Presentation!.SlideSize!.Cx = width;
+        document.PresentationPart.Presentation.Save();
     }
 }

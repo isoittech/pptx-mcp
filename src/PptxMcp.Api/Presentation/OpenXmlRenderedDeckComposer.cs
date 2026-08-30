@@ -6,6 +6,11 @@ namespace PptxMcp.Presentation;
 
 internal static class OpenXmlRenderedDeckComposer
 {
+    // dom-to-pptx represents 16:9 as 13.333 inches while PowerPoint stores the
+    // same nominal layout as 13 1/3 inches. Their widths differ by only 305 EMU
+    // (about 0.024 pt), so treat sub-point rounding as the same slide size.
+    private const int SlideSizeToleranceEmus = 12_700;
+
     public static async Task ComposeAsync(
         IReadOnlyList<string> sourcePaths,
         string destinationPath,
@@ -139,8 +144,12 @@ internal static class OpenXmlRenderedDeckComposer
     {
         var sourceSize = source.Presentation?.SlideSize;
         var destinationSize = destination.Presentation?.SlideSize;
-        if (sourceSize?.Cx?.Value != destinationSize?.Cx?.Value
-            || sourceSize?.Cy?.Value != destinationSize?.Cy?.Value)
+        if (sourceSize?.Cx?.Value is not int sourceWidth
+            || sourceSize.Cy?.Value is not int sourceHeight
+            || destinationSize?.Cx?.Value is not int destinationWidth
+            || destinationSize.Cy?.Value is not int destinationHeight
+            || Math.Abs(sourceWidth - destinationWidth) > SlideSizeToleranceEmus
+            || Math.Abs(sourceHeight - destinationHeight) > SlideSizeToleranceEmus)
         {
             throw new PptxValidationException(
                 "incompatible_slide_size",
