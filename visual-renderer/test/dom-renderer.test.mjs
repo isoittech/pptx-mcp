@@ -249,6 +249,15 @@ test("dom-to-pptx exports editable text, react-icons SVG, and speaker notes", {
             talkScript: "生成から全ページ画像確認までを標準手順として説明します。",
           },
         },
+        {
+          kind: "Bullets",
+          title: "標準の箇条書きを使う",
+          bullets: ["第一の論点", "第二の論点"],
+          speakerNotes: {
+            purpose: "箇条書きの編集可能性を確認する。",
+            talkScript: "箇条書きはPowerPoint標準の段落として出力します。",
+          },
+        },
       ],
     }), "utf8");
 
@@ -262,6 +271,7 @@ test("dom-to-pptx exports editable text, react-icons SVG, and speaker notes", {
     const slide1 = await archive.file("ppt/slides/slide1.xml")?.async("string") ?? "";
     const slide2 = await archive.file("ppt/slides/slide2.xml")?.async("string") ?? "";
     const slide3 = await archive.file("ppt/slides/slide3.xml")?.async("string") ?? "";
+    const slide4 = await archive.file("ppt/slides/slide4.xml")?.async("string") ?? "";
     const notes = await archive.file("ppt/notesSlides/notesSlide1.xml")?.async("string") ?? "";
     assert.match(slide1, /HTMLから編集可能なPowerPointへ/u);
     assert.match(slide2, /承認済みアイコンを使う/u);
@@ -272,6 +282,12 @@ test("dom-to-pptx exports editable text, react-icons SVG, and speaker notes", {
     assert.ok(takeawayShape, "the Process takeaway must remain editable text");
     const takeawayExtent = takeawayShape.match(/<a:ext cx="(\d+)" cy="\d+"/u);
     assert.ok(Number(takeawayExtent?.[1]) >= 6_000_000, "the takeaway text box must use the remaining flex width");
+    assert.match(slide4, /<a:buChar char="•"\/>/u);
+    const bulletShape = (slide4.match(/<p:sp>.*?<\/p:sp>/gu) ?? [])
+      .find((shape) => shape.includes("第一の論点"));
+    assert.ok(bulletShape, "the DOM bullet must remain editable text");
+    const bulletSizes = [...bulletShape.matchAll(/\bsz="(\d+)"/gu)].map((match) => Number(match[1]));
+    assert.ok(bulletSizes.length > 0 && Math.min(...bulletSizes) >= 1_400);
   } finally {
     await rm(workingDirectory, { recursive: true, force: true });
   }

@@ -21,6 +21,7 @@
 - Cardsの`icon`意味IDは`react-icons` 5.7.0の`react-icons/lu`（Lucide）allowlistへサーバー側で解決する。モデルにReact code、package名、SVG本文を渡させない。DOM経路では同じSVGを使い、互換レンダラーでも`visual-v6-dom` lineageだけはLucide SVGを使う。
 - アイコンはベクターSVG画像として出力する。PowerPointの「図形に変換」で分解できるが、変換前から個別DrawingML図形であるとは表現しない。本文、カード、工程等は編集可能なPowerPointテキスト・図形として出力する。
 - 企業テンプレート使用時はDOM slide rootを透明にし、従来のOpen XML合成で選択済み白紙レイアウトへ接続する。マスター、ロゴ、フッター、ページ番号を生成側で描き直さない。
+- 読ませる本文はPowerPoint内部値で14pt以上にする。dom-to-pptxの換算に合わせてDOM本文は24px以上とし、箇条書きは`ul`/`li`からDrawingMLの`buChar`へ変換する。nativeDiagramのノード・関係ラベルも14pt以上とし、収まらない場合は文字縮小ではなく内容整理またはページ分割を行う。
 - 生成直後とテンプレート合成後にOpen XML検証を行い、完成PPTXはLibreOfficeでPDFへ変換して全ページをPNG化する。LibreChatのパワポ職人はOpus 5で全image blockを確認し、問題ページだけ最大2巡修正する。LibreOffice previewをMicrosoft PowerPointのpixel-perfect保証とは扱わない。
 
 ## 依存関係と脆弱性境界

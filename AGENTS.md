@@ -24,7 +24,7 @@
 - 新規白紙生成は`visual-v6-dom`を使い、対応する業務レイアウトをサーバー管理HTML/CSSから`dom-to-pptx`へ渡す。native chart、dashboard、nativeDiagram、musicScoreはページ単位でPptxGenJS互換レンダラーを使い、DOMページとOpen XML合成する。1枚の非対応ページを理由にdeck全体を互換描画へ戻さない。任意HTML/CSS/JavaScript/SVG/XML、任意座標、URL、ローカルパスをツール入力へ追加しない。
 - Cardsのicon意味IDはサーバー側allowlistから`react-icons/lu`へ解決する。モデルにReact code、SVG本文、package名を生成させない。`visual-v6-dom`のPptxGenJS fallbackでも同じLucide SVGを使う。
 - `VisualDeckSpec` は27種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、モデルが内容に合う構図を選べる語彙を増やす。CoverageMap、TransformationEvidence、ArtifactShowcase、GanttScheduleの選択基準は`docs/visual-component-catalog.md`を参照する。
-- DOMの文字・図形はマットにし、`box-shadow`と`text-shadow`を使わない。本文は原則14pt以上とし、出典・URL・発行日は12ptまで許容する。過密時は縮小せず、文章整理またはページ分割を選ぶ。
+- DOMの文字・図形はマットにし、`box-shadow`と`text-shadow`を使わない。本文は原則14pt以上とし、出典・URL・発行日は12ptまで許容する。dom-to-pptxでは24pxが約14.4ptになるため、本文に23px以下を指定しない。箇条書きは`ul`/`li`からDrawingMLの実箇条書きへ変換し、装飾用の点と通常テキストで代用しない。nativeDiagramのノード・関係ラベルも14pt以上にする。過密時は縮小せず、文章整理またはページ分割を選ぶ。
 - 楽譜は`MusicScore`へ音高・音価・ウクレレ弦・フレット・指番号を渡し、PowerPointネイティブの線・図形・テキストで五線譜とTABを描く。任意座標を公開せず、音高と調弦・弦・フレットの一致を検証する。音楽記号は同梱したBravura 1.392の輪郭を`custGeom`へ変換し、手描き近似、画像貼付、閲覧側フォント依存へ戻さない。OTFとSIL OFL原文は必ず一緒に更新する。
 - 文字量の多い説明は`StructuredBrief`の2〜3セクションへ分け、評価軸×選択肢は`Scorecard`の編集可能なPowerPoint表にする。`density=detailed`はフォント縮小だけで実装せず、外周余白、見出し領域、間隔、罫線、影を一体で切り替える。
 - `tone` は意味語の別名またはRGB色を許容し、自然な表現を固定4語へ押し込めない。組み込みアイコンもモデルが実際に使う業務語彙をE2Eで確認して拡張し、未知値を黙って別アイコンへ置換しない。

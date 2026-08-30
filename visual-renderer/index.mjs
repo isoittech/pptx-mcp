@@ -2280,13 +2280,13 @@ function diagramNode(slide, node, x, y, w, h, index, shape = pptx.ShapeType.roun
   });
   slide.addText(node.label, {
     x: x + 0.14, y: y + 0.13, w: w - 0.28, h: node.description ? 0.36 : h - 0.26,
-    fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 14 : 12.5), bold: true,
+    fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 15.5 : 14.5), bold: true,
     color: theme.text, margin: 0, align: "center", valign: "mid", fit: "shrink",
   });
   if (node.description) {
     slide.addText(node.description, {
       x: x + 0.14, y: y + 0.55, w: w - 0.28, h: h - 0.68,
-      fontFace: theme.bodyFont, fontSize: scaled(9.5), color: theme.muted,
+      fontFace: theme.bodyFont, fontSize: scaled(14), color: theme.muted,
       margin: 0, align: "center", valign: "mid", fit: "shrink",
     });
   }
@@ -2299,8 +2299,8 @@ function diagramConnector(slide, x1, y1, x2, y2, label) {
   });
   if (label) {
     slide.addText(label, {
-      x: (x1 + x2) / 2 - 0.55, y: (y1 + y2) / 2 - 0.17, w: 1.1, h: 0.26,
-      fontFace: theme.bodyFont, fontSize: scaled(8.5), bold: true,
+      x: (x1 + x2) / 2 - 0.8, y: (y1 + y2) / 2 - 0.22, w: 1.6, h: 0.42,
+      fontFace: theme.bodyFont, fontSize: scaled(14), bold: true,
       color: theme.secondaryTextOnBackground, fill: { color: theme.background, transparency: 8 },
       margin: 0.03, align: "center", fit: "shrink",
     });
@@ -2348,7 +2348,7 @@ function renderNativeDiagram(slide, data, index) {
     nodes.forEach((node, nodeIndex) => {
       slide.addText(node.label, {
         x: 8.25, y: 2.42 + nodeIndex * 0.78, w: 3.62, h: 0.5,
-        fontFace: theme.bodyFont, fontSize: scaled(12.5), bold: node.emphasize,
+        fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 15.5 : 14.5), bold: node.emphasize,
         color: theme.text, margin: 0.05, fit: "shrink",
         bullet: { indent: 11 },
       });
@@ -2405,7 +2405,7 @@ function renderNativeDiagram(slide, data, index) {
   if (data.takeaway) {
     slide.addText(data.takeaway, {
       x: 1.05, y: 6.64, w: 11.25, h: 0.3,
-      fontFace: theme.bodyFont, fontSize: scaled(11), bold: true,
+      fontFace: theme.bodyFont, fontSize: scaled(14), bold: true,
       color: theme.secondaryTextOnBackground, margin: 0, align: "center", fit: "shrink",
     });
   }

@@ -176,10 +176,11 @@ test("semantic diagrams, real variants, and prepared objects remain editable nat
     const roadmapSlide = await archive.file("ppt/slides/slide5.xml")?.async("string");
     assert.match(roadmapSlide, /prst="wedgeRoundRectCallout"[\s\S]*?<a:t>Decision gate<\/a:t>/u);
     const decisionSlide = await archive.file("ppt/slides/slide1.xml")?.async("string");
+    const shapeForText = (text) => decisionSlide
+      ?.split("<p:sp>")
+      .find((fragment) => fragment.includes(`<a:t>${text}</a:t>`));
     const shapeY = (text) => {
-      const shape = decisionSlide
-        ?.split("<p:sp>")
-        .find((fragment) => fragment.includes(`<a:t>${text}</a:t>`));
+      const shape = shapeForText(text);
       const match = shape?.match(/<a:off x="\d+" y="(\d+)"\/>/u);
       assert.ok(match, `Expected positioned shape containing ${text}`);
       return Number(match[1]);
@@ -188,6 +189,11 @@ test("semantic diagrams, real variants, and prepared objects remain editable nat
       shapeY("Escalation boundary") < shapeY("Option A"),
       "The bracket label must stay above the lower diagram nodes instead of overlapping them.",
     );
+    for (const text of ["Need", "Option A", "low risk", "high value", "fallback"]) {
+      const shape = shapeForText(text);
+      const sizes = [...(shape?.matchAll(/\bsz="(\d+)"/gu) ?? [])].map((match) => Number(match[1]));
+      assert.ok(sizes.length > 0 && Math.min(...sizes) >= 1_400, `${text} must remain at least 14pt`);
+    }
     assert.match(allSlides, /<a:tailEnd type="triangle"\/>/u);
     assert.doesNotMatch(allSlides, /<p:pic>/u);
   } finally {
