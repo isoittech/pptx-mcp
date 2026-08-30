@@ -55,6 +55,50 @@ test("visual-v4 lineages omit visual-v5 style decorations", async () => {
   }
 });
 
+test("visual-v6 fallback keeps native charts and resolves card icons through react-icons", async () => {
+  const workingDirectory = await mkdtemp(join(tmpdir(), "pptx-mcp-renderer-v6-fallback-"));
+  const specificationPath = join(workingDirectory, "v6-fallback.json");
+  const outputPath = join(workingDirectory, "v6-fallback.pptx");
+  try {
+    await writeFile(specificationPath, JSON.stringify({
+      title: "Hybrid renderer contract",
+      rendererContract: "visual-v6-dom",
+      design: { style: "executive", density: "balanced", motif: "none" },
+      slides: [
+        {
+          kind: "Chart",
+          title: "Native chart remains editable",
+          chart: {
+            kind: "Bar",
+            categories: ["A", "B"],
+            series: [{ name: "Value", values: [1, 2] }],
+          },
+        },
+        {
+          kind: "Cards",
+          title: "Approved icon",
+          cards: [{ title: "Decision", description: "Lucide SVG", icon: "decision" }],
+        },
+      ],
+    }), "utf8");
+
+    const execution = await executeFile(process.execPath, [rendererPath, specificationPath, outputPath], {
+      cwd: rendererDirectory,
+      timeout: 30_000,
+    });
+    assert.doesNotMatch(execution.stdout, /PPTX_MCP_RENDERER=dom-to-pptx/u);
+
+    const archive = await JSZip.loadAsync(await readFile(outputPath));
+    const chartSlide = await archive.file("ppt/slides/slide1.xml")?.async("string") ?? "";
+    const cardSlide = await archive.file("ppt/slides/slide2.xml")?.async("string") ?? "";
+    assert.match(chartSlide, /<c:chart/u);
+    assert.match(cardSlide, /<p:pic>/u);
+    assert.match(cardSlide, /Decision/u);
+  } finally {
+    await rm(workingDirectory, { recursive: true, force: true });
+  }
+});
+
 test("visual-v4 retains legacy foreground and semantic-tone colors", async () => {
   const workingDirectory = await mkdtemp(join(tmpdir(), "pptx-mcp-renderer-v4-colors-"));
   const specificationPath = join(workingDirectory, "legacy-colors.json");

@@ -18,6 +18,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777
+    shm_size: 512m
     volumes:
       - pptx-data:/data/pptx-mcp
       - ${LIBRECHAT_UPLOADS_PATH:?set LIBRECHAT_UPLOADS_PATH}:/data/librechat-uploads:ro

@@ -21,7 +21,8 @@
 - 外部からローカルパスを受け取らず、不透明な `file_id`、`job_id`、`artifact_id` のみを扱う。
 - PPTX 操作は `IPresentationEngine` の背後に置き、Open XML 実装と将来の商用エンジンを交換可能にする。
 - LibreOffice は表示確認用レンダリングに限定し、編集には使用しない。
-- 白紙生成は `VisualDeckSpec` を固定PptxGenJSレンダラーへ渡す。任意JavaScript、任意座標、URL、ローカルパスをツール入力へ追加しない。
+- 新規白紙生成は`visual-v6-dom`を使い、対応する業務レイアウトをサーバー管理HTML/CSSから`dom-to-pptx`へ渡す。PowerPoint表、native chart、dashboard、nativeDiagram、musicScoreを含むdeckはPptxGenJS互換レンダラーへ切り替える。任意HTML/CSS/JavaScript/SVG/XML、任意座標、URL、ローカルパスをツール入力へ追加しない。
+- Cardsのicon意味IDはサーバー側allowlistから`react-icons/lu`へ解決する。モデルにReact code、SVG本文、package名を生成させない。`visual-v6-dom`のPptxGenJS fallbackでも同じLucide SVGを使う。
 - `VisualDeckSpec` は23種類の意味レイアウト、9テーマ、`design`、`variant`、組み込みアイコンを視覚語彙として提供する。固定構図へ内容を押し込まず、Opusが内容に合う構図を選べる語彙を増やす。
 - 楽譜は`MusicScore`へ音高・音価・ウクレレ弦・フレット・指番号を渡し、PowerPointネイティブの線・図形・テキストで五線譜とTABを描く。任意座標を公開せず、音高と調弦・弦・フレットの一致を検証する。音楽記号は同梱したBravura 1.392の輪郭を`custGeom`へ変換し、手描き近似、画像貼付、閲覧側フォント依存へ戻さない。OTFとSIL OFL原文は必ず一緒に更新する。
 - 文字量の多い説明は`StructuredBrief`の2〜3セクションへ分け、評価軸×選択肢は`Scorecard`の編集可能なPowerPoint表にする。`density=detailed`はフォント縮小だけで実装せず、外周余白、見出し領域、間隔、罫線、影を一体で切り替える。
@@ -52,7 +53,9 @@
 - 置換が20件を超える場合は、`pptx_replace_text`を最大20件ずつ実行する。中間バッチは`isFinalBatch=false`とし、成功した`job_id`を次の`previousJobId`へ渡して変更を累積する。最後だけ`isFinalBatch=true`として全ページを描画する。
 - `visual_draft_not_found`／`visual_draft_expired`／`visual_draft_not_editable`はterminal errorとして再試行を明示的に禁止する。汎用の「入力を直して同じtoolを再実行」案内へフォールバックさせない。
 - PptxGenJSを含む外部レンダラーの生成物は、LibreOfficeで表示できてもPowerPoint互換とは限らない。生成直後と企業テンプレートへの合成後にOpenXmlValidatorを通し、新規検証エラーがある成果物は配布しない。
-- rendererの色role、surface、style profileを拡張するときは`visual-v5`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。dark surface、明色role、v4代表XMLのNode回帰テストを維持する。
+- `dom-to-pptx`のNode exporterはsandboxなしChromiumを起動するため、サーバー生成offline HTMLだけを入力し、非root、read-only、全capability削除、internal networkを維持する。runtimeでbrowserをdownloadせず、イメージへ固定インストールしたChromiumだけを使う。
+- `dom-to-pptx`へ渡すflex内テキスト要素を内容幅のままにすると、PowerPointのtextbox内余白で行末1文字だけが折り返す。可変本文には`flex: 1; min-width: 0`で残り幅を与え、生成XMLのtextbox幅を確認する回帰テストを維持する。
+- rendererの色role、surface、style profileを拡張するときは`visual-v5`／`visual-v6-dom`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。dark surface、明色role、v4代表XMLのNode回帰テストを維持する。
 - `VisualSlideSpec.speakerNotes`はvisible canvasとは別のPowerPoint発表者ノートである。`purpose`は1文、`talkScript`は発表用原稿として検証する。refineで省略されたノートは元ページから継承し、明示値だけを更新する。結果の`speaker_notes_count`で保持件数を返す。詳細はADR 0018を参照する。
 
 ## セキュリティと制約
@@ -80,7 +83,7 @@
 - LibreChat v0.8.3-rc1 / `@librechat/agents` 3.1.51 はMCP画像artifactをBedrockへ再投入しない。LibreChat側のフェイルクローズなビルド時パッチを維持し、依存更新時に画像経路を再検証する。
 - PptxGenJS 4.0.1は、PowerPointが修復を要求するOOXMLを生成することがある。`PptxGenJsOpenXmlNormalizer`でレンダラー所有のプレゼンテーションルート、表セル、グラフを正規化し、`node_modules`を直接改変しない。
 - PptxGenJSへ負の`w`/`h`を渡すと`a:ext`へ負値をそのまま書き、Open XML検証に失敗する。右上・左上へ向かう線分は、正の幅・高さと`flipH`/`flipV`へ正規化して描画し、`PptxGenJsOpenXmlNormalizer`でも負のshape extentを位置移動＋反転属性へ補正する回帰テストを維持する。
-- PptxGenJS 4.0.1が依存する`image-size` 1.2.1には2026-08-08時点で修正版のないICNS/JXL/HEIFの無限ループDoSがある。画像登録toolはJPEG/PNGだけをSharpでmetadataなしPNGへ正規化し、rendererはserver-owned hash検証済みPNG dataだけを`addImage`へ渡す。URL、path、原upload、ICNS/JXL/HEIFをrendererへ到達させない境界をテストで固定し、修正版公開後に更新する。
+- PptxGenJS 4.0.1が宣言する未使用の`image-size`は、parserを含まない`visual-renderer/vendor/image-size-disabled`へ固定し、呼出し時は即時失敗させる。`npm audit --omit=dev`を警告0件に保ち、shimのCommonJS／ESM拒否テストを維持する。画像登録toolのmetadataなしPNG化とrendererのhash・PNG signature・IHDR・宣言寸法検証も緩めない。
 - LibreChatのmessage attachment画像は文書uploadと異なり`images/<user-id>/`へ保存される。導入時は`LibreChatImagesRoot`と`LibreChatUploadsRoot`を別々に読み取り専用mountし、実UI添付からresolverまでのE2Eを省略しない。
 - 画像layoutを空欄や「ここに画像」のshapeで完成扱いしない。`Media`は同じ利用者・会話の有効なasset ID、alt text、cropを必須にし、素材がなければnative diagramまたは画像なしrecipeへ変更する。詳細は[ADR 0016](docs/adr/0016-conversation-scoped-image-assets-and-media-split.md)を参照する。
 - 意味のある矢印・枠・吹き出し等は`pptx_prepare_visual_objects`で1回最大8件をまとめ、座標・生色・SVG/XML・URL・pathを入力に持たせない。1ページ最大3件、strong最大1件、会話最大24件を守り、Asset PlanへIDを固定する。補助図形は空のプレースホルダとして浮かせず、吹き出しは文字を内包し、枠は既存の焦点領域を囲み、図解の括弧は安全帯へ置くなど意味layout別anchorへ自動配置する。PPTX本体は編集可能なネイティブ図形とし、tool resultはJSON textだけを返す。SVG ImageContentはBedrock／Anthropicへ再送するとprovider errorになるため公開しない。詳細は[ADR 0017](docs/adr/0017-native-semantic-diagrams-and-visual-objects.md)を参照する。

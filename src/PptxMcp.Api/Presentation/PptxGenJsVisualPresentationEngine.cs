@@ -112,12 +112,16 @@ public sealed class PptxGenJsVisualPresentationEngine(
         PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(destinationPath);
 
         var rendererContract = deck.RendererContract ?? "visual-v4";
+        var usedDomRenderer = standardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains("PPTX_MCP_RENDERER=dom-to-pptx@2.1.1+react-icons@5.7.0", StringComparer.Ordinal);
+        var renderer = usedDomRenderer
+            ? $"dom-to-pptx 2.1.1 HTML/CSS renderer + react-icons 5.7.0 Lucide allowlist ({rendererContract})"
+            : $"PptxGenJS 4.0.1 declarative fallback renderer {rendererContract}";
         return new VisualDeckCreationResult(
             deck.Slides.Count,
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
-            useTemplateChrome
-                ? $"PptxGenJS 4.0.1 declarative renderer {rendererContract} + template chrome"
-                : $"PptxGenJS 4.0.1 declarative renderer {rendererContract}",
+            useTemplateChrome ? $"{renderer} + template chrome" : renderer,
             deck.Slides.Count(static slide => slide.SpeakerNotes is not null),
             VisualDeckValidator.GetDesignWarnings(deck));
     }

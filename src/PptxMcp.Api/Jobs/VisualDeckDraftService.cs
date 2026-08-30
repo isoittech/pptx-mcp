@@ -322,7 +322,7 @@ public sealed class VisualDeckDraftService(
             draft.Subject,
             draft.Language,
             draft.Design,
-            "visual-v5",
+            "visual-v6-dom",
             CreatePersistedBrandBinding(draft),
             CreateVisualObjectSnapshots(draft, slides));
 

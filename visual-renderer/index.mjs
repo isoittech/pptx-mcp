@@ -8,6 +8,7 @@ import {
   MusicGlyph,
   timeSignatureGlyph,
 } from "./music-glyphs.mjs";
+import { renderApprovedReactIcon } from "./react-icons.mjs";
 
 const require = createRequire(import.meta.url);
 const pptxgen = require("pptxgenjs");
@@ -23,10 +24,19 @@ const visualObjectAssets = new Map(
   (spec.visual_object_assets ?? []).map((asset) => [asset.asset_id, asset]),
 );
 const rendererContract = String(spec.rendererContract ?? "visual-v4").toLowerCase();
-if (!["visual-v4", "visual-v5"].includes(rendererContract)) {
+if (!["visual-v4", "visual-v5", "visual-v6-dom"].includes(rendererContract)) {
   throw new Error(`Unsupported renderer contract: ${rendererContract}`);
 }
-const usesModernRendererContract = rendererContract === "visual-v5";
+if (rendererContract === "visual-v6-dom") {
+  const { canRenderDeckWithDom, renderDomDeck } = await import("./dom-renderer.mjs");
+  if (canRenderDeckWithDom(spec)) {
+    await renderDomDeck(spec, outputPath, imageAssets);
+    process.stdout.write("PPTX_MCP_RENDERER=dom-to-pptx@2.1.1+react-icons@5.7.0\n");
+    process.exit(0);
+  }
+}
+const usesModernRendererContract = rendererContract === "visual-v5"
+  || rendererContract === "visual-v6-dom";
 const bravuraFont = await loadBravuraFont();
 const templateChrome = spec.templateChrome === true;
 if (!Array.isArray(spec.slides) || spec.slides.length < 1 || spec.slides.length > 50) {
@@ -3492,6 +3502,20 @@ function renderIcon(slide, iconName, x, y, size, color, inverse) {
     fill: { color, transparency: inverse ? 68 : 84 },
     line: { color, transparency: 100 },
   });
+  if (rendererContract === "visual-v6-dom") {
+    const svg = renderApprovedReactIcon(normalizedIcon, {
+      color: `#${foreground}`,
+      size: 96,
+    });
+    slide.addImage({
+      data: `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`,
+      x: x + size * 0.19,
+      y: y + size * 0.19,
+      w: size * 0.62,
+      h: size * 0.62,
+    });
+    return;
+  }
   if (normalizedIcon === "search") {
     slide.addShape(pptx.ShapeType.ellipse, {
       x: x + size * 0.24, y: y + size * 0.2, w: size * 0.4, h: size * 0.4,

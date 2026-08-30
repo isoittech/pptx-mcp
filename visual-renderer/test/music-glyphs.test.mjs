@@ -65,9 +65,11 @@ test("Every exposed music symbol has non-empty native geometry", async () => {
 
 test("Visual renderer only embeds server-verified image data with alt text", async () => {
   const source = await readFile(new URL("../index.mjs", import.meta.url), "utf8");
-  assert.equal(source.match(/\.addImage\s*\(/gu)?.length, 1);
+  assert.equal(source.match(/\.addImage\s*\(/gu)?.length, 2);
   assert.match(source, /data:\s*asset\.data/u);
   assert.match(source, /altText:\s*asset\.altText/u);
+  assert.match(source, /renderApprovedReactIcon\(normalizedIcon/u);
+  assert.match(source, /data:image\/svg\+xml;base64/u);
   assert.doesNotMatch(source, /addImage\s*\(\s*\{[^}]*\bpath\s*:/su);
 });
 

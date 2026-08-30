@@ -13,14 +13,13 @@ LibreChat / Claude
   │ 信頼済み user/conversation headers
   ▼
 pptx-mcp ──受付──▶ 永続ジョブキュー（最大3並列、最大10分）
-  │                         │
-  │ read-only               ├─ Open XML SDK: 検査・精密編集
-  ▼                         ├─ 固定PptxGenJS: 宣言型の白紙・ブランド視覚生成
-LibreChat uploads            ├─ Open XML SDK: Visual Deckと企業マスターの合成
-                              └─ Poppler: PNG化
-                              │
-                              ├─ LibreOffice: PDF化
-                              ▼
+  │ read-only: LibreChat uploads   │
+  │                                ├─ Open XML SDK: 検査・精密編集・企業マスター合成
+  │                                ├─ dom-to-pptx: サーバー管理DOMの視覚生成
+  │                                ├─ PptxGenJS互換経路: native表・chart・diagram・music score
+  │                                └─ LibreOffice: PDF化 ─▶ Poppler: PNG化
+  ▼
+非同期ジョブ + 成果物URL ─────────▶
                        期限付き成果物ストレージ
                          ┌────┴───────────────┐
                          │                    │
@@ -44,11 +43,11 @@ OSS本体は企業固有テンプレートを保持せず、外部マウント�
 
 新規Visual Deckは、`pptx_start_visual_deck`で概要、完成ページ数、テンプレート、テーマ、デザインを固定し、`pptx_add_visual_slides_to_draft`で最大4ページずつ仕様を蓄積して、finishツールでジョブ化します。テンプレートは`default`、`none`、`latest`または添付`file_id`からstart時に選択し、finishでの変更を拒否します。既定テンプレートの判断は [ADR 0006](adr/0006-deployment-default-template.md)、段階入力は [ADR 0009](adr/0009-staged-visual-deck-input.md)、生成・修正ループの停止条件は [ADR 0012](adr/0012-visual-deck-workflow-guardrails.md) に記録します。
 
-華やかさとブランド保持を両立する場合は、startで企業テンプレートを選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。MCPがaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、startで未指定のテーマ項目だけを補完します。明示色とfontFaceは抽出値より優先されます。固定PptxGenJSレンダラーで編集可能な図形・グラフを生成した後、生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。
+華やかさとブランド保持を両立する場合は、startで企業テンプレートを選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。MCPがaccent色、背景色、文字色、見出し・本文フォントを自動抽出し、startで未指定のテーマ項目だけを補完します。明示色とfontFaceは抽出値より優先されます。`visual-v6-dom`では対応する業務レイアウトをサーバー管理HTML/CSSから`dom-to-pptx`で編集可能な図形・テキストへ変換し、ネイティブ表・グラフ・図解・楽譜が必要なdeckはPptxGenJS互換レンダラーを使います。その生成スライドをプレースホルダー0個の白紙レイアウトへ接続します。
 
 テンプレートとVisual Deckの縦横比が一致しない場合や、白紙レイアウトがない場合は合成を拒否します。Visual Deck側の独自フッターは合成時だけ抑制し、企業フッターとの二重表示を防ぎます。詳細な判断は [ADR 0004](adr/0004-branded-visual-composition.md) に記録します。
 
-AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから受けるのはJSON Schemaで制約したスライド仕様・編集命令だけです。通常文は `text`、箇条書き・番号付き手順は項目単位の `paragraphs` として受け取り、DrawingMLの実段落、箇条書き、自動採番へ変換します。
+AIにHTML、CSS、JavaScript、SVG、Open XMLを直接生成・実行させません。Claudeから受けるのはJSON Schemaで制約したスライド仕様・編集命令だけです。DOM経路のHTML/CSSはMCPがエスケープ済みデータからoffline生成し、外部script、URL、pathを読み込みません。通常文は `text`、箇条書き・番号付き手順は項目単位の `paragraphs` として受け取り、DrawingMLの実段落、箇条書き、自動採番へ変換します。
 
 ## 白紙からの視覚的な生成
 
@@ -62,7 +61,7 @@ AIにJavaScriptやOpen XMLを直接生成・実行させません。Claudeから
 - matrix、funnel、roadmap、chart、dashboard
 - quote、closing
 
-テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。固定PptxGenJSレンダラーはテキスト、図形、組み込みアイコン、テーマ色、編集可能グラフ、グラフ用埋め込みワークブックを生成します。通常の公開入力にファイルパス、URL、画像bytes、JavaScript、任意座標を持たせません。例外となる`media.assetId`は事前登録済みのopaque IDだけで、serverがcaller scopeとSHA-256を検証し、metadataなしPNGを埋め込みます。`visualObjects.assetId`も同じcaller scopeで解決しますが、保存対象は画像ではなく上限付きの意味仕様で、job payloadへimmutable snapshotを保存し、PowerPointネイティブ図形へ展開します。
+テーマは `midnight`、`aurora`、`sunset`、`forest`、`minimal`、`ocean`、`berry`、`clay`、`cyber` の9種です。色とフォントは検証済みの範囲で上書きできます。Opusは `design.style`、`density`、`motif` と `variant` を使って、同じ意味レイアウトでも資料固有の視覚表現を選びます。新規`visual-v6-dom`は、一般的な業務レイアウトを`dom-to-pptx` 2.1.1で変換します。Cardsのicon IDは`react-icons` 5.7.0の`react-icons/lu`（Lucide）allowlistへ解決し、ベクターSVG画像として出力します。ネイティブ表、グラフ、dashboard、nativeDiagram、musicScoreを含むdeckはPptxGenJS互換レンダラーを使い、Lucide iconの契約は維持します。通常の公開入力にファイルパス、URL、画像bytes、HTML、CSS、JavaScript、SVG、任意座標を持たせません。例外となる`media.assetId`は事前登録済みのopaque IDだけで、serverがcaller scopeとSHA-256を検証し、metadataなしPNGを埋め込みます。`visualObjects.assetId`も同じcaller scopeで解決しますが、保存対象は画像ではなく上限付きの意味仕様で、job payloadへimmutable snapshotを保存し、PowerPointネイティブ図形へ展開します。詳細は[ADR 0020](adr/0020-dom-to-pptx-and-react-icons-renderer.md)に記録します。
 
 `media`は最初の実装として`split`だけを提供します。ユーザー提供JPEG/PNGを`pptx_register_uploaded_image_asset`で検証・無害化してから、実asset ID、crop intent、text positionを指定します。画像がない状態を空欄や仮画像で完成扱いせず、native diagramまたは画像なしrecipeへ切り替えます。詳細は[ADR 0016](adr/0016-conversation-scoped-image-assets-and-media-split.md)に記録します。
 
@@ -78,7 +77,7 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 
 1. 生成・編集ジョブを完了させる。
 2. 全スライドを1〜4枚ずつMCP画像ブロックとして取得する。
-3. Claudeが文字切れ、はみ出し、重なり、文字サイズ、余白、整列、コントラスト、情報階層、密度、バランス、全体一貫性を確認する。さらに、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。
+3. LibreChatでmanifest固定されたClaude Opus 5が、LibreOfficeのPPTX→PDFとPDF rasterizationで得た各image blockを実際に確認する。文字切れ、はみ出し、重なり、文字サイズ、余白、整列、コントラスト、情報階層、密度、バランス、全体一貫性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないかを確認する。画像取得またはPDF生成の成功だけをリフレクション完了としない。
 4. 問題があれば厳密なプレースホルダー資料は `pptx_refine_deck`、白紙資料とブランドVisual Deckは `pptx_refine_visual_slide` へ完全な差し替えページを1枚ずつ渡して再生成する。
 5. 最大2巡で収束させ、視覚確認後にダウンロードリンクを提示する。
 
@@ -86,7 +85,7 @@ MCPサーバー指示とツール説明に次のエージェントループを�
 
 ページ数を増やす場合は `pptx_refine_visual_slide` ではなく `pptx_insert_visual_slides` を使います。同ツールは追加する `VisualSlideSpec` だけを受け取り、同じ利用者・会話にある成功済みVisual Deckの仕様へサーバー側で挿入します。`afterSlideNumber` は既存ページを基準とし、省略時は末尾へ追加します。ブランドVisual Deckでは元ジョブのテンプレートファイルと `templateLayoutId` も再利用します。第1段階では完成版の `VisualDeckSpec` をPptxGenJSへ再投入するためファイル生成・Open XML検証・プレビュー生成は全ページ分行いますが、モデルが既存ページを再構築・再送する必要はありません。
 
-これはMCPサーバーが別のモデルAPIを直接呼ぶループではなく、LibreChat上のClaudeがツール呼び出しを継続するエージェント駆動方式です。モデル認証情報をMCPへ持ち込まず、会話文脈を保ったまま評価できます。
+これはMCPサーバーが別のモデルAPIを直接呼ぶループではなく、LibreChat上のClaude Opus 5がツール呼び出しを継続するエージェント駆動方式です。モデル認証情報をMCPへ持ち込まず、会話文脈を保ったまま評価できます。LibreOffice previewは機械的な描画gateとリフレクション入力であり、Microsoft PowerPointでのpixel-perfect表示保証ではありません。
 
 ## 編集エンジン
 

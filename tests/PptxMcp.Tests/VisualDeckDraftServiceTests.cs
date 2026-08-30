@@ -41,7 +41,7 @@ public sealed class VisualDeckDraftServiceTests
         Assert.NotNull(submission.Deck);
         Assert.Equal("段階生成テスト", submission.Deck.Title);
         Assert.Equal("forest", submission.Deck.Theme?.Preset);
-        Assert.Equal("visual-v5", submission.Deck.RendererContract);
+        Assert.Equal("visual-v6-dom", submission.Deck.RendererContract);
         Assert.Equal(Enumerable.Range(1, 6).Select(number => $"Slide {number}"), submission.Deck.Slides.Select(slide => slide.Title));
     }
 

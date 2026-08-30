@@ -49,7 +49,7 @@ public sealed record VisualDeckSpec(
     string? Subject = null,
     string Language = "ja-JP",
     VisualDesignSpec? Design = null,
-    [property: Description("Server-owned renderer contract. New staged decks use visual-v5; omitted legacy payloads retain visual-v4 behavior during their stored lineage.")]
+    [property: Description("Server-owned renderer contract. New staged decks use visual-v6-dom; saved visual-v4 and visual-v5 payloads retain their original renderer behavior during their stored lineage.")]
     string? RendererContract = null,
     [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
     VisualDeckBrandProfileBinding? BrandProfileBinding = null,
@@ -519,11 +519,11 @@ public static partial class VisualDeckValidator
         ArgumentNullException.ThrowIfNull(deck);
         ValidateMetadata(deck.Title, deck.Subject, deck.Language, deck.Theme, deck.Design);
         var rendererContract = deck.RendererContract?.ToLowerInvariant() ?? "visual-v4";
-        if (rendererContract is not ("visual-v4" or "visual-v5"))
+        if (rendererContract is not ("visual-v4" or "visual-v5" or "visual-v6-dom"))
         {
             throw new PptxValidationException(
                 "visual_renderer_contract_invalid",
-                "rendererContract is server-owned and must be visual-v4 or visual-v5.");
+                "rendererContract is server-owned and must be visual-v4, visual-v5, or visual-v6-dom.");
         }
 
         if (deck.Slides is null || deck.Slides.Count is < 1 || deck.Slides.Count > maximumSlides)
@@ -539,7 +539,7 @@ public static partial class VisualDeckValidator
                 deck.Slides[index],
                 index + 1,
                 deck.Design?.Density,
-                rendererContract == "visual-v5");
+                rendererContract is "visual-v5" or "visual-v6-dom");
         }
 
         ValidateVisualObjectAssets(deck);

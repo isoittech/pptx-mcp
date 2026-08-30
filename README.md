@@ -26,6 +26,7 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 導入環境から任意に注入できる初回assistant案内
 - PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
 - `musicScore`による編集可能な五線譜、Bravura由来の高品質な音楽記号、小節線、ウクレレTAB、指番号の色分け
+- `dom-to-pptx`と`react-icons/lu`によるサーバー管理DOMの編集可能なVisual Deck生成
 - LibreOffice と Poppler による全ページ PNG プレビュー
 - プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
 - 15分有効の署名付き成果物URL
@@ -130,7 +131,7 @@ LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書
 
 企業テンプレートを使いつつ同じ視覚表現が必要な場合は、テンプレートをstart時に選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、未指定のテーマ項目だけを補完して、プレースホルダーのない白紙レイアウトへ各スライドを接続します。startで明示した色とフォントはテンプレート抽出値より優先されます。これにより企業マスターのロゴ・フッターと、資料固有の配色、カード、工程、マトリクス、編集可能グラフ等を両立します。
 
-メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等を含む編集可能な組み込みアイコンを利用できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
+メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等の意味IDを受け、サーバー管理allowlistから`react-icons/lu`（Lucide）へ解決したベクターSVGを利用します。SVGはPowerPointの「図形に変換」で分解できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
 
 Visual Deckの入力検証エラーは `status=invalid_input`、エラーコード、対象フィールドを構造化して返します。モデルは推測で同じ呼び出しを繰り返さず、指摘されたフィールドだけを直せます。Closingの提言はPowerPointネイティブの箇条書きとして描画されます。
 
@@ -154,4 +155,4 @@ cd visual-renderer
 npm audit --omit=dev
 ```
 
-2026-08-14時点ではPptxGenJSの推移依存`image-size`に、修正版未公開のICNS/JXL/HEIF解析DoSが報告されます。公開画像toolはJPEG/PNGだけを別processのSharpでdecodeし、metadataなしのPNGへ正規化します。Visual rendererはserver-owned hash、PNG signature、IHDR、宣言寸法を再検証したbytesだけを`addImage`へ渡し、URL、path、ICNS/JXL/HEIF原本へ到達しません。この限定境界をNodeテストで固定し、修正版公開後にロックファイルを更新してください。
+PptxGenJS 4.0.1は実行時に使わない`image-size`を推移依存として宣言しています。Visual rendererではこれをparserを一切含まないローカルのfail-closed互換shimへ固定し、呼び出された場合は即時失敗させます。これにより既知のICNS/JXL/HEIF解析DoSを含むparserをruntime imageから除外し、`npm audit --omit=dev`を警告0件に保ちます。公開画像toolのSharpによるmetadataなしPNG化と、renderer側のhash、PNG signature、IHDR、宣言寸法の再検証も多層防御として維持します。

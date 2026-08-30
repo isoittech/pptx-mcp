@@ -64,6 +64,14 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("consecutive groups of four slide numbers", instructions, StringComparison.Ordinal);
         Assert.Contains("never request the same slide twice", instructions, StringComparison.Ordinal);
         Assert.Contains("Do not end the turn after source analysis", instructions, StringComparison.Ordinal);
+        Assert.Contains("visual-v6-dom", instructions, StringComparison.Ordinal);
+        Assert.Contains("dom-to-pptx", instructions, StringComparison.Ordinal);
+        Assert.Contains("react-icons/lu", instructions, StringComparison.Ordinal);
+        Assert.Contains("never send React code", instructions, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("preserves its master, logo, footer, and page numbering", instructions, StringComparison.Ordinal);
+        Assert.Contains("LibreOffice PPTX-to-PDF", instructions, StringComparison.Ordinal);
+        Assert.Contains("successfully producing a PDF is not visual reflection", instructions, StringComparison.Ordinal);
+        Assert.Contains("not a pixel-perfect guarantee for Microsoft PowerPoint", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

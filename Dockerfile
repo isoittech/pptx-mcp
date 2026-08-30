@@ -11,14 +11,20 @@ FROM restore AS build
 COPY . .
 RUN dotnet build pptx-mcp.sln --configuration Release --no-restore
 
-FROM node:20-bookworm-slim AS visual-renderer
+FROM node:22-bookworm-slim AS visual-renderer
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends chromium fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /visual-renderer
 COPY visual-renderer/package.json visual-renderer/package-lock.json ./
+COPY visual-renderer/vendor ./vendor
 RUN npm ci --ignore-scripts --no-audit --no-fund
-COPY visual-renderer/index.mjs visual-renderer/music-glyphs.mjs visual-renderer/sanitize-image.mjs ./
+COPY visual-renderer/index.mjs visual-renderer/dom-renderer.mjs visual-renderer/react-icons.mjs visual-renderer/music-glyphs.mjs visual-renderer/sanitize-image.mjs ./
+COPY visual-renderer/THIRD_PARTY_NOTICES.md ./
 COPY visual-renderer/assets ./assets
 COPY visual-renderer/test ./test
-RUN npm test
+RUN PPTX_MCP_RUN_DOM_INTEGRATION=1 npm test
 
 FROM build AS test
 ENTRYPOINT ["dotnet", "test", "pptx-mcp.sln", "--configuration", "Release", "--no-build"]
@@ -31,6 +37,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         curl \
+        chromium \
         fonts-liberation \
         fonts-noto-cjk \
         libreoffice-impress \
