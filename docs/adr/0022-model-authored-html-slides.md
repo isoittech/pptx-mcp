@@ -20,6 +20,7 @@
 - 1回のaddでは、各HTML/CSSが完結した連続2〜4ページを渡し、残り1ページだけは単独で渡す。完成HTML/CSSは出力量が大きいため通常は2ページを1batchとし、3〜4ページは短いページだけを完全なtool引数が応答枠へ十分収まる場合に選ぶ。ページ数を増やすための省略は行わない。refineでは問題ページの完成HTML/CSSを丸ごと差し替える。
 - 全ページをdom-to-pptxで変換し、PptxGenJS互換rendererへfallbackしない。job resultの`renderer_usage_by_slide`、`dom_rendered_slide_count`、`fallback_rendered_slide_count`を検収に使う。
 - 既定企業テンプレートでは表紙見本と本文見本のlayoutへDOM overlayを合成する。利用者指定テンプレートには既定見本番号や既定見出し規則を流用しない。
+- 既定企業テンプレートの表紙overlayは、54pxの`cover-title`と27pxの`cover-subtitle`だけを表示する。テンプレート背景を白パネル等で覆わず、機密区分、対象、論点、出典等は本文または発表者ノートへ移す。
 - NTT DATA既定本文規則を有効にした環境では、`slide.title`／`slide.subtitle`と同じ表示文字列を、正確に1個の`h1|h2[data-pptx-role="body-title"]`と正確に1個の単一項目`ul[data-pptx-role="body-claim"]`へ分ける。モデルは最終表示値の50px／27pxで配置を設計し、serverの最終CSSでタイトル30pt相当、主張16pt相当の実箇条書き、ともにAccent 2を保証する。小さい文字で配置してからserver側だけで拡大する不整合は検証で拒否する。
 - 保護roleの文字サイズはrole属性を直接末尾に持つCSS selectorのほか、そのrole要素だけに一意に使われるclass selectorでも検証する。同じclassが通常本文へ再利用されている場合は例外サイズを認めない。HTML上のroleとCSS上の実対象が同じでもclass selectorを使っただけで誤拒否することを避けつつ、12pt相当の出典例外が本文へ波及しないようにする。
 
@@ -36,7 +37,7 @@
 ## 品質確認
 
 - dom-to-pptxが未対応または挙動差のある複雑なCSSは使用せず、変換実績のあるHTML要素、grid、flex、absolute配置、単純なborder／fill／typographyを中心にする。
-- ChromiumとPowerPoint／LibreOfficeの文字メトリクス差に備え、タイトル、主張、次の独立ブロック間に20px以上の見える余白を置き、文字量の多い領域は高さを使い切らず概ね15%の予備を残す。
+- ChromiumとPowerPoint／LibreOfficeの文字メトリクス差に備え、タイトルと主張は同じヘッダー群として8px間隔にし、主張と次の独立ブロック間には20px以上の見える余白を置く。既定本文の`body-claim`は`padding-left:0`へ正規化し、`dom-to-pptx`がリスト左paddingをPowerPointの上insetへ誤写像して主張を不自然に下げることを防ぐ。ネイティブ箇条書きのindentは変換側の既定値を使う。文字量の多い領域は高さを使い切らず概ね15%の予備を残す。
 - 生成後はLibreOfficeで全ページを画像化し、Opusが見切れだけでなく、情報階層、余白、主張、内容密度、原資料忠実性を確認する。ただし画像だけではpt値や実箇条書き構造を判定できないため、Open XMLの構造検査を必ず併用する。LibreOfficeとMicrosoft PowerPointの文字組み・gradient差は区別し、最終表示の正本はPowerPointとする。
 - 独立オブジェクトの接触、本文14pt未満、既定本文タイトル30pt未満、タイトルと主張の結合、fallback発生を検収不合格とする。
 

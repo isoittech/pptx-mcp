@@ -162,7 +162,7 @@ public sealed class VisualDeckDraftService(
             }
 
             var materializedSlides = MaterializePlannedVisualObjects(current, slides, expectedStart);
-            ValidateModelAuthoredDefaultTemplateBody(current, materializedSlides, expectedStart);
+            ValidateModelAuthoredDefaultTemplateStructure(current, materializedSlides, expectedStart);
             ValidateBrandRecipes(current, materializedSlides, expectedStart);
             ValidateImageAssets(caller, current, materializedSlides, expectedStart);
             ValidateVisualObjectAssets(caller, current, materializedSlides, expectedStart);
@@ -184,7 +184,7 @@ public sealed class VisualDeckDraftService(
         }
     }
 
-    private void ValidateModelAuthoredDefaultTemplateBody(
+    private void ValidateModelAuthoredDefaultTemplateStructure(
         DraftState draft,
         IReadOnlyList<VisualSlideSpec> slides,
         int startSlideNumber)
@@ -200,13 +200,22 @@ public sealed class VisualDeckDraftService(
         for (var index = 0; index < slides.Count; index++)
         {
             var slideNumber = startSlideNumber + index;
+            var slide = slides[index];
+            var html = slide.AuthoredHtml?.Html ?? string.Empty;
             if (slideNumber == 1)
             {
+                if (options.DefaultTemplateCoverUsesLightForeground
+                    && (string.IsNullOrWhiteSpace(slide.Subtitle)
+                        || !ContainsAuthoredRole(html, "cover-title")
+                        || !ContainsAuthoredRole(html, "cover-subtitle")))
+                {
+                    throw new PptxValidationException(
+                        "visual_default_cover_contract_required",
+                        "Slide 1 must set a concise subtitle and contain only the visible title and subtitle, using exactly one h1 or h2 with data-pptx-role=\"cover-title\" plus one p with data-pptx-role=\"cover-subtitle\". Move classifications, sources, target audiences, issue lists, and other details to body slides or speaker notes, then retry the same complete batch; no slide in the rejected batch was accepted.");
+                }
                 continue;
             }
 
-            var slide = slides[index];
-            var html = slide.AuthoredHtml?.Html ?? string.Empty;
             if (string.IsNullOrWhiteSpace(slide.Subtitle)
                 || !ContainsAuthoredRole(html, "body-title")
                 || !ContainsAuthoredRole(html, "body-claim"))

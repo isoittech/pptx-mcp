@@ -130,10 +130,11 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
       slide.authoredHtml.css,
       slideNumberOffset + index,
       {
+        requireDefaultCoverContract: defaultTemplateCoverOverlay && slideNumberOffset + index === 0,
         requireDefaultBodyContract: defaultTemplateBodyStyle && slideNumberOffset + index > 0,
         roleClassNames: collectAuthoredRoleClassNames(slide.authoredHtml.html),
       },
-    )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateBodyStyle, templateChrome)}`
+    )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome)}`
     : baseCss(theme);
 
   return `<!doctype html>
@@ -163,6 +164,7 @@ function renderSlide(
       index,
       theme,
       templateChrome,
+      defaultTemplateCoverOverlay,
       defaultTemplateBodyStyle,
       imageAssets,
     );
@@ -209,8 +211,10 @@ const allowedAuthoredHtmlAttributes = new Set([
   "class", "id", "style", "title", "alt", "role", "aria-label", "aria-hidden",
   "colspan", "rowspan", "width", "height", "data-pptx-icon", "data-pptx-asset", "data-pptx-role",
 ]);
-const allowedAuthoredRoles = new Set(["body-title", "body-claim", "source-meta"]);
+const allowedAuthoredRoles = new Set(["cover-title", "cover-subtitle", "body-title", "body-claim", "source-meta"]);
 const authoredRoleFontSizes = Object.freeze({
+  "cover-title": 54,
+  "cover-subtitle": 27,
   "body-title": 50,
   "body-claim": 27,
 });
@@ -220,6 +224,7 @@ function renderModelAuthoredSlide(
   index,
   _theme,
   _templateChrome,
+  defaultTemplateCoverOverlay,
   defaultTemplateBodyStyle,
   imageAssets,
 ) {
@@ -232,6 +237,9 @@ function renderModelAuthoredSlide(
     Array.isArray(authored.assetIds) ? authored.assetIds : [],
     imageAssets,
     {
+      requireDefaultCoverContract: defaultTemplateCoverOverlay && index === 0,
+      expectedCoverTitle: slide.title,
+      expectedCoverSubtitle: slide.subtitle,
       requireDefaultBodyContract: defaultTemplateBodyStyle && index > 0,
       expectedBodyTitle: slide.title,
       expectedBodyClaim: slide.subtitle,
@@ -248,6 +256,9 @@ export function sanitizeAuthoredHtmlFragment(
   declaredAssetIds = [],
   imageAssets = {},
   {
+    requireDefaultCoverContract = false,
+    expectedCoverTitle = "",
+    expectedCoverSubtitle = "",
     requireDefaultBodyContract = false,
     expectedBodyTitle = "",
     expectedBodyClaim = "",
@@ -262,6 +273,7 @@ export function sanitizeAuthoredHtmlFragment(
   const referenced = new Set();
   const roleNodes = new Map();
   let elementCount = 0;
+  let iconCount = 0;
 
   const visit = (node) => {
     if (node.nodeName === "#comment") {
@@ -314,6 +326,7 @@ export function sanitizeAuthoredHtmlFragment(
 
     const iconName = attributes.get("data-pptx-icon");
     if (iconName) {
+      iconCount += 1;
       if (tag === "img") throw new Error("data-pptx-icon must be placed on a container element, not img.");
       const iconFragment = parseFragment(renderApprovedReactIcon(iconName, { color: "currentColor" }));
       node.childNodes = iconFragment.childNodes ?? [];
@@ -346,6 +359,30 @@ export function sanitizeAuthoredHtmlFragment(
 
   if (declared.size !== referenced.size || [...declared].some((assetId) => !referenced.has(assetId))) {
     throw new Error("authoredHtml.assetIds must exactly match the data-pptx-asset references in HTML.");
+  }
+  if (requireDefaultCoverContract) {
+    const titles = roleNodes.get("cover-title") ?? [];
+    const subtitles = roleNodes.get("cover-subtitle") ?? [];
+    if (titles.length !== 1 || !["h1", "h2"].includes(String(titles[0]?.tagName ?? "").toLowerCase())) {
+      throw new Error("A default-template cover must contain exactly one h1 or h2 with data-pptx-role=\"cover-title\".");
+    }
+    if (subtitles.length !== 1 || String(subtitles[0]?.tagName ?? "").toLowerCase() !== "p") {
+      throw new Error("A default-template cover must contain exactly one p with data-pptx-role=\"cover-subtitle\".");
+    }
+    const visibleTitle = normalizeVisibleText(textContent(titles[0]));
+    const visibleSubtitle = normalizeVisibleText(textContent(subtitles[0]));
+    const expectedTitle = normalizeVisibleText(expectedCoverTitle);
+    const expectedSubtitle = normalizeVisibleText(expectedCoverSubtitle);
+    if (!expectedTitle || !expectedSubtitle
+        || visibleTitle !== expectedTitle
+        || visibleSubtitle !== expectedSubtitle) {
+      throw new Error("The default-template cover title and subtitle must be non-empty and exactly match slide.title and slide.subtitle.");
+    }
+    if (normalizeVisibleText(textContent(fragment)) !== normalizeVisibleText(`${expectedTitle}${expectedSubtitle}`)
+        || declared.size > 0
+        || iconCount > 0) {
+      throw new Error("A default-template cover may contain only its title and subtitle, without extra visible copy, images, or icons.");
+    }
   }
   if (requireDefaultBodyContract) {
     const titles = roleNodes.get("body-title") ?? [];
@@ -412,6 +449,10 @@ export function validateAndScopeAuthoredCss(css, slideIndex, options = {}) {
       && (!declaredRoleFontSizes.has("body-title") || !declaredRoleFontSizes.has("body-claim"))) {
     throw new Error("Default-template body CSS must explicitly size body-title at 50px and body-claim plus its li at 27px so the authored layout matches the final PowerPoint.");
   }
+  if (options.requireDefaultCoverContract
+      && (!declaredRoleFontSizes.has("cover-title") || !declaredRoleFontSizes.has("cover-subtitle"))) {
+    throw new Error("Default-template cover CSS must explicitly size cover-title at 54px and cover-subtitle at 27px so the authored layout matches the final PowerPoint.");
+  }
   return scoped;
 }
 
@@ -429,6 +470,8 @@ function classifyAuthoredFontRole(selectors, roleClassNames = {}) {
   });
   const roles = selectors.map((selector) => {
     if (roleSelector("source-meta").test(selector) || classSelector("source-meta", selector)) return "source-meta";
+    if (roleSelector("cover-title").test(selector) || classSelector("cover-title", selector)) return "cover-title";
+    if (roleSelector("cover-subtitle").test(selector) || classSelector("cover-subtitle", selector)) return "cover-subtitle";
     if (roleSelector("body-title").test(selector) || classSelector("body-title", selector)) return "body-title";
     if (roleSelector("body-claim").test(selector)
         || /\[data-pptx-role=(?:"body-claim"|'body-claim'|body-claim)\]\s+li\s*$/u.test(selector)
@@ -539,16 +582,22 @@ body{font-family:"${theme.bodyFont}",sans-serif;color:#${theme.text}}
 `;
 }
 
-function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateBodyStyle, templateChrome) {
+function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome) {
   const rules = [];
   for (let index = 0; index < slides.length; index += 1) {
     const number = slideNumberOffset + index + 1;
     const scope = `.slide[data-author-slide="${number}"]`;
     if (templateChrome) rules.push(`${scope}{background:transparent!important}`);
     rules.push(`${scope} [data-pptx-role="source-meta"]{font-size:20px!important}`);
+    if (defaultTemplateCoverOverlay && number === 1) {
+      rules.push(`${scope} div,${scope} section,${scope} article,${scope} header,${scope} main,${scope} aside{background:transparent!important;border:0!important}`);
+      rules.push(`${scope} [data-pptx-role="cover-title"]{font-size:54px!important;line-height:1.12!important;margin:0!important;color:#fff!important;font-weight:800!important;background:transparent!important;border:0!important}`);
+      rules.push(`${scope} [data-pptx-role="cover-subtitle"]{font-size:27px!important;line-height:1.4!important;margin:14px 0 0!important;color:#f5f7fb!important;font-weight:600!important;background:transparent!important;border:0!important}`);
+    }
     if (defaultTemplateBodyStyle && number > 1) {
-      rules.push(`${scope} [data-pptx-role="body-title"]{font-size:50px!important;color:var(--secondary)!important;font-weight:800!important}`);
-      rules.push(`${scope} [data-pptx-role="body-claim"],${scope} [data-pptx-role="body-claim"] li{font-size:27px!important;color:var(--secondary)!important;font-weight:700!important}`);
+      rules.push(`${scope} [data-pptx-role="body-title"]{font-size:50px!important;line-height:1.1!important;margin:0!important;color:var(--secondary)!important;font-weight:800!important}`);
+      rules.push(`${scope} [data-pptx-role="body-claim"]{font-size:27px!important;margin:8px 0 0!important;padding-left:0!important;color:var(--secondary)!important;font-weight:700!important}`);
+      rules.push(`${scope} [data-pptx-role="body-claim"] li{font-size:27px!important;color:var(--secondary)!important;font-weight:700!important}`);
     }
   }
   return rules.length > 0 ? `\n${rules.join("\n")}` : "";

@@ -144,10 +144,17 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("data-pptx-role=\"source-meta\"", instructions, StringComparison.Ordinal);
         Assert.Contains("data-pptx-role=\"body-title\"", instructions, StringComparison.Ordinal);
         Assert.Contains("data-pptx-role=\"body-claim\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-role=\"cover-title\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-role=\"cover-subtitle\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("cover must show only slide.title and one concise slide.subtitle", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not add a white panel", instructions, StringComparison.Ordinal);
         Assert.Contains("50px (30pt)", instructions, StringComparison.Ordinal);
         Assert.Contains("27px (about 16pt)", instructions, StringComparison.Ordinal);
         Assert.Contains("body-title must use exactly 50px", instructions, StringComparison.Ordinal);
         Assert.Contains("body-claim plus its li must use exactly 27px", instructions, StringComparison.Ordinal);
+        Assert.Contains("Do not add left padding to the required body-claim ul", instructions, StringComparison.Ordinal);
+        Assert.Contains("use an 8px vertical gap between them", instructions, StringComparison.Ordinal);
+        Assert.Contains("at least 20px of visible whitespace between the claim and the next independent block", instructions, StringComparison.Ordinal);
         Assert.Contains("Reserve a clear lower safe area", instructions, StringComparison.Ordinal);
         Assert.Contains("shorten visible copy and move supporting detail to speaker notes", instructions, StringComparison.Ordinal);
     }

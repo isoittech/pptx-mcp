@@ -267,6 +267,38 @@ public sealed class VisualDeckDraftServiceTests
     }
 
     [Fact]
+    public void DefaultTemplateCoverRequiresOnlySemanticTitleAndSubtitle()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "organization-default",
+            defaultTemplateBodyUsesAccent2Headings: true,
+            defaultTemplateCoverUsesLightForeground: true);
+        var started = service.Begin(Caller, "HTML表紙契約", 2, null, null, "ja-JP", null);
+
+        var exception = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("表紙"),
+                CreateAuthoredSlide("本文", "主張", includeBodyRoles: true),
+            ]));
+
+        Assert.Equal("visual_default_cover_contract_required", exception.Code);
+
+        var accepted = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("表紙", "副題", includeCoverRoles: true),
+                CreateAuthoredSlide("本文", "主張", includeBodyRoles: true),
+            ]);
+        Assert.Equal(0, accepted.RemainingSlideCount);
+    }
+
+    [Fact]
     public void AlternateTemplateDoesNotInheritDefaultBodyHeadingContract()
     {
         var service = CreateService(
@@ -296,7 +328,8 @@ public sealed class VisualDeckDraftServiceTests
         int maximumSlides = 50,
         bool useModelAuthoredHtmlRenderer = false,
         string defaultTemplateId = "",
-        bool defaultTemplateBodyUsesAccent2Headings = false) =>
+        bool defaultTemplateBodyUsesAccent2Headings = false,
+        bool defaultTemplateCoverUsesLightForeground = false) =>
         new(
             Options.Create(new PptxMcpOptions
             {
@@ -304,19 +337,23 @@ public sealed class VisualDeckDraftServiceTests
                 UseModelAuthoredHtmlRenderer = useModelAuthoredHtmlRenderer,
                 DefaultTemplateId = defaultTemplateId,
                 DefaultTemplateBodyUsesAccent2Headings = defaultTemplateBodyUsesAccent2Headings,
+                DefaultTemplateCoverUsesLightForeground = defaultTemplateCoverUsesLightForeground,
             }),
             TimeProvider.System);
 
     private static VisualSlideSpec CreateAuthoredSlide(
         string title,
         string? subtitle = null,
-        bool includeBodyRoles = false) =>
+        bool includeBodyRoles = false,
+        bool includeCoverRoles = false) =>
         new(
             VisualSlideKind.StructuredBrief,
             title,
             Subtitle: subtitle,
             AuthoredHtml: new VisualAuthoredHtmlSpec(
-                includeBodyRoles
+                includeCoverRoles
+                    ? $"<div><h1 data-pptx-role=\"cover-title\">{title}</h1><p data-pptx-role=\"cover-subtitle\">{subtitle}</p></div>"
+                    : includeBodyRoles
                     ? $"<div><h2 data-pptx-role=\"body-title\">{title}</h2><ul data-pptx-role=\"body-claim\"><li>{subtitle}</li></ul></div>"
                     : $"<div><h2>{title}</h2></div>",
                 ".slide{padding:64px}.slide h2{font-size:40px}"));

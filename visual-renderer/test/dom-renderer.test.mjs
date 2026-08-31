@@ -298,11 +298,50 @@ test("default-template compliance styles are appended after the AI-authored desi
   });
 
   const authoredTitleRule = html.indexOf(`.slide[data-author-slide="2"] [data-pptx-role="body-title"]{font-size:50px}`);
-  const complianceTitleRule = html.lastIndexOf(`.slide[data-author-slide="2"] [data-pptx-role="body-title"]{font-size:50px!important`);
-  const complianceClaimRule = html.lastIndexOf(`.slide[data-author-slide="2"] [data-pptx-role="body-claim"],.slide[data-author-slide="2"] [data-pptx-role="body-claim"] li{font-size:27px!important`);
+  const complianceTitleRule = html.lastIndexOf(`.slide[data-author-slide="2"] [data-pptx-role="body-title"]{font-size:50px!important;line-height:1.1!important;margin:0!important`);
+  const complianceClaimRule = html.lastIndexOf(`.slide[data-author-slide="2"] [data-pptx-role="body-claim"]{font-size:27px!important;margin:8px 0 0!important;padding-left:0!important`);
   assert.ok(authoredTitleRule >= 0);
   assert.ok(complianceTitleRule > authoredTitleRule);
   assert.ok(complianceClaimRule > authoredTitleRule);
+});
+
+test("model-authored default cover is limited to a simple title and subtitle overlay", () => {
+  const specification = {
+    title: "既定表紙",
+    rendererContract: "visual-v7-author-html",
+    templateChrome: true,
+    defaultTemplateCoverOverlay: true,
+    theme: { preset: "minimal" },
+    slides: [{
+      kind: "Title",
+      title: "生成AIに秘密情報を入力してよいか",
+      subtitle: "NDAの二つの論点から考える",
+      authoredHtml: {
+        html: `<div class="cover"><h1 data-pptx-role="cover-title">生成AIに秘密情報を入力してよいか</h1><p data-pptx-role="cover-subtitle">NDAの二つの論点から考える</p></div>`,
+        css: `.slide .cover{padding:260px 110px;background:#fff}.slide [data-pptx-role="cover-title"]{font-size:54px}.slide [data-pptx-role="cover-subtitle"]{font-size:27px}`,
+        assetIds: [],
+      },
+    }],
+  };
+
+  const html = buildDomDeckHtml(specification);
+  assert.match(html, /data-pptx-role="cover-title"/u);
+  assert.match(html, /data-pptx-role="cover-subtitle"/u);
+  assert.match(html, /div,[^\n]+section,[^\n]+article,[^\n]+header,[^\n]+main,[^\n]+aside\{background:transparent!important;border:0!important\}/u);
+  assert.match(html, /data-pptx-role="cover-title"\]\{font-size:54px!important/u);
+  assert.throws(
+    () => buildDomDeckHtml({
+      ...specification,
+      slides: [{
+        ...specification.slides[0],
+        authoredHtml: {
+          ...specification.slides[0].authoredHtml,
+          html: `${specification.slides[0].authoredHtml.html}<p>対象：法務担当者</p>`,
+        },
+      }],
+    }),
+    /may contain only its title and subtitle/u,
+  );
 });
 
 test("default-template role sizes accept unique classes on the protected HTML elements", () => {
@@ -674,20 +713,37 @@ test("model-authored HTML/CSS is converted without replacing the AI composition"
       title: "AI HTML integration",
       rendererContract: "visual-v7-author-html",
       templateChrome: true,
+      defaultTemplateBodyStyle: true,
       theme: { preset: "minimal", secondaryColor: "005B96", accentColor: "0072BC" },
-      slides: [{
-        kind: "NativeDiagram",
-        title: "NDAは「契約」であり結論は条文次第",
-        authoredHtml: {
-          html: `<div class="page"><h1>NDAは「契約」であり結論は条文次第</h1><ul class="claim"><li>共通して問題になるのは目的外利用と第三者開示の2条項</li></ul><div class="diagram"><div class="premise">前提：NDAは契約</div><div class="branch"><div class="node">目的外利用の禁止</div><div class="node">第三者開示の禁止</div></div><div class="icon" data-pptx-icon="decision" aria-label="判断"></div></div></div>`,
-          css: `.slide{background:transparent;padding:68px 78px}.slide h1{margin:0;color:var(--secondary);font-size:50px;line-height:1.1}.slide .claim{margin:12px 0 0;padding-left:30px;color:var(--secondary);font-size:27px}.slide .diagram{position:relative;margin:55px auto 0;width:1120px;height:500px}.slide .premise{margin:0 auto;width:360px;padding:24px;background:var(--secondary);color:white;border-radius:10px;text-align:center;font-size:24px;font-weight:700}.slide .branch{display:grid;grid-template-columns:1fr 1fr;gap:120px;margin-top:96px}.slide .node{min-height:130px;padding:30px;border:2px solid var(--secondary);border-radius:10px;background:#EAF3F8;text-align:center;font-size:24px;font-weight:700}.slide .icon{position:absolute;right:8px;bottom:8px;width:56px;height:56px;color:var(--accent)}`,
-          assetIds: [],
+      slides: [
+        {
+          kind: "NativeDiagram",
+          title: "NDAは「契約」であり結論は条文次第",
+          authoredHtml: {
+            html: `<div class="page"><h1>NDAは「契約」であり結論は条文次第</h1><ul class="claim"><li>共通して問題になるのは目的外利用と第三者開示の2条項</li></ul><div class="diagram"><div class="premise">前提：NDAは契約</div><div class="branch"><div class="node">目的外利用の禁止</div><div class="node">第三者開示の禁止</div></div><div class="icon" data-pptx-icon="decision" aria-label="判断"></div></div></div>`,
+            css: `.slide{background:transparent;padding:68px 78px}.slide h1{margin:0;color:var(--secondary);font-size:50px;line-height:1.1}.slide .claim{margin:12px 0 0;padding-left:30px;color:var(--secondary);font-size:27px}.slide .diagram{position:relative;margin:55px auto 0;width:1120px;height:500px}.slide .premise{margin:0 auto;width:360px;padding:24px;background:var(--secondary);color:white;border-radius:10px;text-align:center;font-size:24px;font-weight:700}.slide .branch{display:grid;grid-template-columns:1fr 1fr;gap:120px;margin-top:96px}.slide .node{min-height:130px;padding:30px;border:2px solid var(--secondary);border-radius:10px;background:#EAF3F8;text-align:center;font-size:24px;font-weight:700}.slide .icon{position:absolute;right:8px;bottom:8px;width:56px;height:56px;color:var(--accent)}`,
+            assetIds: [],
+          },
+          speakerNotes: {
+            purpose: "NDAの共通論点を分けて示す。",
+            talkScript: "NDAは契約であり、結論は条文によって変わります。共通論点を二つに分けて説明します。",
+          },
         },
-        speakerNotes: {
-          purpose: "NDAの共通論点を分けて示す。",
-          talkScript: "NDAは契約であり、結論は条文によって変わります。共通論点を二つに分けて説明します。",
+        {
+          kind: "Comparison",
+          title: "本文タイトル",
+          subtitle: "本文を補足する主張",
+          authoredHtml: {
+            html: `<div class="body"><h2 data-pptx-role="body-title">本文タイトル</h2><ul class="body-claim" data-pptx-role="body-claim"><li>本文を補足する主張</li></ul><div class="content">本文ブロック</div></div>`,
+            css: `.slide .body{padding:44px 100px}.slide [data-pptx-role="body-title"]{font-size:50px}.slide .body-claim{font-size:27px;padding-left:30px}.slide .body-claim li{font-size:27px}.slide .content{font-size:24px;margin-top:28px}`,
+            assetIds: [],
+          },
+          speakerNotes: {
+            purpose: "本文見出しの変換差を確認する。",
+            talkScript: "タイトルと主張の間隔、および箇条書きの上余白を確認します。",
+          },
         },
-      }],
+      ],
     }), "utf8");
 
     const execution = await executeFile(process.execPath, [rendererPath, specificationPath, outputPath], {
@@ -702,11 +758,16 @@ test("model-authored HTML/CSS is converted without replacing the AI composition"
     assert.doesNotMatch(generatedHtml, /class="accent-rail"/u);
     const archive = await JSZip.loadAsync(await readFile(outputPath));
     const slide = await archive.file("ppt/slides/slide1.xml")?.async("string") ?? "";
+    const bodySlide = await archive.file("ppt/slides/slide2.xml")?.async("string") ?? "";
     const notes = await archive.file("ppt/notesSlides/notesSlide1.xml")?.async("string") ?? "";
     assert.match(slide, /NDAは「契約」であり結論は条文次第/u);
     assert.match(slide, /目的外利用の禁止/u);
     assert.match(slide, /第三者開示の禁止/u);
     assert.match(slide, /<a:buChar char="•"\/>/u);
+    const claimShape = (bodySlide.match(/<p:sp>.*?<\/p:sp>/gu) ?? [])
+      .find((shape) => shape.includes("本文を補足する主張"));
+    assert.ok(claimShape, "the protected body claim must remain an editable bullet");
+    assert.match(claimShape, /<a:bodyPr[^>]*\btIns="0"/u);
     assert.match(notes, /NDAの共通論点を分けて示す/u);
   } finally {
     await rm(workingDirectory, { recursive: true, force: true });
