@@ -73,3 +73,7 @@ public sealed record BrandedVisualCompositionResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
     [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId,
     [property: JsonPropertyName("template_layout_name")] string TemplateLayoutName);
+
+public sealed record TemplateLayoutRolePolicy(
+    int CoverSampleSlideNumber,
+    int BodySampleSlideNumber);

@@ -82,6 +82,92 @@ internal static class TestPresentationFactory
         return path;
     }
 
+    public static string CreateBrandedTemplateWithSampleLayouts()
+    {
+        var path = CreateBlankBrandedTemplate();
+        using var document = PresentationDocument.Open(path, true);
+        var presentationPart = document.PresentationPart!;
+        var presentation = presentationPart.Presentation!;
+        var masterPart = presentationPart.SlideMasterParts.Single();
+        var layoutIdList = masterPart.SlideMaster!.SlideLayoutIdList!;
+        var slideIdList = presentation.SlideIdList!;
+        var firstLayout = masterPart.SlideLayoutParts.Single();
+        firstLayout.SlideLayout!.CommonSlideData!.Name = "Sample Layout 1";
+        firstLayout.SlideLayout.Save();
+
+        for (var sampleNumber = 2; sampleNumber <= 4; sampleNumber++)
+        {
+            var layoutPart = masterPart.AddNewPart<SlideLayoutPart>();
+            layoutPart.SlideLayout = new P.SlideLayout(
+                new P.CommonSlideData(CreateShapeTree(CreateShape(
+                    [$"SAMPLE {sampleNumber} CHROME"],
+                    isPlaceholder: false)))
+                {
+                    Name = $"Sample Layout {sampleNumber}",
+                },
+                new P.ColorMapOverride(new A.MasterColorMapping()))
+            {
+                Type = P.SlideLayoutValues.Blank,
+                Preserve = true,
+            };
+            layoutPart.AddPart(masterPart);
+            layoutPart.SlideLayout.Save();
+            layoutIdList.Append(new P.SlideLayoutId
+            {
+                Id = 2_147_483_648U + (uint)sampleNumber,
+                RelationshipId = masterPart.GetIdOfPart(layoutPart),
+            });
+
+            var slidePart = presentationPart.AddNewPart<SlidePart>();
+            slidePart.AddPart(layoutPart);
+            slidePart.Slide = new P.Slide(
+                new P.CommonSlideData(CreateShapeTree(CreateShape(
+                    [$"TEMPLATE SAMPLE {sampleNumber}"],
+                    isPlaceholder: false))),
+                new P.ColorMapOverride(new A.MasterColorMapping()));
+            slidePart.Slide.Save();
+            slideIdList.Append(new P.SlideId
+            {
+                Id = 255U + (uint)sampleNumber,
+                RelationshipId = presentationPart.GetIdOfPart(slidePart),
+            });
+        }
+
+        masterPart.SlideMaster.Save();
+        presentation.Save();
+        return path;
+    }
+
+    public static string CreateSlides(params string[] slideTexts)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(slideTexts.Length);
+        var path = Create(slideTexts[0]);
+        using var document = PresentationDocument.Open(path, true);
+        var presentationPart = document.PresentationPart!;
+        var presentation = presentationPart.Presentation!;
+        var slideIdList = presentation.SlideIdList!;
+        var layoutPart = presentationPart.SlideParts.Single().SlideLayoutPart!;
+        for (var index = 1; index < slideTexts.Length; index++)
+        {
+            var slidePart = presentationPart.AddNewPart<SlidePart>();
+            slidePart.AddPart(layoutPart);
+            slidePart.Slide = new P.Slide(
+                new P.CommonSlideData(CreateShapeTree(CreateShape(
+                    [slideTexts[index]],
+                    isPlaceholder: false))),
+                new P.ColorMapOverride(new A.MasterColorMapping()));
+            slidePart.Slide.Save();
+            slideIdList.Append(new P.SlideId
+            {
+                Id = 256U + (uint)index,
+                RelationshipId = presentationPart.GetIdOfPart(slidePart),
+            });
+        }
+
+        presentation.Save();
+        return path;
+    }
+
     public static string CreateWithTable(string shapeText, params string[] cellTexts)
     {
         var path = Create(shapeText);

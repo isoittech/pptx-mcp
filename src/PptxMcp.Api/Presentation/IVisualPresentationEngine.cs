@@ -8,5 +8,7 @@ public interface IVisualPresentationEngine
         string destinationPath,
         VisualDeckSpec deck,
         bool useTemplateChrome,
+        bool useDefaultTemplateCoverOverlay,
+        bool useDefaultTemplateBodyStyle,
         CancellationToken cancellationToken);
 }

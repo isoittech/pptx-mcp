@@ -450,7 +450,8 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         string visualDeckPath,
         string destinationPath,
         string templateLayoutId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TemplateLayoutRolePolicy? layoutRolePolicy = null)
     {
         if (string.IsNullOrWhiteSpace(templateLayoutId) || templateLayoutId.Length > MaxSelectorCharacters)
         {
@@ -467,7 +468,13 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         var destinationPresentationPart = GetPresentationPart(destinationDocument);
         EnsureCompatibleSlideSize(visualPresentationPart, destinationPresentationPart);
 
-        var selectedLayout = SelectBrandedVisualLayout(destinationPresentationPart, templateLayoutId);
+        (SlideLayoutPart Cover, SlideLayoutPart Body)? roleLayouts = layoutRolePolicy is not null
+            && string.Equals(templateLayoutId, "auto", StringComparison.OrdinalIgnoreCase)
+            ? SelectTemplateRoleLayouts(destinationPresentationPart, layoutRolePolicy)
+            : null;
+        var selectedLayout = roleLayouts?.Body
+            ?? SelectBrandedVisualLayout(destinationPresentationPart, templateLayoutId);
+        var coverLayout = roleLayouts?.Cover ?? selectedLayout;
         var layoutName = selectedLayout.SlideLayout?.CommonSlideData?.Name?.Value ?? string.Empty;
         var visualSlides = GetSlides(visualPresentationPart).ToArray();
         if (visualSlides.Length is <= 0 or > 50)
@@ -518,15 +525,16 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 importedSlide.DeletePart(generatedNotesSlide);
             }
 
+            var slideLayout = index == 0 ? coverLayout : selectedLayout;
             var importedLayout = importedSlide.SlideLayoutPart;
-            if (importedLayout is not null && !ReferenceEquals(importedLayout, selectedLayout))
+            if (importedLayout is not null && !ReferenceEquals(importedLayout, slideLayout))
             {
                 importedSlide.DeletePart(importedLayout);
             }
 
-            if (!ReferenceEquals(importedSlide.SlideLayoutPart, selectedLayout))
+            if (!ReferenceEquals(importedSlide.SlideLayoutPart, slideLayout))
             {
-                importedSlide.AddPart(selectedLayout);
+                importedSlide.AddPart(slideLayout);
             }
 
             if (speakerNotes[index] is { } notes)
@@ -636,6 +644,33 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
         }
 
         return selected;
+    }
+
+    private static (SlideLayoutPart Cover, SlideLayoutPart Body) SelectTemplateRoleLayouts(
+        PresentationPart presentationPart,
+        TemplateLayoutRolePolicy policy)
+    {
+        var templateSlides = GetSlides(presentationPart).ToArray();
+        if (policy.CoverSampleSlideNumber < 1
+            || policy.CoverSampleSlideNumber > templateSlides.Length
+            || policy.BodySampleSlideNumber < 1
+            || policy.BodySampleSlideNumber > templateSlides.Length)
+        {
+            throw new PptxValidationException(
+                "template_role_slide_not_found",
+                "The configured default-template cover/body sample slide was not found.");
+        }
+
+        var cover = templateSlides[policy.CoverSampleSlideNumber - 1].SlideLayoutPart;
+        var body = templateSlides[policy.BodySampleSlideNumber - 1].SlideLayoutPart;
+        if (cover is null || body is null)
+        {
+            throw new PptxValidationException(
+                "template_role_layout_missing",
+                "The configured default-template cover/body sample slide has no layout.");
+        }
+
+        return (cover, body);
     }
 
     private static int ScoreBrandedVisualLayout(SlideLayoutPart layout)

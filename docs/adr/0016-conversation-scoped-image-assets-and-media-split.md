@@ -22,7 +22,7 @@ Asset Planは写真・イラストの必要性、取得元、権利、crop、tex
 - `VisualSlideKind.Media`と`VisualMediaSpec`を追加する。最初の実装variantは`split`だけとし、実asset ID、crop intent、text positionを必須にする。空欄、仮画像、URL、pathはMedia payloadとして表現できない。
 - draft追加時とjob submit/refine時にuser/conversation ownershipと期限を再検証する。Brand Profile-bound deckではAsset Planのasset ID、crop、text safe area、attributionと一致させ、refineでも固定する。
 - rendererへはserver-owned asset metadataとrootを別経路で渡し、SHA-256を再検証してdata URIとしてPPTX packageへ埋め込む。外部relationshipを作らない。alt textはPowerPointのpicture descriptionへ設定する。
-- PptxGenJS配下の`image-size`にはICNS／JXL／HEIF parserのDoS advisoryが残る。rendererはSHA-256に加えてPNG signature、IHDR、宣言寸法を再検証し、対象形式をparserへ到達させない。依存監査警告は到達不能化だけで解消済みとせず、上流更新を追跡する。
+- PptxGenJS 4.0.1が宣言する未使用の`image-size`は、parserを含まず全呼出しを拒否するローカル互換shimへ固定する。rendererはSHA-256に加えてPNG signature、IHDR、宣言寸法を再検証し、URL、path、原upload、ICNS、JXL、HEIFを到達させない多層防御も維持する。
 - cropは`contain`、`cover`、`focalCenter`、`focalLeft`、`focalRight`を実装し、text positionはleft/rightとする。画像が利用不能ならMediaを完成扱いせず、native diagramまたは画像なしrecipeへ戻す。
 - deckあたりassetは20件、無害化済みbytes合計64MiBまでとする。登録時の画像形式検査と、renderer時のintegrity検査を別々に維持する。
 

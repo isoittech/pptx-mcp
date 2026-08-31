@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using PptxMcp.Configuration;
 using PptxMcp.Domain;
@@ -13,6 +14,8 @@ public sealed class VisualDeckDraftService(
     VisualObjectAssetRepository? visualObjectAssets = null)
 {
     public const int MaximumBatchSlides = 4;
+    public const int ModelAuthoredMinimumBatchSlides = 2;
+    public const int ModelAuthoredMaximumBatchSlides = 4;
     private const int MaximumActiveDrafts = 128;
     private static readonly TimeSpan DraftLifetime = TimeSpan.FromHours(1);
     private readonly ConcurrentDictionary<string, DraftState> drafts = new(StringComparer.Ordinal);
@@ -128,11 +131,28 @@ public sealed class VisualDeckDraftService(
                 "visual_draft_batch_invalid",
                 $"Provide between 1 and {MaximumBatchSlides} complete slides per draft batch.");
         }
+        if (options.UseModelAuthoredHtmlRenderer && slides.Count > ModelAuthoredMaximumBatchSlides)
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_batch_too_large",
+                $"visual-v7-author-html accepts at most {ModelAuthoredMaximumBatchSlides} complete slides per add call. Keep every HTML/CSS composition complete and retry the current bounded batch.");
+        }
 
         while (true)
         {
             var current = GetOwned(caller, draftId);
             EnsureCollecting(current);
+            if (options.UseModelAuthoredHtmlRenderer)
+            {
+                var remainingSlides = current.ExpectedSlideCount - current.Slides.Count;
+                var minimumBatchSlides = Math.Min(ModelAuthoredMinimumBatchSlides, remainingSlides);
+                if (slides.Count < minimumBatchSlides)
+                {
+                    throw new PptxValidationException(
+                        "visual_authored_html_batch_too_small",
+                        $"This visual-v7-author-html draft accepts {minimumBatchSlides} to {Math.Min(ModelAuthoredMaximumBatchSlides, remainingSlides)} consecutive complete slides in this add call. Send at least slides {current.Slides.Count + 1} through {current.Slides.Count + minimumBatchSlides} together without truncating any page HTML/CSS. A single slide is accepted only when it is the final remaining page.");
+                }
+            }
             var expectedStart = current.Slides.Count + 1;
             if (startSlideNumber.HasValue && startSlideNumber.Value != expectedStart)
             {
@@ -142,6 +162,7 @@ public sealed class VisualDeckDraftService(
             }
 
             var materializedSlides = MaterializePlannedVisualObjects(current, slides, expectedStart);
+            ValidateModelAuthoredDefaultTemplateStructure(current, materializedSlides, expectedStart);
             ValidateBrandRecipes(current, materializedSlides, expectedStart);
             ValidateImageAssets(caller, current, materializedSlides, expectedStart);
             ValidateVisualObjectAssets(caller, current, materializedSlides, expectedStart);
@@ -162,6 +183,54 @@ public sealed class VisualDeckDraftService(
             }
         }
     }
+
+    private void ValidateModelAuthoredDefaultTemplateStructure(
+        DraftState draft,
+        IReadOnlyList<VisualSlideSpec> slides,
+        int startSlideNumber)
+    {
+        if (!options.UseModelAuthoredHtmlRenderer
+            || !options.DefaultTemplateBodyUsesAccent2Headings
+            || string.IsNullOrWhiteSpace(options.DefaultTemplateId)
+            || !string.Equals(draft.TemplateSourceFileId, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        for (var index = 0; index < slides.Count; index++)
+        {
+            var slideNumber = startSlideNumber + index;
+            var slide = slides[index];
+            var html = slide.AuthoredHtml?.Html ?? string.Empty;
+            if (slideNumber == 1)
+            {
+                if (options.DefaultTemplateCoverUsesLightForeground
+                    && (string.IsNullOrWhiteSpace(slide.Subtitle)
+                        || !ContainsAuthoredRole(html, "cover-title")
+                        || !ContainsAuthoredRole(html, "cover-subtitle")))
+                {
+                    throw new PptxValidationException(
+                        "visual_default_cover_contract_required",
+                        "Slide 1 must set a concise subtitle and contain only the visible title and subtitle, using exactly one h1 or h2 with data-pptx-role=\"cover-title\" plus one p with data-pptx-role=\"cover-subtitle\". Move classifications, sources, target audiences, issue lists, and other details to body slides or speaker notes, then retry the same complete batch; no slide in the rejected batch was accepted.");
+                }
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(slide.Subtitle)
+                || !ContainsAuthoredRole(html, "body-title")
+                || !ContainsAuthoredRole(html, "body-claim"))
+            {
+                throw new PptxValidationException(
+                    "visual_default_body_heading_contract_required",
+                    $"Slide {slideNumber} must set a separate subtitle claim and include exactly one h1 or h2 with data-pptx-role=\"body-title\" plus one single-item ul with data-pptx-role=\"body-claim\". Copy the visible title and claim into slide.title and slide.subtitle, then retry the same complete batch; no slide in the rejected batch was accepted.");
+            }
+        }
+    }
+
+    private static bool ContainsAuthoredRole(string html, string role) => Regex.IsMatch(
+        html,
+        $"""\bdata-pptx-role\s*=\s*["']{Regex.Escape(role)}["']""",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static IReadOnlyList<VisualSlideSpec> MaterializePlannedVisualObjects(
         DraftState draft,
@@ -322,7 +391,7 @@ public sealed class VisualDeckDraftService(
             draft.Subject,
             draft.Language,
             draft.Design,
-            "visual-v5",
+            options.UseModelAuthoredHtmlRenderer ? "visual-v7-author-html" : "visual-v6-dom",
             CreatePersistedBrandBinding(draft),
             CreateVisualObjectSnapshots(draft, slides));
 
@@ -544,29 +613,59 @@ public sealed class VisualDeckDraftService(
                         "visual_media_required",
                         $"Slide {slideNumber} must include media.assetId={missingMediaPlan.AssetId}; an empty image placeholder is not a completed slide.");
                 }
+            }
+            else
+            {
+                if (imageAssets is null)
+                {
+                    throw new PptxValidationException(
+                        "visual_media_unavailable",
+                        "Image asset resolution is unavailable in this server configuration.");
+                }
 
+                var asset = imageAssets.GetOwned(caller, slide.Media.AssetId);
+                if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true)
+                {
+                    if (!string.Equals(plan.AssetId, slide.Media.AssetId, StringComparison.Ordinal)
+                        || !string.Equals(plan.CropIntent, slide.Media.CropIntent, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(plan.TextSafeArea, slide.Media.TextPosition, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(plan.AttributionRef, asset.AttributionRef, StringComparison.Ordinal))
+                    {
+                        throw new PptxValidationException(
+                            "visual_media_asset_plan_mismatch",
+                            $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
+                    }
+                }
+            }
+
+            var artifactIds = slide.ArtifactShowcase?.Groups
+                .SelectMany(static group => group.Artifacts)
+                .Select(static artifact => artifact.AssetId)
+                .ToArray() ?? [];
+            if (artifactIds.Length == 0)
+            {
                 continue;
             }
 
             if (imageAssets is null)
             {
                 throw new PptxValidationException(
-                    "visual_media_unavailable",
+                    "visual_artifact_assets_unavailable",
                     "Image asset resolution is unavailable in this server configuration.");
             }
 
-            var asset = imageAssets.GetOwned(caller, slide.Media.AssetId);
-            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var plan) == true)
+            foreach (var artifactId in artifactIds)
             {
-                if (!string.Equals(plan.AssetId, slide.Media.AssetId, StringComparison.Ordinal)
-                    || !string.Equals(plan.CropIntent, slide.Media.CropIntent, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(plan.TextSafeArea, slide.Media.TextPosition, StringComparison.OrdinalIgnoreCase)
-                    || !string.Equals(plan.AttributionRef, asset.AttributionRef, StringComparison.Ordinal))
-                {
-                    throw new PptxValidationException(
-                        "visual_media_asset_plan_mismatch",
-                        $"Slide {slideNumber}.media must preserve the asset_id, crop_intent, text_safe_area, and attribution_ref fixed by the validated Asset Plan.");
-                }
+                imageAssets.GetOwned(caller, artifactId);
+            }
+
+            if (draft.DesignBrief?.AssetPlan.TryGetValue(slideNumber, out var artifactPlan) == true
+                && artifactPlan.AssetId is { } plannedAssetId
+                && !artifactIds.Contains(plannedAssetId, StringComparer.Ordinal))
+            {
+                throw new PptxValidationException(
+                    "visual_artifact_asset_plan_mismatch",
+                    $"Slide {slideNumber}.artifactShowcase must contain the primary asset_id fixed by the validated Asset Plan.");
             }
         }
     }
@@ -665,13 +764,22 @@ public sealed class VisualDeckDraftService(
         }
     }
 
-    private static VisualDeckDraftView CreateView(DraftState draft)
+    private VisualDeckDraftView CreateView(DraftState draft)
     {
         var accepted = draft.Slides.Count;
         var remaining = draft.ExpectedSlideCount - accepted;
-        var instruction = remaining == 0
-            ? "All requested slides are accepted. Call the appropriate pptx_finish_* tool once with this draft_id."
-            : $"Call pptx_add_visual_slides_to_draft with this draft_id and the next 1-{Math.Min(MaximumBatchSlides, remaining)} slides. Omit startSlideNumber; the server will append at slide {accepted + 1}.";
+        var configuredMaximumBatchSlides = options.UseModelAuthoredHtmlRenderer
+            ? ModelAuthoredMaximumBatchSlides
+            : MaximumBatchSlides;
+        var maximumNextSlides = Math.Min(configuredMaximumBatchSlides, remaining);
+        var instruction = remaining switch
+        {
+            0 => "All requested slides are accepted. Call the appropriate pptx_finish_* tool once with this draft_id.",
+            1 => $"Call pptx_add_visual_slides_to_draft with this draft_id and the final complete slide. Omit startSlideNumber; the server will append at slide {accepted + 1}.",
+            _ when options.UseModelAuthoredHtmlRenderer && maximumNextSlides > 2 => $"Call pptx_add_visual_slides_to_draft with this draft_id and the next 2 consecutive complete slides. Only send 3 to {maximumNextSlides} when every slide is concise and the complete HTML/CSS tool call will comfortably fit the response budget. Omit startSlideNumber; the server will append at slide {accepted + 1}.",
+            _ when options.UseModelAuthoredHtmlRenderer => $"Call pptx_add_visual_slides_to_draft with this draft_id and the next 2 consecutive complete slides. Omit startSlideNumber; the server will append at slide {accepted + 1}.",
+            _ => $"Call pptx_add_visual_slides_to_draft with this draft_id and up to the next {maximumNextSlides} complete slides. Omit startSlideNumber; the server will append at slide {accepted + 1}.",
+        };
         return new VisualDeckDraftView(
             draft.Id,
             "draft",
@@ -679,7 +787,7 @@ public sealed class VisualDeckDraftService(
             accepted,
             accepted + 1,
             remaining,
-            MaximumBatchSlides,
+            configuredMaximumBatchSlides,
             draft.TemplateSourceFileId,
             draft.TemplateLayoutId,
             true,

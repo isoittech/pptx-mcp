@@ -64,6 +64,7 @@ public sealed class PresentationAnalysisCacheTests
             string visualDeckPath,
             string destinationPath,
             string templateLayoutId,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
+            CancellationToken cancellationToken,
+            TemplateLayoutRolePolicy? layoutRolePolicy = null) => throw new NotSupportedException();
     }
 }

@@ -29,5 +29,6 @@ public interface IPresentationEngine
         string visualDeckPath,
         string destinationPath,
         string templateLayoutId,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        TemplateLayoutRolePolicy? layoutRolePolicy = null);
 }

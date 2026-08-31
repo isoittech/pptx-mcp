@@ -421,6 +421,47 @@ public sealed class OpenXmlPresentationEngineTests
     }
 
     [Fact]
+    public async Task UsesConfiguredSampleSlideLayoutsForCoverAndBody()
+    {
+        var template = TestPresentationFactory.CreateBrandedTemplateWithSampleLayouts();
+        var visual = TestPresentationFactory.CreateSlides("COVER CONTENT", "BODY CONTENT");
+        var destination = Path.Combine(Path.GetTempPath(), $"pptx-mcp-{Guid.NewGuid():N}.pptx");
+        try
+        {
+            await new OpenXmlPresentationEngine().CreateBrandedVisualDeckAsync(
+                template,
+                visual,
+                destination,
+                "auto",
+                CancellationToken.None,
+                new TemplateLayoutRolePolicy(2, 4));
+
+            using var document = PresentationDocument.Open(destination, false);
+            var presentationPart = document.PresentationPart!;
+            var slides = presentationPart.Presentation!.SlideIdList!
+                .Elements<P.SlideId>()
+                .Select(slideId => (SlidePart)presentationPart.GetPartById(slideId.RelationshipId!))
+                .ToArray();
+
+            Assert.Equal(2, slides.Length);
+            Assert.Equal("Sample Layout 2", slides[0].SlideLayoutPart!.SlideLayout!.CommonSlideData!.Name!.Value);
+            Assert.Equal("Sample Layout 4", slides[1].SlideLayoutPart!.SlideLayout!.CommonSlideData!.Name!.Value);
+            Assert.Contains(
+                "SAMPLE 2 CHROME",
+                slides[0].SlideLayoutPart!.SlideLayout!.Descendants<A.Text>().Select(static text => text.Text));
+            Assert.Contains(
+                "SAMPLE 4 CHROME",
+                slides[1].SlideLayoutPart!.SlideLayout!.Descendants<A.Text>().Select(static text => text.Text));
+        }
+        finally
+        {
+            File.Delete(template);
+            File.Delete(visual);
+            File.Delete(destination);
+        }
+    }
+
+    [Fact]
     public async Task RejectsPlaceholderLayoutForBrandedVisualComposition()
     {
         var template = TestPresentationFactory.Create("template guide");

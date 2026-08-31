@@ -285,7 +285,11 @@ internal static class PptxGenJsOpenXmlNormalizer
 
         foreach (var tableCellProperties in slide.Descendants<A.TableCellProperties>())
         {
-            var anchor = tableCellProperties.GetAttribute("anchor", string.Empty);
+            var anchor = tableCellProperties
+                .GetAttributes()
+                .FirstOrDefault(static attribute =>
+                    attribute.LocalName == "anchor"
+                    && string.IsNullOrEmpty(attribute.NamespaceUri));
             if (!string.Equals(anchor.Value, "mid", StringComparison.OrdinalIgnoreCase))
             {
                 continue;

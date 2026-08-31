@@ -20,6 +20,7 @@ public sealed class JobService(
     TimeProvider timeProvider,
     ImageAssetRepository? imageAssets = null)
 {
+    public const int MaximumVisualRevisionRounds = 3;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly ConcurrentDictionary<string, AnalyzeSubmission> analyzeSubmissions = new();
     private readonly ConcurrentDictionary<string, TextEditWorkflow> textEditWorkflows = new();
@@ -1120,11 +1121,11 @@ public sealed class JobService(
             : revisedInSourceRound.Contains(slideNumber)
                 ? sourceRound + 1
                 : sourceRound;
-        if (nextRound > 2)
+        if (nextRound > MaximumVisualRevisionRounds)
         {
             throw new PptxValidationException(
                 "visual_refinement_limit_reached",
-                $"Slide {slideNumber} has already been refined in both allowed visual review rounds. Stop refining and return the latest successful deck.");
+                $"Slide {slideNumber} has already been refined in all {MaximumVisualRevisionRounds} allowed visual review rounds. Stop refining and return the latest successful deck.");
         }
 
         var revisedSlides = nextRound == sourceRound

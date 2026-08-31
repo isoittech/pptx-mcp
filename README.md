@@ -26,8 +26,9 @@ LibreChat 上の Claude から、PowerPoint 資料の解析、テンプレート
 - 導入環境から任意に注入できる初回assistant案内
 - PptxGenJSによる編集可能なグラフと埋め込みデータブックの生成
 - `musicScore`による編集可能な五線譜、Bravura由来の高品質な音楽記号、小節線、ウクレレTAB、指番号の色分け
+- AIが設計した静的HTML/CSSを検証し、`dom-to-pptx`と`react-icons/lu`で編集可能なVisual Deckへ変換
 - LibreOffice と Poppler による全ページ PNG プレビュー
-- プレビュー画像をClaudeへ返し、最大2回まで自律修正する視覚リフレクション
+- プレビュー画像をClaudeへ返し、最大3回まで自律修正する視覚リフレクション
 - 15分有効の署名付き成果物URL
 - 生成から7日、または最初のPPTXダウンロードから24時間の早い方で削除
 
@@ -53,7 +54,7 @@ PPTX_MCP_TEMPLATES_PATH=/absolute/path/to/pptx-templates
 PPTX_MCP_DEFAULT_TEMPLATE_ID=organization-default
 ```
 
-テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。
+テンプレートIDは英数字、ハイフン、アンダースコアだけを使用できます。実ファイル、会社名、ロゴ、社内向け文言はOSSリポジトリやコンテナイメージへ含めません。設定済みの既定テンプレートは起動時にPPTX安全性検査と構造解析を行い、不正または欠落していれば起動を失敗させます。解析結果は内容のSHA-256単位で再利用するため、通常の新規生成前に `pptx_analyze` は不要です。既定表紙が濃色の場合は `PptxMcp__DefaultTemplateCoverUsesLightForeground=true` を設定し、1枚目のTitle/Sectionを白文字・装飾番号なしで重ねます。添付されたユーザー指定テンプレートにはこの設定を流用しません。
 
 通常の新規資料は `pptx_start_visual_deck` で概要、完成ページ数、テンプレート、テーマ、デザインを確定し、`pptx_add_visual_slides_to_draft` で最大4ページずつ追加した後、`pptx_finish_visual_deck` で生成します。`templateSourceFileId` の既定値は `default` です。テンプレート不要は `none`、添付した別テンプレートは解析後に `latest` または `file_id` をstartへ指定します。選択内容はstart成功時に固定され、finishでは変更しません。
 
@@ -72,11 +73,16 @@ Brand Profileを使う場合は、会社固有値を含むbundleをホスト側�
 ```dotenv
 PPTX_MCP_BRAND_PROFILES_PATH=/absolute/path/to/pptx-brand-profiles
 PPTX_MCP_REQUIRE_DESIGN_BRIEF=false
+PPTX_MCP_REQUIRE_DOM_ONLY_RENDERER=false
+PPTX_MCP_USE_MODEL_AUTHORED_HTML_RENDERER=false
+PPTX_MCP_DEFAULT_TEMPLATE_BODY_USES_ACCENT2_HEADINGS=false
 ```
 
 `pptx_get_design_catalog`は無引数でcompactなprofile一覧とstyle direction候補を返します。その候補からprofile IDとstyle direction IDを選び、2回目かつ最後の呼出しでrecipeとsample要約を取得します。単一用途だけpurpose／densityで追加絞り込みでき、複数用途はstyle directionだけで全用途recipeを取得します。profile IDなしの絞り込みと同workflowの3回目は行いません。manifest bytesと任意の検査済みsample thumbnail hashを合成したSHA-256を`content_hash`として返し、起動中は検証済みsnapshotを変更しません。
 
 `RequireDesignBrief=true`では、`pptx_validate_design_brief`が利用者・会話・profile version/hashへ束縛した期限付き`brief_id`を発行するまで`pptx_start_visual_deck`を拒否します。Design Briefは未解決質問を残さず、Asset Planを全ページ分持たせます。意味のある視覚オブジェクトが必要な場合は、brief validation前に`pptx_prepare_visual_objects`へ最大8件をまとめ、返ったIDを同じページの`visual_object_asset_ids`へ固定します。素材を使わない項目は`preferred_medium=none`、`acquisition=none`、`fallback=none`、`status=omitted`、`license_status=notRequired`とします。ユーザー提供JPEG/PNGを使う場合は、先に`pptx_register_uploaded_image_asset`で会話scope付きassetへ登録し、`userUpload`、`ready`、`userProvided`、`fallback=none`、返された`asset_id`、crop、text safe area、画像必須Media recipeを指定します。未登録userUploadと`approvedLibrary`は引き続き`fallbackSelected`と`nativeDraw`または`noAssetLayout`の画像不要recipeへ切り替えます。任意URL、任意パス、画像バイナリ、座標、SVG/XML本文はMCP入力へ渡せません。OSS既定は互換性のため`false`です。
+
+`UseModelAuthoredHtmlRenderer=true`では、新規draftを`visual-v7-author-html`にし、AIが各ページの完成したHTML fragmentと`.slide`配下のCSSを設計します。サーバーはその構図を固定テンプレートへ置き換えず、安全性検証、Lucide／登録画像の解決、Chromium描画、dom-to-pptx変換、企業テンプレート合成を行います。visible contentは`authoredHtml`だけへ記載し、旧renderer用の`dataTable`、`cards`、`panels`等へ二重送信しません。保存済み再試行に旧payloadが残っていても、visual-v7では描画にもrenderer固有geometry検査にも使いません。モデル指定の文字サイズは本文24px以上、`data-pptx-role="source-meta"`の出典情報だけ20px以上です。`RequireDomOnlyRenderer=true`はDOM移行の検収用で、成功結果にはページ別rendererとDOM／fallback件数を返し、fallbackを拒否します。`DefaultTemplateBodyUsesAccent2Headings=true`は既定テンプレートの本文だけに、semantic title／subtitleと同じ文字列を`body-title`見出し／単一項目`body-claim`へ分離し、AIが最初から50px／27pxで配置計算したタイトル30ptと主張16pt実箇条書き（ともにAccent 2）として保証します。いずれもOSS既定は`false`で、ユーザー指定テンプレートには本文見出し規則を流用しません。
 
 LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書uploadが`uploads/<user-id>/`へ分かれます。導入環境は`PptxMcp__LibreChatImagesRoot`と`PptxMcp__LibreChatUploadsRoot`を別々に読み取り専用mountしてください。MCP入力はどちらのpathも受け取らず、信頼済みcaller user scopeとopaque file IDだけで解決します。
 
@@ -110,7 +116,7 @@ LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書
 - `pptx_get_preview_images`
 - `pptx_cancel_job`
 
-処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。完了済み解析の大きな本文は、同一サーバー稼働中に`pptx_wait_for_job`から1回だけ返します。その後に`pptx_get_job`や同じ`wait`を誤って呼んでも本文を二重返却せず、既に受け取った解析結果から次の編集へ進む案内だけを返します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大2巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
+処理ツールはすぐに `job_id` を返します。Claude は `pptx_wait_for_job` を1回呼んでMCPサーバー内で最大45秒待ち、完了後に `pptx_get_preview_images` で全ページを1〜4枚ずつ実際に確認します。指定時間内に終わらない場合だけ、同じ`job_id`でもう一度待機します。完了済み解析の大きな本文は、同一サーバー稼働中に`pptx_wait_for_job`から1回だけ返します。その後に`pptx_get_job`や同じ`wait`を誤って呼んでも本文を二重返却せず、既に受け取った解析結果から次の編集へ進む案内だけを返します。文字切れ、重なり、可読性、整列、余白、コントラスト、情報密度、一貫性を確認し、問題ページだけを1枚ずつ最大3巡まで修正します。修正ラウンド、最新ジョブの直列性、上限はサーバー側でも強制し、成功後の全体再作成へ戻りません。
 
 アップロード済みPPTXの受付時検証に失敗した場合、analyze、preview、replace、populate、create、refineは汎用MCP例外ではなく、`status=invalid_input`、検証`code`、理由、再実行可否を返します。安全性検査で拒否された同一ファイルを推測で再実行しません。外部参照を拒否した場合は、外部画像、リンクされたExcel/Word等のOLE、共有フォルダ・ネットワークドライブ・SharePoint上の別ファイルという具体例を平易に説明し、通常のHTTP/HTTPSリンクは許可対象であることを案内します。
 
@@ -118,23 +124,23 @@ LibreChatではmessage attachment画像が`images/<user-id>/`、PPTX等の文書
 
 置換が20件を超える場合は、`pptx_replace_text`を最大20件ずつ実行できます。中間バッチは`isFinalBatch=false`とし、成功した`job_id`を次の`previousJobId`へ渡すことで、それまでの置換を保持します。最後のバッチだけ`isFinalBatch=true`にすると全ページプレビューを生成します。
 
-新規生成の段階ワークフローはAIが任意のJavaScriptや座標を実行する方式ではありません。AIは `statement`、`cards`、`metrics`、`comparison`、`structuredBrief`、`scorecard`、`media`、`nativeDiagram`、`musicScore`、`process`、`timeline`、`matrix`、`funnel`、`roadmap`、`chart`、`dashboard` などの意味ベースのレイアウトを選びます。`nativeDiagram`はtree・flow・cycle・concentric・networkを、座標なしのnode/edge意味仕様から自動配置します。さらに `design.style`、`density`、`motif` とスライド単位の `variant` で、Opusが資料固有のアートディレクションと構図を指定し、固定レンダラーが編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none` の場合だけ白紙生成になります。
+新規生成の`visual-v7-author-html`では、AIが各スライドを1600×900のWebページとしてHTML/CSSで直接設計します。文字、図形、カード、表、強調、余白、整列はAIが決めたDOMとCSSが見た目の正本であり、サーバーは固定レイアウトへ再解釈しません。`statement`、`cards`、`metrics`、`comparison`等の意味layoutとrecipeは、内容計画・監査・品質検査に残します。実行可能JavaScript、event属性、外部URL、任意SVG、ローカルpath、`url()`、shadow等は拒否し、Lucideは承認済み意味ID、画像は事前登録済みopaque IDだけをサーバーが解決します。検証済みHTMLをChromiumで描画し、dom-to-pptxがブラウザーの計算済みDOMを編集可能なPowerPoint要素へ変換します。既定テンプレートが登録されていれば企業マスターへ自動合成し、`templateSourceFileId=none`の場合だけ白紙生成になります。設計判断は[ADR 0022](docs/adr/0022-model-authored-html-slides.md)を参照してください。
 
 長い説明を1つの本文枠へ押し込まず、見出しだけでも要点を追える2〜3個の `sections` に分ける場合は `structuredBrief` を使います。セクション合計は900文字までです。3セクション・600文字未満では上段の主論点と下段2論点からなるモザイクへ自動変更し、短い内容ほど本文と箇条書きを拡大します。600文字以上では3列を使い、情報量に合わない大きな空箱を避けます。複数案を評価軸で比べる場合は `scorecard` を使い、2〜4個の `options` と2〜6行の `criteria` を指定します。各評価セルは短い判定、根拠、意味色を持ち、成果物では編集可能なPowerPointネイティブ表になります。文字量が多い資料では `design.density=detailed` を指定すると、フォントだけを縮小せず、余白、タイトル領域、内部間隔、細い罫線、影なしカードをまとめて切り替えます。
 
 `musicScore`は1〜8小節、合計64イベントまでの五線譜とウクレレTABを上下に併記します。各イベントへ`duration`、各音へ科学的音高の`pitch`、1=A/2=E/3=C/4=Gの`string`、`fret`、任意の`finger`を指定します。`tuning`は`high-g`または`low-g`です。音高と弦・フレットの不一致は入力検証で拒否します。ト音記号、拍子数字、符頭、旗、付点、休符、臨時記号はSIL Open Font LicenseのBravura 1.392から輪郭を取得し、画像やフォントではなくPowerPointカスタム図形として生成します。その他の五線、符幹、小節線、TAB線、フレット番号、指色マーカーも個別編集できるPowerPointネイティブ要素です。PowerPoint自体に楽譜の意味モデルはないため、移調やリズム変更に伴う自動再配置は行いません。Bravuraの原本ライセンスは`visual-renderer/assets/bravura/LICENSE.txt`に同梱しています。
 
-新規Visual Deckは、完成ページ数とクリエイティブ方針を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。addの`startSlideNumber`は省略でき、サーバーが受理済み末尾から自動計算します。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。`visual_draft_not_found`、`visual_draft_expired`、`visual_draft_not_editable`は再試行不能な終了エラーであり、同じdraft IDでadd／finishを繰り返しません。成功済みデッキがある会話では通常のstartを拒否し、初回生成が失敗した場合の全体再試行も1回に制限します。ユーザーが別資料を明示的に求めた場合だけ`userRequestedNewWorkflow=true`で新しいワークフローを開始できます。
+新規Visual Deckは、完成ページ数とクリエイティブ方針を登録するstart、連続した1〜4ページを渡すadd、ドラフトIDだけで生成するfinishへ分割しています。`visual-v7-author-html`のaddは完成HTML/CSSを持つ2〜4ページを受理し、残り1ページだけは単独で受理します。完成HTML/CSSはモデル出力量が大きいため、Agentは通常2ページを1batchとし、短いページだけ3〜4ページを選びます。addの`startSlideNumber`は省略でき、サーバーが受理済み末尾から自動計算します。ドラフトは利用者と会話の境界内だけで参照でき、1時間で失効します。`visual_draft_not_found`、`visual_draft_expired`、`visual_draft_not_editable`は再試行不能な終了エラーであり、同じdraft IDでadd／finishを繰り返しません。成功済みデッキがある会話では通常のstartを拒否し、初回生成が失敗した場合の全体再試行も1回に制限します。ユーザーが別資料を明示的に求めた場合だけ`userRequestedNewWorkflow=true`で新しいワークフローを開始できます。
 
 各`VisualSlideSpec`には任意の`speakerNotes`を指定できます。`purpose`はそのページで訴えることを1文で、`talkScript`は見える本文の読み上げではない発表用原稿として渡します。レンダラーは固定見出し「このスライドの狙い」「トークスクリプト」とともにPowerPointの発表者ノートへ保存し、スライド面へ描画しません。refineで`speakerNotes`を省略すると元ページのノートを継承し、明示した場合だけ更新します。job resultの`speaker_notes_count`で保持件数を確認できます。ノートはPPTX受領者が閲覧できるため、内部思考、秘密情報、内部URL、不要な個人情報、未開示の仮定を含めません。strict placeholder型の`pptx_create_deck`は今回の対象外です。詳細は[ADR 0018](docs/adr/0018-speaker-notes.md)を参照してください。
 
 企業テンプレートを使いつつ同じ視覚表現が必要な場合は、テンプレートをstart時に選び、ドラフト完成後に `pptx_finish_branded_visual_deck` を使います。テンプレートのテーマ色と日本語フォントを自動抽出し、未指定のテーマ項目だけを補完して、プレースホルダーのない白紙レイアウトへ各スライドを接続します。startで明示した色とフォントはテンプレート抽出値より優先されます。これにより企業マスターのロゴ・フッターと、資料固有の配色、カード、工程、マトリクス、編集可能グラフ等を両立します。
 
-メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等を含む編集可能な組み込みアイコンを利用できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
+メトリクスとカードの `tone` は `positive`、`critical`、`negative`、`info` 等の意味語または任意の `#RRGGBB` を受け付けます。カードは `search`、`compliance`、`decision`、`network`、`recovery` 等の意味IDを受け、サーバー管理allowlistから`react-icons/lu`（Lucide）へ解決したベクターSVGを利用します。SVGはPowerPointの「図形に変換」で分解できます。カスタムテーマで背景と文字のコントラストが不足する場合は、レンダラーが可読色へ自動補正します。
 
 Visual Deckの入力検証エラーは `status=invalid_input`、エラーコード、対象フィールドを構造化して返します。モデルは推測で同じ呼び出しを繰り返さず、指摘されたフィールドだけを直せます。Closingの提言はPowerPointネイティブの箇条書きとして描画されます。
 
-6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。視覚確認後は `pptx_refine_visual_slide` へ問題ページを1枚ずつ渡します。`jobId=latest` が直前の成功ジョブを選ぶため、複数ページの修正は逐次累積します。prepared visual objectを持つページでは置換slideの`visualObjects`を省略でき、サーバーが元ページのimmutable snapshot参照を継承します。異なるIDへの変更は拒否します。各ジョブはルート、親、修正巡、同巡の修正ページを記録し、古いジョブからの分岐、一括ページ修正、3巡目を拒否します。`pptx_refine_visual_deck`も互換用に残しますが、同じ1ページ制約を適用します。
+6枚以上の資料で構図が4種類未満、同じ構図が3枚連続、または文字中心のページが過半数になると、ジョブ結果の `design_warnings` に改善案を返します。視覚確認後は `pptx_refine_visual_slide` へ問題ページを1枚ずつ渡します。`jobId=latest` が直前の成功ジョブを選ぶため、複数ページの修正は逐次累積します。prepared visual objectを持つページでは置換slideの`visualObjects`を省略でき、サーバーが元ページのimmutable snapshot参照を継承します。異なるIDへの変更は拒否します。各ジョブはルート、親、修正巡、同巡の修正ページを記録し、古いジョブからの分岐、一括ページ修正、4巡目を拒否します。`pptx_refine_visual_deck`も互換用に残しますが、同じ1ページ制約を適用します。
 
 成功済みVisual Deckへページを追加する場合は `pptx_insert_visual_slides` を使います。`slides` には追加分だけを渡し、既存ページを再送しません。`jobId` の既定値は `latest`、`afterSlideNumber` の省略時は末尾、`0` は先頭、正の値はそのページの直後へ挿入します。サーバーが元ジョブのタイトル、テーマ、デザイン、既存ページ、企業テンプレートとレイアウトを結合し、最大50ページの完成版を再生成します。通常はサーバー内で最大30秒待って最終状態を返します。この方式はAIの入力を追加ページ分に限定しますが、レンダラーとプレビュー生成は現段階では完成版全体を処理します。
 
@@ -154,4 +160,4 @@ cd visual-renderer
 npm audit --omit=dev
 ```
 
-2026-08-14時点ではPptxGenJSの推移依存`image-size`に、修正版未公開のICNS/JXL/HEIF解析DoSが報告されます。公開画像toolはJPEG/PNGだけを別processのSharpでdecodeし、metadataなしのPNGへ正規化します。Visual rendererはserver-owned hash、PNG signature、IHDR、宣言寸法を再検証したbytesだけを`addImage`へ渡し、URL、path、ICNS/JXL/HEIF原本へ到達しません。この限定境界をNodeテストで固定し、修正版公開後にロックファイルを更新してください。
+PptxGenJS 4.0.1は実行時に使わない`image-size`を推移依存として宣言しています。Visual rendererではこれをparserを一切含まないローカルのfail-closed互換shimへ固定し、呼び出された場合は即時失敗させます。これにより既知のICNS/JXL/HEIF解析DoSを含むparserをruntime imageから除外し、`npm audit --omit=dev`を警告0件に保ちます。公開画像toolのSharpによるmetadataなしPNG化と、renderer側のhash、PNG signature、IHDR、宣言寸法の再検証も多層防御として維持します。

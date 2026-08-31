@@ -29,6 +29,10 @@ public enum VisualSlideKind
     Scorecard,
     DataTable,
     Media,
+    CoverageMap,
+    TransformationEvidence,
+    ArtifactShowcase,
+    GanttSchedule,
     NativeDiagram,
     MusicScore,
 }
@@ -49,7 +53,7 @@ public sealed record VisualDeckSpec(
     string? Subject = null,
     string Language = "ja-JP",
     VisualDesignSpec? Design = null,
-    [property: Description("Server-owned renderer contract. New staged decks use visual-v5; omitted legacy payloads retain visual-v4 behavior during their stored lineage.")]
+    [property: Description("Server-owned renderer contract. Deployments may use visual-v7-author-html for new staged decks; saved visual-v4, visual-v5, and visual-v6-dom payloads retain their stored renderer behavior during their lineage.")]
     string? RendererContract = null,
     [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
     VisualDeckBrandProfileBinding? BrandProfileBinding = null,
@@ -131,6 +135,14 @@ public sealed record VisualSlideSpec(
     VisualDataTableSpec? DataTable = null,
     [property: Description("Verified user-uploaded image content for a media slide. The assetId is opaque and conversation-bound; placeholders, URLs, and paths are never valid substitutes.")]
     VisualMediaSpec? Media = null,
+    [property: Description("Rows and bounded column spans for showing when policies, controls, or responsibilities apply. Use semantic groups and one-based column spans instead of coordinates.")]
+    VisualCoverageMapSpec? CoverageMap = null,
+    [property: Description("Editable before/after evidence with tagged input fragments, transformed output, and a verification table. Raw HTML is never accepted.")]
+    VisualTransformationEvidenceSpec? TransformationEvidence = null,
+    [property: Description("One to three groups of verified conversation-bound image assets presented as a matte document or deliverable showcase.")]
+    VisualArtifactShowcaseSpec? ArtifactShowcase = null,
+    [property: Description("Editable task schedule using bounded time columns and one-based start/end spans instead of arbitrary coordinates.")]
+    VisualGanttScheduleSpec? GanttSchedule = null,
     [property: Description("Editable semantic diagram for a nativeDiagram slide. Coordinates, SVG, and XML are not accepted.")]
     VisualDiagramSpec? Diagram = null,
     [property: Description("Optional prepared native visual objects. Use at most three per slide and only opaque IDs returned by pptx_prepare_visual_objects in this conversation. A validated Design Brief materializes its planned IDs when omitted; any explicit list must match exactly.")]
@@ -140,7 +152,17 @@ public sealed record VisualSlideSpec(
     [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
     string? RecipeId = null,
     [property: Description("Optional PowerPoint speaker notes stored outside the visible slide canvas. For MSI-generated decks, provide both the slide purpose and presentation-ready talk script on every slide.")]
-    VisualSpeakerNotesSpec? SpeakerNotes = null);
+    VisualSpeakerNotesSpec? SpeakerNotes = null,
+    [property: Description("Required on visual-v7-author-html decks. The model authors a complete static 1600x900 slide as an HTML fragment plus slide-scoped CSS; the server validates it and dom-to-pptx converts the browser-computed DOM. JavaScript, remote resources, arbitrary SVG, and local paths are forbidden.")]
+    VisualAuthoredHtmlSpec? AuthoredHtml = null);
+
+public sealed record VisualAuthoredHtmlSpec(
+    [property: Description("Static HTML fragment placed inside the 1600x900 .slide root. Do not include html, head, body, style, script, iframe, object, embed, form, inline SVG, event attributes, URLs, or local paths. Use data-pptx-icon with an approved Lucide meaning ID and data-pptx-asset with an ID listed in assetIds.")]
+    string Html,
+    [property: Description("CSS for this slide. Scope every selector below .slide. CSS may use grid, flex, absolute positioning, gradients, borders, and transforms, but may not use @rules, url(), external resources, JavaScript, or local paths.")]
+    string Css,
+    [property: Description("Zero to eight opaque registered image asset IDs referenced by data-pptx-asset attributes in html. Do not put image bytes, URLs, or paths here.")]
+    IReadOnlyList<string>? AssetIds = null);
 
 public sealed record VisualSpeakerNotesSpec(
     [property: Description("One concise sentence stating what this slide must communicate or persuade the audience to understand. This appears under the fixed 'このスライドの狙い' heading in PowerPoint speaker notes.")]
@@ -157,6 +179,126 @@ public sealed record VisualMediaSpec(
     string TextPosition = "left",
     [property: Description("Optional short caption shown next to the image. The registered asset alt text remains the accessibility description.")]
     string? Caption = null);
+
+public sealed record VisualChipSpec(
+    [property: Description("Short visible label naming a category, state, phase, or approach.")]
+    string Label,
+    [property: Description("Semantic tone such as accent, positive, warning, critical, neutral, or a custom #RRGGBB color.")]
+    string Tone = "neutral");
+
+public sealed record VisualAxisColumnSpec(
+    [property: Description("Stable lowercase identifier used only within this slide.")]
+    string Id,
+    [property: Description("Short visible column label such as W1, Planning, or Release.")]
+    string Label,
+    [property: Description("Optional contiguous parent heading such as a month or project phase.")]
+    string? GroupLabel = null);
+
+public sealed record VisualCoverageMapSpec(
+    [property: Description("Two to six ordered columns that define the horizontal scope.")]
+    IReadOnlyList<VisualAxisColumnSpec> Columns,
+    [property: Description("One to four category groups containing the visible rows.")]
+    IReadOnlyList<VisualCoverageGroupSpec> Groups,
+    [property: Description("One to sixteen labeled spans. StartColumn and endColumn are one-based and inclusive.")]
+    IReadOnlyList<VisualSpanBarSpec> Bars,
+    [property: Description("Optional single practical takeaway pointing to a real row or bar ID.")]
+    VisualCalloutSpec? Callout = null,
+    [property: Description("Optional compact approach or status labels below the map.")]
+    IReadOnlyList<VisualChipSpec>? FooterChips = null);
+
+public sealed record VisualCoverageGroupSpec(
+    string Id,
+    string Label,
+    string? Subtitle,
+    [property: Description("One to five rows within this category.")]
+    IReadOnlyList<VisualCoverageRowSpec> Rows,
+    [property: Description("Semantic group color.")]
+    string Tone = "accent");
+
+public sealed record VisualCoverageRowSpec(
+    string Id,
+    string Label);
+
+public sealed record VisualSpanBarSpec(
+    [property: Description("Stable lowercase identifier used by an optional callout target.")]
+    string Id,
+    [property: Description("ID of a row declared in coverageMap.groups.rows.")]
+    string RowId,
+    string Label,
+    [property: Description("One-based inclusive starting column.")]
+    int StartColumn,
+    [property: Description("One-based inclusive ending column.")]
+    int EndColumn,
+    string Tone = "accent");
+
+public sealed record VisualCalloutSpec(
+    string Text,
+    [property: Description("Optional ID of the real row, bar, task, or evidence item being explained.")]
+    string? TargetId = null,
+    string Tone = "primary");
+
+public sealed record VisualTransformationEvidenceSpec(
+    string InputHeading,
+    [property: Description("Ordered safe text fragments. Tags and tones are rendered by the server; HTML is not accepted.")]
+    IReadOnlyList<VisualTaggedTextSegmentSpec> InputSegments,
+    string OutputHeading,
+    string OutputText,
+    [property: Description("Editable table containing the evidence or detected entities supporting the transformation.")]
+    VisualDataTableSpec EvidenceTable,
+    string? InputCaption = null);
+
+public sealed record VisualTaggedTextSegmentSpec(
+    string Text,
+    string? Tag = null,
+    string Tone = "neutral");
+
+public sealed record VisualArtifactShowcaseSpec(
+    [property: Description("One to three deliverable or service groups.")]
+    IReadOnlyList<VisualArtifactGroupSpec> Groups);
+
+public sealed record VisualArtifactGroupSpec(
+    string Title,
+    [property: Description("One to four verified image assets shown with matte outlines and controlled overlap.")]
+    IReadOnlyList<VisualArtifactItemSpec> Artifacts,
+    string? Description = null);
+
+public sealed record VisualArtifactItemSpec(
+    [property: Description("Opaque asset_id returned by pptx_register_uploaded_image_asset in the same user and conversation scope.")]
+    string AssetId,
+    string? Label = null,
+    [property: Description("Crop intent: contain or cover.")]
+    string CropIntent = "contain");
+
+public sealed record VisualGanttScheduleSpec(
+    [property: Description("Four to twelve ordered time cells, optionally grouped by month or phase. Split longer schedules across slides so labels remain readable at 14pt or larger.")]
+    IReadOnlyList<VisualAxisColumnSpec> Columns,
+    [property: Description("Two to eight scheduled tasks in reading order. Split longer schedules across slides rather than shrinking text below 14pt.")]
+    IReadOnlyList<VisualGanttTaskSpec> Tasks,
+    string? EffortLabel = null,
+    [property: Description("Optional labeled vertical ranges such as holidays, gates, or the current period.")]
+    IReadOnlyList<VisualGanttMarkerSpec>? Markers = null,
+    [property: Description("Optional compact legend defining every bar color used by the schedule.")]
+    IReadOnlyList<VisualChipSpec>? Legend = null);
+
+public sealed record VisualGanttTaskSpec(
+    string Id,
+    string Category,
+    string Title,
+    [property: Description("Up to three concise task details.")]
+    IReadOnlyList<string>? Details,
+    [property: Description("One-based inclusive starting column.")]
+    int StartColumn,
+    [property: Description("One-based inclusive ending column.")]
+    int EndColumn,
+    string Tone = "secondary");
+
+public sealed record VisualGanttMarkerSpec(
+    string Label,
+    [property: Description("One-based inclusive starting column.")]
+    int StartColumn,
+    [property: Description("One-based inclusive ending column.")]
+    int EndColumn,
+    string Tone = "neutral");
 
 public sealed record VisualMusicScoreSpec(
     [property: Description("One to eight measures in reading order. A slide may contain at most 64 events in total.")]
@@ -298,7 +440,7 @@ public sealed record VisualCardSpec(
     string? Value = null,
     [property: Description("Semantic tone such as accent, positive/success, warning, critical/danger/negative, neutral/muted, info, or a custom #RRGGBB color.")]
     string Tone = "accent",
-    [property: Description("Editable native icon: insight, target, growth, people, shield, clock, cloud, settings, data, warning, check, idea, search, compliance, decision, lock, network, document, communication, recovery, backup, legal, monitor, or automation.")]
+    [property: Description("Editable server-approved Lucide icon ID. Common choices include insight, target, growth, people, person, organization, shield, clock, calendar, gantt, workflow, layers, files, table, flag, brain, sparkles, gauge, route, presentation, training, business, checklist, scan, tags, components, cloud, settings, data, warning, check, search, compliance, decision, lock, network, document, communication, recovery, backup, legal, monitor, or automation.")]
     string Icon = "insight");
 
 public sealed record VisualMatrixSpec(
@@ -355,7 +497,10 @@ public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
     [property: JsonPropertyName("renderer")] string Renderer,
     [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
-    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
+    [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
+    [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
 
 public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
@@ -365,7 +510,10 @@ public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("template_layout_name")] string TemplateLayoutName,
     [property: JsonPropertyName("template_theme_applied")] bool TemplateThemeApplied,
     [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
-    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
+    [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
+    [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
 
 public sealed record VisualSlideRevision(
     [property: JsonPropertyName("slide_number"), Description("One-based slide number to replace.")] int SlideNumber,
@@ -454,6 +602,27 @@ public static partial class VisualDeckValidator
         "legal",
         "monitor",
         "automation",
+        "brain",
+        "workflow",
+        "layers",
+        "files",
+        "table",
+        "calendar",
+        "gantt",
+        "flag",
+        "person",
+        "organization",
+        "sparkles",
+        "gauge",
+        "route",
+        "arrow",
+        "presentation",
+        "training",
+        "business",
+        "checklist",
+        "scan",
+        "tags",
+        "components",
     };
 
     private static readonly HashSet<string> MediaCropIntents = new(StringComparer.OrdinalIgnoreCase)
@@ -519,11 +688,11 @@ public static partial class VisualDeckValidator
         ArgumentNullException.ThrowIfNull(deck);
         ValidateMetadata(deck.Title, deck.Subject, deck.Language, deck.Theme, deck.Design);
         var rendererContract = deck.RendererContract?.ToLowerInvariant() ?? "visual-v4";
-        if (rendererContract is not ("visual-v4" or "visual-v5"))
+        if (rendererContract is not ("visual-v4" or "visual-v5" or "visual-v6-dom" or "visual-v7-author-html"))
         {
             throw new PptxValidationException(
                 "visual_renderer_contract_invalid",
-                "rendererContract is server-owned and must be visual-v4 or visual-v5.");
+                "rendererContract is server-owned and must be visual-v4, visual-v5, visual-v6-dom, or visual-v7-author-html.");
         }
 
         if (deck.Slides is null || deck.Slides.Count is < 1 || deck.Slides.Count > maximumSlides)
@@ -539,7 +708,8 @@ public static partial class VisualDeckValidator
                 deck.Slides[index],
                 index + 1,
                 deck.Design?.Density,
-                rendererContract == "visual-v5");
+                rendererContract is "visual-v5" or "visual-v6-dom" or "visual-v7-author-html",
+                rendererContract == "visual-v7-author-html");
         }
 
         ValidateVisualObjectAssets(deck);
@@ -687,6 +857,22 @@ public static partial class VisualDeckValidator
             + (slide.Cards?.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + (item.Value?.Length ?? 0)) ?? 0)
             + (slide.Sections?.Sum(static item => item.Heading.Length + (item.Body?.Length ?? 0) + (item.Highlight?.Length ?? 0) + (item.Bullets?.Sum(static bullet => bullet.Length) ?? 0)) ?? 0)
             + (slide.Media?.Caption?.Length ?? 0)
+            + (slide.CoverageMap?.Columns.Sum(static item => item.Label.Length + (item.GroupLabel?.Length ?? 0)) ?? 0)
+            + (slide.CoverageMap?.Groups.Sum(static item => item.Label.Length + (item.Subtitle?.Length ?? 0) + item.Rows.Sum(static row => row.Label.Length)) ?? 0)
+            + (slide.CoverageMap?.Bars.Sum(static item => item.Label.Length) ?? 0)
+            + (slide.CoverageMap?.Callout?.Text.Length ?? 0)
+            + (slide.CoverageMap?.FooterChips?.Sum(static item => item.Label.Length) ?? 0)
+            + (slide.TransformationEvidence?.InputHeading.Length ?? 0)
+            + (slide.TransformationEvidence?.InputCaption?.Length ?? 0)
+            + (slide.TransformationEvidence?.InputSegments.Sum(static item => item.Text.Length + (item.Tag?.Length ?? 0)) ?? 0)
+            + (slide.TransformationEvidence?.OutputHeading.Length ?? 0)
+            + (slide.TransformationEvidence?.OutputText.Length ?? 0)
+            + (slide.ArtifactShowcase?.Groups.Sum(static item => item.Title.Length + (item.Description?.Length ?? 0) + item.Artifacts.Sum(static artifact => artifact.Label?.Length ?? 0)) ?? 0)
+            + (slide.GanttSchedule?.Columns.Sum(static item => item.Label.Length + (item.GroupLabel?.Length ?? 0)) ?? 0)
+            + (slide.GanttSchedule?.Tasks.Sum(static item => item.Category.Length + item.Title.Length + (item.Details?.Sum(static detail => detail.Length) ?? 0)) ?? 0)
+            + (slide.GanttSchedule?.EffortLabel?.Length ?? 0)
+            + (slide.GanttSchedule?.Markers?.Sum(static item => item.Label.Length) ?? 0)
+            + (slide.GanttSchedule?.Legend?.Sum(static item => item.Label.Length) ?? 0)
             + (slide.Diagram?.Nodes.Sum(static node => node.Label.Length + (node.Description?.Length ?? 0)) ?? 0)
             + (slide.Diagram?.Edges?.Sum(static edge => edge.Label?.Length ?? 0) ?? 0)
             + (slide.MusicScore?.Caption?.Length ?? 0)
@@ -705,6 +891,13 @@ public static partial class VisualDeckValidator
         {
             count += slide.DataTable.Columns.Sum(static column => column.Header.Length);
             count += slide.DataTable.Rows.Sum(static row =>
+                row.Cells.Sum(static cell => cell.Text.Length));
+        }
+
+        if (slide.TransformationEvidence?.EvidenceTable is { } evidenceTable)
+        {
+            count += evidenceTable.Columns.Sum(static column => column.Header.Length);
+            count += evidenceTable.Rows.Sum(static row =>
                 row.Cells.Sum(static cell => cell.Text.Length));
         }
 
@@ -797,7 +990,8 @@ public static partial class VisualDeckValidator
         VisualSlideSpec slide,
         int slideNumber,
         string? deckDensity,
-        bool usesModernRendererContract)
+        bool usesModernRendererContract,
+        bool requiresAuthoredHtml)
     {
         if (slide is null)
         {
@@ -813,6 +1007,7 @@ public static partial class VisualDeckValidator
         ValidateOptionalText(slide.Takeaway, $"{prefix}.takeaway", 280);
         ValidateOptionalText(slide.RecipeId, $"{prefix}.recipeId", 128);
         ValidateSpeakerNotes(slide.SpeakerNotes, prefix);
+        ValidateAuthoredHtml(slide.AuthoredHtml, prefix, requiresAuthoredHtml);
         if (slide.RecipeId is not null && !OpaqueIdentifierRegex().IsMatch(slide.RecipeId))
         {
             throw new PptxValidationException(
@@ -837,9 +1032,18 @@ public static partial class VisualDeckValidator
                     : $"{prefix}.variant is not recognized by the stored legacy renderer contract.");
         }
 
-        if (usesModernRendererContract)
+        if (usesModernRendererContract && !requiresAuthoredHtml)
         {
             ValidateVariantForSlide(slide, prefix);
+        }
+
+        // In visual-v7-author-html the authored DOM is the only rendering input.
+        // Legacy semantic payloads may be present on an older/retried request, but
+        // validating their renderer-specific geometry would reject a slide for data
+        // that is neither rendered nor used as a fallback.
+        if (requiresAuthoredHtml)
+        {
+            return;
         }
 
         ValidateList(slide.Bullets, $"{prefix}.bullets", 8, 180);
@@ -933,6 +1137,13 @@ public static partial class VisualDeckValidator
             !string.IsNullOrWhiteSpace(slide.Takeaway));
         ValidateMatrix(slide.Matrix, prefix);
         ValidateMedia(slide.Media, prefix);
+        ValidateCoverageMap(slide.CoverageMap, prefix);
+        ValidateTransformationEvidence(
+            slide.TransformationEvidence,
+            prefix,
+            slide.Density ?? deckDensity ?? "balanced");
+        ValidateArtifactShowcase(slide.ArtifactShowcase, prefix);
+        ValidateGanttSchedule(slide.GanttSchedule, prefix);
         ValidateDiagram(slide.Diagram, prefix);
         ValidateVisualObjectReferences(slide.VisualObjects, prefix);
         ValidateMusicScore(slide.MusicScore, prefix);
@@ -986,10 +1197,345 @@ public static partial class VisualDeckValidator
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.dataTable is required for a dataTable slide.");
             case VisualSlideKind.Media when slide.Media is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.media with a verified assetId is required for a Media slide; placeholders are not accepted.");
+            case VisualSlideKind.CoverageMap when slide.CoverageMap is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.coverageMap is required for a CoverageMap slide.");
+            case VisualSlideKind.TransformationEvidence when slide.TransformationEvidence is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.transformationEvidence is required for a TransformationEvidence slide.");
+            case VisualSlideKind.ArtifactShowcase when slide.ArtifactShowcase is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.artifactShowcase with verified asset IDs is required for an ArtifactShowcase slide.");
+            case VisualSlideKind.GanttSchedule when slide.GanttSchedule is null:
+                throw new PptxValidationException("visual_content_missing", $"{prefix}.ganttSchedule is required for a GanttSchedule slide.");
             case VisualSlideKind.NativeDiagram when slide.Diagram is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.diagram is required for a NativeDiagram slide.");
             case VisualSlideKind.MusicScore when slide.MusicScore is null:
                 throw new PptxValidationException("visual_content_missing", $"{prefix}.musicScore is required for a musicScore slide.");
+        }
+    }
+
+    private static void ValidateCoverageMap(VisualCoverageMapSpec? coverageMap, string prefix)
+    {
+        if (coverageMap is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.coverageMap";
+        ValidateAxisColumns(coverageMap.Columns, path, 2, 6);
+        if (coverageMap.Groups is null || coverageMap.Groups.Count is < 1 or > 4)
+        {
+            throw new PptxValidationException(
+                "visual_coverage_groups_out_of_range",
+                $"{path}.groups must contain between 1 and 4 groups.");
+        }
+
+        var localIds = new HashSet<string>(StringComparer.Ordinal);
+        var rowIds = new HashSet<string>(StringComparer.Ordinal);
+        var rowCount = 0;
+        for (var groupIndex = 0; groupIndex < coverageMap.Groups.Count; groupIndex++)
+        {
+            var group = coverageMap.Groups[groupIndex]
+                ?? throw new PptxValidationException("visual_coverage_group_invalid", $"{path}.groups[{groupIndex}] must not be null.");
+            var groupPath = $"{path}.groups[{groupIndex}]";
+            ValidateLocalId(group.Id, $"{groupPath}.id", localIds);
+            ValidateText(group.Label, $"{groupPath}.label", 1, 40);
+            ValidateOptionalText(group.Subtitle, $"{groupPath}.subtitle", 40);
+            ValidateTone(group.Tone, $"{groupPath}.tone");
+            if (group.Rows is null || group.Rows.Count is < 1 or > 5)
+            {
+                throw new PptxValidationException(
+                    "visual_coverage_rows_out_of_range",
+                    $"{groupPath}.rows must contain between 1 and 5 rows.");
+            }
+
+            rowCount += group.Rows.Count;
+            for (var rowIndex = 0; rowIndex < group.Rows.Count; rowIndex++)
+            {
+                var row = group.Rows[rowIndex]
+                    ?? throw new PptxValidationException("visual_coverage_row_invalid", $"{groupPath}.rows[{rowIndex}] must not be null.");
+                var rowPath = $"{groupPath}.rows[{rowIndex}]";
+                ValidateLocalId(row.Id, $"{rowPath}.id", localIds);
+                rowIds.Add(row.Id);
+                ValidateText(row.Label, $"{rowPath}.label", 1, 48);
+            }
+        }
+
+        if (rowCount > 8)
+        {
+            throw new PptxValidationException(
+                "visual_coverage_rows_out_of_range",
+                $"{path} may contain at most 8 rows; split the map across slides so text remains at least 14pt.");
+        }
+
+        if (coverageMap.Bars is null || coverageMap.Bars.Count is < 1 or > 16)
+        {
+            throw new PptxValidationException(
+                "visual_coverage_bars_out_of_range",
+                $"{path}.bars must contain between 1 and 16 spans.");
+        }
+
+        var barIds = new HashSet<string>(StringComparer.Ordinal);
+        for (var barIndex = 0; barIndex < coverageMap.Bars.Count; barIndex++)
+        {
+            var bar = coverageMap.Bars[barIndex]
+                ?? throw new PptxValidationException("visual_coverage_bar_invalid", $"{path}.bars[{barIndex}] must not be null.");
+            var barPath = $"{path}.bars[{barIndex}]";
+            ValidateLocalId(bar.Id, $"{barPath}.id", localIds);
+            barIds.Add(bar.Id);
+            if (!rowIds.Contains(bar.RowId))
+            {
+                throw new PptxValidationException(
+                    "visual_coverage_row_reference_invalid",
+                    $"{barPath}.rowId must reference a row declared in {path}.groups.");
+            }
+
+            ValidateText(bar.Label, $"{barPath}.label", 1, 80);
+            ValidateSpan(bar.StartColumn, bar.EndColumn, coverageMap.Columns.Count, barPath);
+            ValidateTone(bar.Tone, $"{barPath}.tone");
+        }
+
+        if (coverageMap.Callout is { } callout)
+        {
+            ValidateText(callout.Text, $"{path}.callout.text", 1, 180);
+            ValidateTone(callout.Tone, $"{path}.callout.tone");
+            if (callout.TargetId is not null
+                && !rowIds.Contains(callout.TargetId)
+                && !barIds.Contains(callout.TargetId))
+            {
+                throw new PptxValidationException(
+                    "visual_callout_target_invalid",
+                    $"{path}.callout.targetId must reference a real row or bar ID on the same slide.");
+            }
+        }
+
+        ValidateChips(coverageMap.FooterChips, $"{path}.footerChips", 6);
+    }
+
+    private static void ValidateTransformationEvidence(
+        VisualTransformationEvidenceSpec? evidence,
+        string prefix,
+        string density)
+    {
+        if (evidence is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.transformationEvidence";
+        ValidateText(evidence.InputHeading, $"{path}.inputHeading", 1, 56);
+        ValidateOptionalText(evidence.InputCaption, $"{path}.inputCaption", 80);
+        ValidateText(evidence.OutputHeading, $"{path}.outputHeading", 1, 56);
+        ValidateText(evidence.OutputText, $"{path}.outputText", 1, 1_200);
+        if (evidence.InputSegments is null || evidence.InputSegments.Count is < 1 or > 40)
+        {
+            throw new PptxValidationException(
+                "visual_transformation_segments_out_of_range",
+                $"{path}.inputSegments must contain between 1 and 40 ordered fragments.");
+        }
+
+        var totalCharacters = evidence.OutputText.Length;
+        for (var index = 0; index < evidence.InputSegments.Count; index++)
+        {
+            var segment = evidence.InputSegments[index]
+                ?? throw new PptxValidationException("visual_transformation_segment_invalid", $"{path}.inputSegments[{index}] must not be null.");
+            var segmentPath = $"{path}.inputSegments[{index}]";
+            ValidateText(segment.Text, $"{segmentPath}.text", 1, 240);
+            ValidateOptionalText(segment.Tag, $"{segmentPath}.tag", 24);
+            ValidateTone(segment.Tone, $"{segmentPath}.tone");
+            totalCharacters += segment.Text.Length + (segment.Tag?.Length ?? 0);
+        }
+
+        if (totalCharacters > 1_800)
+        {
+            throw new PptxValidationException(
+                "visual_content_density_invalid",
+                $"{path} must not exceed 1800 input/output characters; split the evidence across slides.");
+        }
+
+        ValidateDataTable(evidence.EvidenceTable, $"{path}.evidenceTable", density, false);
+    }
+
+    private static void ValidateArtifactShowcase(VisualArtifactShowcaseSpec? showcase, string prefix)
+    {
+        if (showcase is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.artifactShowcase";
+        if (showcase.Groups is null || showcase.Groups.Count is < 1 or > 3)
+        {
+            throw new PptxValidationException(
+                "visual_artifact_groups_out_of_range",
+                $"{path}.groups must contain between 1 and 3 groups.");
+        }
+
+        var assetIds = new HashSet<string>(StringComparer.Ordinal);
+        for (var groupIndex = 0; groupIndex < showcase.Groups.Count; groupIndex++)
+        {
+            var group = showcase.Groups[groupIndex]
+                ?? throw new PptxValidationException("visual_artifact_group_invalid", $"{path}.groups[{groupIndex}] must not be null.");
+            var groupPath = $"{path}.groups[{groupIndex}]";
+            ValidateText(group.Title, $"{groupPath}.title", 1, 72);
+            ValidateOptionalText(group.Description, $"{groupPath}.description", 120);
+            if (group.Artifacts is null || group.Artifacts.Count is < 1 or > 4)
+            {
+                throw new PptxValidationException(
+                    "visual_artifacts_out_of_range",
+                    $"{groupPath}.artifacts must contain between 1 and 4 verified assets.");
+            }
+
+            for (var artifactIndex = 0; artifactIndex < group.Artifacts.Count; artifactIndex++)
+            {
+                var artifact = group.Artifacts[artifactIndex]
+                    ?? throw new PptxValidationException("visual_artifact_invalid", $"{groupPath}.artifacts[{artifactIndex}] must not be null.");
+                var artifactPath = $"{groupPath}.artifacts[{artifactIndex}]";
+                if (!ImageAssetIdRegex().IsMatch(artifact.AssetId) || !assetIds.Add(artifact.AssetId))
+                {
+                    throw new PptxValidationException(
+                        "visual_artifact_asset_id_invalid",
+                        $"{artifactPath}.assetId must be a unique opaque asset_id returned by pptx_register_uploaded_image_asset.");
+                }
+
+                ValidateOptionalText(artifact.Label, $"{artifactPath}.label", 56);
+                if (artifact.CropIntent is not ("contain" or "cover"))
+                {
+                    throw new PptxValidationException(
+                        "visual_artifact_crop_invalid",
+                        $"{artifactPath}.cropIntent must be contain or cover.");
+                }
+            }
+        }
+    }
+
+    private static void ValidateGanttSchedule(VisualGanttScheduleSpec? gantt, string prefix)
+    {
+        if (gantt is null)
+        {
+            return;
+        }
+
+        var path = $"{prefix}.ganttSchedule";
+        ValidateAxisColumns(gantt.Columns, path, 4, 12);
+        ValidateOptionalText(gantt.EffortLabel, $"{path}.effortLabel", 56);
+        if (gantt.Tasks is null || gantt.Tasks.Count is < 2 or > 8)
+        {
+            throw new PptxValidationException(
+                "visual_gantt_tasks_out_of_range",
+                $"{path}.tasks must contain between 2 and 8 tasks; split longer schedules so text remains at least 14pt.");
+        }
+
+        var taskIds = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < gantt.Tasks.Count; index++)
+        {
+            var task = gantt.Tasks[index]
+                ?? throw new PptxValidationException("visual_gantt_task_invalid", $"{path}.tasks[{index}] must not be null.");
+            var taskPath = $"{path}.tasks[{index}]";
+            ValidateLocalId(task.Id, $"{taskPath}.id", taskIds);
+            ValidateText(task.Category, $"{taskPath}.category", 1, 40);
+            ValidateText(task.Title, $"{taskPath}.title", 1, 90);
+            ValidateList(task.Details, $"{taskPath}.details", 3, 100);
+            ValidateSpan(task.StartColumn, task.EndColumn, gantt.Columns.Count, taskPath);
+            ValidateTone(task.Tone, $"{taskPath}.tone");
+        }
+
+        if (gantt.Markers is { Count: > 3 })
+        {
+            throw new PptxValidationException(
+                "visual_gantt_markers_out_of_range",
+                $"{path}.markers may contain at most 3 labeled ranges.");
+        }
+
+        if (gantt.Markers is not null)
+        {
+            for (var index = 0; index < gantt.Markers.Count; index++)
+            {
+                var marker = gantt.Markers[index]
+                    ?? throw new PptxValidationException("visual_gantt_marker_invalid", $"{path}.markers[{index}] must not be null.");
+                var markerPath = $"{path}.markers[{index}]";
+                ValidateText(marker.Label, $"{markerPath}.label", 1, 40);
+                ValidateSpan(marker.StartColumn, marker.EndColumn, gantt.Columns.Count, markerPath);
+                ValidateTone(marker.Tone, $"{markerPath}.tone");
+            }
+        }
+
+        ValidateChips(gantt.Legend, $"{path}.legend", 6);
+    }
+
+    private static void ValidateAxisColumns(
+        IReadOnlyList<VisualAxisColumnSpec>? columns,
+        string path,
+        int minimumCount,
+        int maximumCount)
+    {
+        if (columns is null || columns.Count < minimumCount || columns.Count > maximumCount)
+        {
+            throw new PptxValidationException(
+                "visual_axis_columns_out_of_range",
+                $"{path}.columns must contain between {minimumCount} and {maximumCount} columns.");
+        }
+
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < columns.Count; index++)
+        {
+            var column = columns[index]
+                ?? throw new PptxValidationException("visual_axis_column_invalid", $"{path}.columns[{index}] must not be null.");
+            var columnPath = $"{path}.columns[{index}]";
+            ValidateLocalId(column.Id, $"{columnPath}.id", ids);
+            ValidateSingleLineText(column.Label, $"{columnPath}.label", 1, 32);
+            ValidateOptionalText(column.GroupLabel, $"{columnPath}.groupLabel", 40);
+        }
+    }
+
+    private static void ValidateChips(IReadOnlyList<VisualChipSpec>? chips, string path, int maximumCount)
+    {
+        if (chips is null)
+        {
+            return;
+        }
+
+        if (chips.Count > maximumCount)
+        {
+            throw new PptxValidationException(
+                "visual_chips_out_of_range",
+                $"{path} may contain at most {maximumCount} chips.");
+        }
+
+        for (var index = 0; index < chips.Count; index++)
+        {
+            var chip = chips[index]
+                ?? throw new PptxValidationException("visual_chip_invalid", $"{path}[{index}] must not be null.");
+            ValidateSingleLineText(chip.Label, $"{path}[{index}].label", 1, 40);
+            ValidateTone(chip.Tone, $"{path}[{index}].tone");
+        }
+    }
+
+    private static void ValidateSpan(int startColumn, int endColumn, int columnCount, string path)
+    {
+        if (startColumn < 1 || endColumn < startColumn || endColumn > columnCount)
+        {
+            throw new PptxValidationException(
+                "visual_span_invalid",
+                $"{path} must use a one-based inclusive startColumn/endColumn within the declared columns.");
+        }
+    }
+
+    private static void ValidateTone(string tone, string path)
+    {
+        if (!IsSupportedTone(tone))
+        {
+            throw new PptxValidationException(
+                "visual_tone_invalid",
+                $"{path} must be a supported semantic tone or a #RRGGBB color.");
+        }
+    }
+
+    private static void ValidateLocalId(string value, string path, HashSet<string> existingIds)
+    {
+        if (!LocalVisualIdRegex().IsMatch(value) || !existingIds.Add(value))
+        {
+            throw new PptxValidationException(
+                "visual_local_id_invalid",
+                $"{path} must be unique on the slide and contain only lowercase letters, digits, hyphens, or underscores.");
         }
     }
 
@@ -1952,6 +2498,71 @@ public static partial class VisualDeckValidator
         }
     }
 
+    private static void ValidateAuthoredHtml(
+        VisualAuthoredHtmlSpec? authoredHtml,
+        string prefix,
+        bool required)
+    {
+        if (authoredHtml is null)
+        {
+            if (required)
+            {
+                throw new PptxValidationException(
+                    "visual_authored_html_required",
+                    $"{prefix}.authoredHtml is required by the model-authored HTML renderer contract.");
+            }
+
+            return;
+        }
+
+        if (!required)
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_not_supported",
+                $"{prefix}.authoredHtml is accepted only by the model-authored HTML renderer contract.");
+        }
+
+        ValidateText(authoredHtml.Html, $"{prefix}.authoredHtml.html", 1, 24_000);
+        ValidateText(authoredHtml.Css, $"{prefix}.authoredHtml.css", 1, 16_000);
+        var html = authoredHtml.Html;
+        var css = authoredHtml.Css;
+        var forbiddenHtmlTokens = new[]
+        {
+            "<html", "<head", "<body", "<style", "<script", "<link", "<meta", "<base",
+            "<iframe", "<object", "<embed", "<form", "<input", "<button", "<textarea",
+            "<select", "<video", "<audio", "<canvas", "<svg", "src=", "href=", "xlink:href",
+        };
+        if (forbiddenHtmlTokens.Any(token => html.Contains(token, StringComparison.OrdinalIgnoreCase))
+            || EventAttributeRegex().IsMatch(html)
+            || UnsafeResourceRegex().IsMatch(html))
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_unsafe",
+                $"{prefix}.authoredHtml.html must be a static fragment without executable elements, inline SVG, navigation, remote resources, data URIs, or local paths.");
+        }
+
+        if (css.Contains('@')
+            || css.Contains("url(", StringComparison.OrdinalIgnoreCase)
+            || css.Contains("expression(", StringComparison.OrdinalIgnoreCase)
+            || css.Contains("position:fixed", StringComparison.OrdinalIgnoreCase)
+            || UnsafeResourceRegex().IsMatch(css))
+        {
+            throw new PptxValidationException(
+                "visual_authored_css_unsafe",
+                $"{prefix}.authoredHtml.css must not contain @rules, url(), executable CSS, fixed positioning, remote resources, data URIs, or local paths.");
+        }
+
+        var assetIds = authoredHtml.AssetIds ?? [];
+        if (assetIds.Count > 8
+            || assetIds.Any(assetId => !ImageAssetIdRegex().IsMatch(assetId))
+            || assetIds.Count != assetIds.Distinct(StringComparer.Ordinal).Count())
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_assets_invalid",
+                $"{prefix}.authoredHtml.assetIds must contain at most eight distinct registered image asset IDs.");
+        }
+    }
+
     private static void ValidateSpeakerNotes(VisualSpeakerNotesSpec? speakerNotes, string prefix)
     {
         if (speakerNotes is null)
@@ -2000,6 +2611,15 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("\\A[0-9a-f]{32}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex ImageAssetIdRegex();
+
+    [GeneratedRegex("\\A[a-z][a-z0-9_-]{0,47}\\z", RegexOptions.CultureInvariant)]
+    private static partial Regex LocalVisualIdRegex();
+
+    [GeneratedRegex("\\son[a-z][a-z0-9_-]*\\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EventAttributeRegex();
+
+    [GeneratedRegex("(?:https?|file|javascript|data):|(?:^|[\\s'\"(])//|\\\\\\\\", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnsafeResourceRegex();
 
     [GeneratedRegex("^(?:[1-9][0-9]?)/(?:1|2|4|8|16)$", RegexOptions.CultureInvariant)]
     private static partial Regex MusicTimeSignatureRegex();

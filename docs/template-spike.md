@@ -33,6 +33,7 @@
 - 完成版は8ページ、スライド直下229シェイプで、元テンプレートの8マスター・44レイアウトを保持した。全8ページが`/ppt/slideLayouts/slideLayout14.xml`へ接続され、ネイティブグラフと埋め込みExcelを含むPPTXをLibreOfficeで再描画できた。
 - 初回E2Eでは各修正後の状態ポーリングによりLibreChatの50ステップ上限へ達した。`pptx_refine_visual_slide`が最大30秒完了を待って`Succeeded`を直接返す方式へ変更後、同ツール1回だけで修正完了を受け取り、`pptx_get_job`を追加せず応答を終了できた。
 - `pptx_get_job(jobId=latest)`も利用者・会話境界内の直近ジョブを解決し、最終成果物の新しい署名付きURLを返すことを画面上で確認した。
+- 2026-08-28に`visual-v6-dom`のtitle、Cards、Metrics、Processを`dom-to-pptx` 2.1.1と`react-icons/lu`で生成し、同じ「白紙（フッター有）」へ合成した。合成後のOpen XML検証エラーは0件で、LibreOffice 7.4による4ページのPDF/PNG化にも成功した。全PNGを確認し、テンプレートのロゴ、著作権表記、ページ番号が維持され、生成側フッターの二重表示、文字切れ、重なりがないことを確認した。
 
 ## 発見事項
 

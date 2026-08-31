@@ -8,6 +8,7 @@ import {
   MusicGlyph,
   timeSignatureGlyph,
 } from "./music-glyphs.mjs";
+import { renderApprovedReactIcon } from "./react-icons.mjs";
 
 const require = createRequire(import.meta.url);
 const pptxgen = require("pptxgenjs");
@@ -23,10 +24,19 @@ const visualObjectAssets = new Map(
   (spec.visual_object_assets ?? []).map((asset) => [asset.asset_id, asset]),
 );
 const rendererContract = String(spec.rendererContract ?? "visual-v4").toLowerCase();
-if (!["visual-v4", "visual-v5"].includes(rendererContract)) {
+if (!["visual-v4", "visual-v5", "visual-v6-dom", "visual-v7-author-html"].includes(rendererContract)) {
   throw new Error(`Unsupported renderer contract: ${rendererContract}`);
 }
-const usesModernRendererContract = rendererContract === "visual-v5";
+if (rendererContract === "visual-v6-dom" || rendererContract === "visual-v7-author-html") {
+  const { canRenderDeckWithDom, renderDomDeck } = await import("./dom-renderer.mjs");
+  if (canRenderDeckWithDom(spec)) {
+    await renderDomDeck(spec, outputPath, imageAssets);
+    process.stdout.write("PPTX_MCP_RENDERER=dom-to-pptx@2.1.1+react-icons@5.7.0\n");
+    process.exit(0);
+  }
+}
+const usesModernRendererContract = rendererContract === "visual-v5"
+  || rendererContract === "visual-v6-dom";
 const bravuraFont = await loadBravuraFont();
 const templateChrome = spec.templateChrome === true;
 if (!Array.isArray(spec.slides) || spec.slides.length < 1 || spec.slides.length > 50) {
@@ -305,9 +315,15 @@ pptx.layout = "PPTX_MCP_WIDE";
 
 const W = 13.333;
 const H = 7.5;
-const totalSlides = spec.slides.length;
+const slideNumberOffset = Number.isInteger(spec.slideNumberOffset) && spec.slideNumberOffset >= 0
+  ? spec.slideNumberOffset
+  : 0;
+const totalSlides = Number.isInteger(spec.deckTotalSlides) && spec.deckTotalSlides >= spec.slides.length
+  ? spec.deckTotalSlides
+  : spec.slides.length;
 
 for (const [index, slideSpec] of spec.slides.entries()) {
+  const absoluteIndex = slideNumberOffset + index;
   currentDensityName = String(slideSpec.density ?? deckDensityName).toLowerCase();
   density = densityProfiles[currentDensityName];
   if (!density) {
@@ -318,77 +334,77 @@ for (const [index, slideSpec] of spec.slides.entries()) {
   const kind = String(slideSpec.kind).toLowerCase();
   switch (kind) {
     case "title":
-      renderTitle(slide, slideSpec, index);
+      renderTitle(slide, slideSpec, absoluteIndex);
       break;
     case "agenda":
-      renderAgenda(slide, slideSpec, index);
+      renderAgenda(slide, slideSpec, absoluteIndex);
       break;
     case "section":
-      renderSection(slide, slideSpec, index);
+      renderSection(slide, slideSpec, absoluteIndex);
       break;
     case "bullets":
-      renderBullets(slide, slideSpec, index);
+      renderBullets(slide, slideSpec, absoluteIndex);
       break;
     case "metrics":
-      renderMetrics(slide, slideSpec, index);
+      renderMetrics(slide, slideSpec, absoluteIndex);
       break;
     case "comparison":
-      renderComparison(slide, slideSpec, index);
+      renderComparison(slide, slideSpec, absoluteIndex);
       break;
     case "process":
-      renderProcess(slide, slideSpec, index);
+      renderProcess(slide, slideSpec, absoluteIndex);
       break;
     case "timeline":
-      renderTimeline(slide, slideSpec, index);
+      renderTimeline(slide, slideSpec, absoluteIndex);
       break;
     case "chart":
-      renderChart(slide, slideSpec, index);
+      renderChart(slide, slideSpec, absoluteIndex);
       break;
     case "statement":
-      renderStatement(slide, slideSpec, index);
+      renderStatement(slide, slideSpec, absoluteIndex);
       break;
     case "cards":
-      renderCards(slide, slideSpec, index);
+      renderCards(slide, slideSpec, absoluteIndex);
       break;
     case "matrix":
-      renderMatrix(slide, slideSpec, index);
+      renderMatrix(slide, slideSpec, absoluteIndex);
       break;
     case "funnel":
-      renderFunnel(slide, slideSpec, index);
+      renderFunnel(slide, slideSpec, absoluteIndex);
       break;
     case "roadmap":
-      renderRoadmap(slide, slideSpec, index);
+      renderRoadmap(slide, slideSpec, absoluteIndex);
       break;
     case "dashboard":
-      renderDashboard(slide, slideSpec, index);
+      renderDashboard(slide, slideSpec, absoluteIndex);
       break;
     case "quote":
-      renderQuote(slide, slideSpec, index);
+      renderQuote(slide, slideSpec, absoluteIndex);
       break;
     case "closing":
-      renderClosing(slide, slideSpec, index);
+      renderClosing(slide, slideSpec, absoluteIndex);
       break;
     case "structuredbrief":
     case "structured_brief":
-      renderStructuredBrief(slide, slideSpec, index);
+      renderStructuredBrief(slide, slideSpec, absoluteIndex);
       break;
     case "scorecard":
-      renderScorecard(slide, slideSpec, index);
+      renderScorecard(slide, slideSpec, absoluteIndex);
       break;
     case "datatable":
     case "data_table":
-      renderDataTable(slide, slideSpec, index);
+      renderDataTable(slide, slideSpec, absoluteIndex);
       break;
     case "media":
-      renderMedia(slide, slideSpec, index);
+      renderMedia(slide, slideSpec, absoluteIndex);
       break;
     case "nativediagram":
     case "native_diagram":
-      renderNativeDiagram(slide, slideSpec, index);
+      renderNativeDiagram(slide, slideSpec, absoluteIndex);
       break;
     case "musicscore":
     case "music_score":
-      renderMusicScore(slide, slideSpec, index);
+      renderMusicScore(slide, slideSpec, absoluteIndex);
       break;
     default:
       throw new Error(`Unsupported slide kind: ${kind}`);
@@ -2264,13 +2280,13 @@ function diagramNode(slide, node, x, y, w, h, index, shape = pptx.ShapeType.roun
   });
   slide.addText(node.label, {
     x: x + 0.14, y: y + 0.13, w: w - 0.28, h: node.description ? 0.36 : h - 0.26,
-    fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 14 : 12.5), bold: true,
+    fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 15.5 : 14.5), bold: true,
     color: theme.text, margin: 0, align: "center", valign: "mid", fit: "shrink",
   });
   if (node.description) {
     slide.addText(node.description, {
       x: x + 0.14, y: y + 0.55, w: w - 0.28, h: h - 0.68,
-      fontFace: theme.bodyFont, fontSize: scaled(9.5), color: theme.muted,
+      fontFace: theme.bodyFont, fontSize: scaled(14), color: theme.muted,
       margin: 0, align: "center", valign: "mid", fit: "shrink",
     });
   }
@@ -2283,8 +2299,8 @@ function diagramConnector(slide, x1, y1, x2, y2, label) {
   });
   if (label) {
     slide.addText(label, {
-      x: (x1 + x2) / 2 - 0.55, y: (y1 + y2) / 2 - 0.17, w: 1.1, h: 0.26,
-      fontFace: theme.bodyFont, fontSize: scaled(8.5), bold: true,
+      x: (x1 + x2) / 2 - 0.8, y: (y1 + y2) / 2 - 0.22, w: 1.6, h: 0.42,
+      fontFace: theme.bodyFont, fontSize: scaled(14), bold: true,
       color: theme.secondaryTextOnBackground, fill: { color: theme.background, transparency: 8 },
       margin: 0.03, align: "center", fit: "shrink",
     });
@@ -2332,7 +2348,7 @@ function renderNativeDiagram(slide, data, index) {
     nodes.forEach((node, nodeIndex) => {
       slide.addText(node.label, {
         x: 8.25, y: 2.42 + nodeIndex * 0.78, w: 3.62, h: 0.5,
-        fontFace: theme.bodyFont, fontSize: scaled(12.5), bold: node.emphasize,
+        fontFace: theme.bodyFont, fontSize: scaled(node.emphasize ? 15.5 : 14.5), bold: node.emphasize,
         color: theme.text, margin: 0.05, fit: "shrink",
         bullet: { indent: 11 },
       });
@@ -2389,7 +2405,7 @@ function renderNativeDiagram(slide, data, index) {
   if (data.takeaway) {
     slide.addText(data.takeaway, {
       x: 1.05, y: 6.64, w: 11.25, h: 0.3,
-      fontFace: theme.bodyFont, fontSize: scaled(11), bold: true,
+      fontFace: theme.bodyFont, fontSize: scaled(14), bold: true,
       color: theme.secondaryTextOnBackground, margin: 0, align: "center", fit: "shrink",
     });
   }
@@ -3247,7 +3263,7 @@ function card(slide, x, y, w, h, color) {
         ? density.cardBorderWidth * styleProfile.borderWidthScale
         : density.cardBorderWidth,
     },
-    shadow: usesModernRendererContract
+    shadow: usesModernRendererContract && rendererContract !== "visual-v6-dom"
       ? !styleProfile.cardShadow || !density.cardShadow
         ? undefined
         : { type: "outer", color: "182230", opacity: design.style === "bold" ? 0.16 : 0.09, blur: 2, angle: 45, distance: 1 }
@@ -3292,7 +3308,9 @@ function takeawayCard(slide, text, x, y, w, h) {
     rectRadius: 0.08,
     fill: { color: theme.primary },
     line: { color: theme.primary },
-    shadow: { type: "outer", color: "182230", opacity: 0.16, blur: 2.5, angle: 45, distance: 1.2 },
+    shadow: rendererContract === "visual-v6-dom"
+      ? undefined
+      : { type: "outer", color: "182230", opacity: 0.16, blur: 2.5, angle: 45, distance: 1.2 },
   });
   slide.addText("KEY TAKEAWAY", {
     x: x + 0.3, y: y + 0.38, w: w - 0.6, h: 0.28,
@@ -3492,6 +3510,20 @@ function renderIcon(slide, iconName, x, y, size, color, inverse) {
     fill: { color, transparency: inverse ? 68 : 84 },
     line: { color, transparency: 100 },
   });
+  if (rendererContract === "visual-v6-dom") {
+    const svg = renderApprovedReactIcon(normalizedIcon, {
+      color: `#${foreground}`,
+      size: 96,
+    });
+    slide.addImage({
+      data: `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`,
+      x: x + size * 0.19,
+      y: y + size * 0.19,
+      w: size * 0.62,
+      h: size * 0.62,
+    });
+    return;
+  }
   if (normalizedIcon === "search") {
     slide.addShape(pptx.ShapeType.ellipse, {
       x: x + size * 0.24, y: y + size * 0.2, w: size * 0.4, h: size * 0.4,
