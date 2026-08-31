@@ -13,7 +13,9 @@ RUN dotnet build pptx-mcp.sln --configuration Release --no-restore
 
 FROM node:22-bookworm-slim AS visual-renderer
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
+COPY --from=restore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install --yes --no-install-recommends chromium fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /visual-renderer
@@ -34,7 +36,8 @@ RUN dotnet publish src/PptxMcp.Api/PptxMcp.Api.csproj --configuration Release --
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install --yes --no-install-recommends \
         curl \
         chromium \
