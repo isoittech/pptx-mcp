@@ -82,6 +82,7 @@
 
 ## 注意点・落とし穴
 
+- 現行ホストは外向きHTTP/80を遮断しHTTPS/443を許可する。DockerfileのDebian package sourceは`https://deb.debian.org`を維持し、`http://deb.debian.org`へ戻さない。`node:22-bookworm-slim`にはCA bundleがないため、HTTPS aptの前に.NET restore stageの`/etc/ssl/certs/ca-certificates.crt`をコピーする。検証無効化で回避しない。
 - `p:ph` の `type` 属性は省略可能である。`PlaceholderShape.Type?.InnerText` を読み、省略時は `body` として扱う。存在しない型付き属性を `GetAttribute` で読むと Open XML SDK が例外を返す。
 - Bedrock は PPTX 添付をモデル入力へ渡さない。LibreChat 上で `file_id` が会話に提示されない場合に備え、PPTX入力ツールの `sourceFileId` 省略時は呼出ユーザー配下の最新アップロードを解決する。明示された `file_id` は常に優先する。
 - `pptx_analyze`の`layout_id`/`shape_id`/`placeholder_index`を作成・編集ツールへ直接コピーできるよう、対応するネスト入力キーもsnake_caseで維持する。`pptx_create_deck`は完成版の全ページを必須`slides`へまとめ、`sourceFileId`だけの呼出しを許容する説明にしない。
