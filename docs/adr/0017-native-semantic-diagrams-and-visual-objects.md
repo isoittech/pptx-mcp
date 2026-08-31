@@ -39,6 +39,6 @@ Visual Deckは企業テーマと既存22 layoutを安定して再現できる一
 - .NETでbatch/page/conversation上限、semantic mismatch、cross-user/conversation、expiry、Design Brief binding、snapshot persistence、diagram node/edge/cycleを試験する。
 - Nodeで全diagram kind、全新variant、prepared objectを1 deckへ描画し、`p:pic`を含まずnative shapeとarrow endpointを持つことを検証する。
 - LibreOfficeで代表deckをPNG化し、枠と矢印が控えめで、重なり・切れ・過剰強調がないことを確認する。
-- 導入環境のchat UIで1回のbatch prepare、Design Brief、start/add/finish、全ページpreview、必要ページのみ最大2巡refineをE2E確認する。
+- 導入環境のchat UIで1回のbatch prepare、Design Brief、start/add/finish、全ページpreview、必要ページのみ最大3巡refineをE2E確認する。
 - 7ページE2Eで見つかった括弧と下段nodeの重なりを、node間隔、connector終端、layout別anchorへ修正した。修正後の3ページE2Eは142秒で、catalog 2回、batch prepare 1回、add 1回、preview 2回、`visualObjects`省略refine 1回をエラーなく完走した。
 - 最終PPTXは3ページ、native shape 54、slide picture 0、外部relationship 0で、ZIP整合とLibreOffice変換に合格した。7ページE2Eの569秒は性能課題として残し、再帰上限の引上げで隠さない。

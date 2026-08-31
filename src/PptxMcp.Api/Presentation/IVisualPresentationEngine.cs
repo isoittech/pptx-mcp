@@ -9,5 +9,6 @@ public interface IVisualPresentationEngine
         VisualDeckSpec deck,
         bool useTemplateChrome,
         bool useDefaultTemplateCoverOverlay,
+        bool useDefaultTemplateBodyStyle,
         CancellationToken cancellationToken);
 }

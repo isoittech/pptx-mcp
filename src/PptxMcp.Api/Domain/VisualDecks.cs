@@ -53,7 +53,7 @@ public sealed record VisualDeckSpec(
     string? Subject = null,
     string Language = "ja-JP",
     VisualDesignSpec? Design = null,
-    [property: Description("Server-owned renderer contract. New staged decks use visual-v6-dom; saved visual-v4 and visual-v5 payloads retain their original renderer behavior during their stored lineage.")]
+    [property: Description("Server-owned renderer contract. Deployments may use visual-v7-author-html for new staged decks; saved visual-v4, visual-v5, and visual-v6-dom payloads retain their stored renderer behavior during their lineage.")]
     string? RendererContract = null,
     [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
     VisualDeckBrandProfileBinding? BrandProfileBinding = null,
@@ -152,7 +152,17 @@ public sealed record VisualSlideSpec(
     [property: Description("Optional immutable layout recipe ID selected from the active Brand Profile catalog. It never accepts coordinates, code, URLs, or paths.")]
     string? RecipeId = null,
     [property: Description("Optional PowerPoint speaker notes stored outside the visible slide canvas. For MSI-generated decks, provide both the slide purpose and presentation-ready talk script on every slide.")]
-    VisualSpeakerNotesSpec? SpeakerNotes = null);
+    VisualSpeakerNotesSpec? SpeakerNotes = null,
+    [property: Description("Required on visual-v7-author-html decks. The model authors a complete static 1600x900 slide as an HTML fragment plus slide-scoped CSS; the server validates it and dom-to-pptx converts the browser-computed DOM. JavaScript, remote resources, arbitrary SVG, and local paths are forbidden.")]
+    VisualAuthoredHtmlSpec? AuthoredHtml = null);
+
+public sealed record VisualAuthoredHtmlSpec(
+    [property: Description("Static HTML fragment placed inside the 1600x900 .slide root. Do not include html, head, body, style, script, iframe, object, embed, form, inline SVG, event attributes, URLs, or local paths. Use data-pptx-icon with an approved Lucide meaning ID and data-pptx-asset with an ID listed in assetIds.")]
+    string Html,
+    [property: Description("CSS for this slide. Scope every selector below .slide. CSS may use grid, flex, absolute positioning, gradients, borders, and transforms, but may not use @rules, url(), external resources, JavaScript, or local paths.")]
+    string Css,
+    [property: Description("Zero to eight opaque registered image asset IDs referenced by data-pptx-asset attributes in html. Do not put image bytes, URLs, or paths here.")]
+    IReadOnlyList<string>? AssetIds = null);
 
 public sealed record VisualSpeakerNotesSpec(
     [property: Description("One concise sentence stating what this slide must communicate or persuade the audience to understand. This appears under the fixed 'このスライドの狙い' heading in PowerPoint speaker notes.")]
@@ -487,7 +497,10 @@ public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("layout_kinds")] IReadOnlyList<string> LayoutKinds,
     [property: JsonPropertyName("renderer")] string Renderer,
     [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
-    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
+    [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
+    [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
 
 public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
@@ -497,7 +510,10 @@ public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("template_layout_name")] string TemplateLayoutName,
     [property: JsonPropertyName("template_theme_applied")] bool TemplateThemeApplied,
     [property: JsonPropertyName("speaker_notes_count")] int SpeakerNotesCount,
-    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings);
+    [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
+    [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
+    [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
 
 public sealed record VisualSlideRevision(
     [property: JsonPropertyName("slide_number"), Description("One-based slide number to replace.")] int SlideNumber,
@@ -672,11 +688,11 @@ public static partial class VisualDeckValidator
         ArgumentNullException.ThrowIfNull(deck);
         ValidateMetadata(deck.Title, deck.Subject, deck.Language, deck.Theme, deck.Design);
         var rendererContract = deck.RendererContract?.ToLowerInvariant() ?? "visual-v4";
-        if (rendererContract is not ("visual-v4" or "visual-v5" or "visual-v6-dom"))
+        if (rendererContract is not ("visual-v4" or "visual-v5" or "visual-v6-dom" or "visual-v7-author-html"))
         {
             throw new PptxValidationException(
                 "visual_renderer_contract_invalid",
-                "rendererContract is server-owned and must be visual-v4, visual-v5, or visual-v6-dom.");
+                "rendererContract is server-owned and must be visual-v4, visual-v5, visual-v6-dom, or visual-v7-author-html.");
         }
 
         if (deck.Slides is null || deck.Slides.Count is < 1 || deck.Slides.Count > maximumSlides)
@@ -692,7 +708,8 @@ public static partial class VisualDeckValidator
                 deck.Slides[index],
                 index + 1,
                 deck.Design?.Density,
-                rendererContract is "visual-v5" or "visual-v6-dom");
+                rendererContract is "visual-v5" or "visual-v6-dom" or "visual-v7-author-html",
+                rendererContract == "visual-v7-author-html");
         }
 
         ValidateVisualObjectAssets(deck);
@@ -973,7 +990,8 @@ public static partial class VisualDeckValidator
         VisualSlideSpec slide,
         int slideNumber,
         string? deckDensity,
-        bool usesModernRendererContract)
+        bool usesModernRendererContract,
+        bool requiresAuthoredHtml)
     {
         if (slide is null)
         {
@@ -989,6 +1007,7 @@ public static partial class VisualDeckValidator
         ValidateOptionalText(slide.Takeaway, $"{prefix}.takeaway", 280);
         ValidateOptionalText(slide.RecipeId, $"{prefix}.recipeId", 128);
         ValidateSpeakerNotes(slide.SpeakerNotes, prefix);
+        ValidateAuthoredHtml(slide.AuthoredHtml, prefix, requiresAuthoredHtml);
         if (slide.RecipeId is not null && !OpaqueIdentifierRegex().IsMatch(slide.RecipeId))
         {
             throw new PptxValidationException(
@@ -1013,9 +1032,18 @@ public static partial class VisualDeckValidator
                     : $"{prefix}.variant is not recognized by the stored legacy renderer contract.");
         }
 
-        if (usesModernRendererContract)
+        if (usesModernRendererContract && !requiresAuthoredHtml)
         {
             ValidateVariantForSlide(slide, prefix);
+        }
+
+        // In visual-v7-author-html the authored DOM is the only rendering input.
+        // Legacy semantic payloads may be present on an older/retried request, but
+        // validating their renderer-specific geometry would reject a slide for data
+        // that is neither rendered nor used as a fallback.
+        if (requiresAuthoredHtml)
+        {
+            return;
         }
 
         ValidateList(slide.Bullets, $"{prefix}.bullets", 8, 180);
@@ -2470,6 +2498,71 @@ public static partial class VisualDeckValidator
         }
     }
 
+    private static void ValidateAuthoredHtml(
+        VisualAuthoredHtmlSpec? authoredHtml,
+        string prefix,
+        bool required)
+    {
+        if (authoredHtml is null)
+        {
+            if (required)
+            {
+                throw new PptxValidationException(
+                    "visual_authored_html_required",
+                    $"{prefix}.authoredHtml is required by the model-authored HTML renderer contract.");
+            }
+
+            return;
+        }
+
+        if (!required)
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_not_supported",
+                $"{prefix}.authoredHtml is accepted only by the model-authored HTML renderer contract.");
+        }
+
+        ValidateText(authoredHtml.Html, $"{prefix}.authoredHtml.html", 1, 24_000);
+        ValidateText(authoredHtml.Css, $"{prefix}.authoredHtml.css", 1, 16_000);
+        var html = authoredHtml.Html;
+        var css = authoredHtml.Css;
+        var forbiddenHtmlTokens = new[]
+        {
+            "<html", "<head", "<body", "<style", "<script", "<link", "<meta", "<base",
+            "<iframe", "<object", "<embed", "<form", "<input", "<button", "<textarea",
+            "<select", "<video", "<audio", "<canvas", "<svg", "src=", "href=", "xlink:href",
+        };
+        if (forbiddenHtmlTokens.Any(token => html.Contains(token, StringComparison.OrdinalIgnoreCase))
+            || EventAttributeRegex().IsMatch(html)
+            || UnsafeResourceRegex().IsMatch(html))
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_unsafe",
+                $"{prefix}.authoredHtml.html must be a static fragment without executable elements, inline SVG, navigation, remote resources, data URIs, or local paths.");
+        }
+
+        if (css.Contains('@')
+            || css.Contains("url(", StringComparison.OrdinalIgnoreCase)
+            || css.Contains("expression(", StringComparison.OrdinalIgnoreCase)
+            || css.Contains("position:fixed", StringComparison.OrdinalIgnoreCase)
+            || UnsafeResourceRegex().IsMatch(css))
+        {
+            throw new PptxValidationException(
+                "visual_authored_css_unsafe",
+                $"{prefix}.authoredHtml.css must not contain @rules, url(), executable CSS, fixed positioning, remote resources, data URIs, or local paths.");
+        }
+
+        var assetIds = authoredHtml.AssetIds ?? [];
+        if (assetIds.Count > 8
+            || assetIds.Any(assetId => !ImageAssetIdRegex().IsMatch(assetId))
+            || assetIds.Count != assetIds.Distinct(StringComparer.Ordinal).Count())
+        {
+            throw new PptxValidationException(
+                "visual_authored_html_assets_invalid",
+                $"{prefix}.authoredHtml.assetIds must contain at most eight distinct registered image asset IDs.");
+        }
+    }
+
     private static void ValidateSpeakerNotes(VisualSpeakerNotesSpec? speakerNotes, string prefix)
     {
         if (speakerNotes is null)
@@ -2521,6 +2614,12 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("\\A[a-z][a-z0-9_-]{0,47}\\z", RegexOptions.CultureInvariant)]
     private static partial Regex LocalVisualIdRegex();
+
+    [GeneratedRegex("\\son[a-z][a-z0-9_-]*\\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex EventAttributeRegex();
+
+    [GeneratedRegex("(?:https?|file|javascript|data):|(?:^|[\\s'\"(])//|\\\\\\\\", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnsafeResourceRegex();
 
     [GeneratedRegex("^(?:[1-9][0-9]?)/(?:1|2|4|8|16)$", RegexOptions.CultureInvariant)]
     private static partial Regex MusicTimeSignatureRegex();

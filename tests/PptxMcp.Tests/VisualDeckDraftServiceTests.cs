@@ -154,10 +154,172 @@ public sealed class VisualDeckDraftServiceTests
         Assert.Equal("visual_draft_batch_invalid", exception.Code);
     }
 
-    private static VisualDeckDraftService CreateService(int maximumSlides = 50) =>
+    [Fact]
+    public void UsesModelAuthoredHtmlContractOnlyWhenDeploymentEnablesIt()
+    {
+        var service = CreateService(useModelAuthoredHtmlRenderer: true);
+        var started = service.Begin(Caller, "HTML生成", 1, null, null, "ja-JP", null);
+        service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.NativeDiagram,
+                    "判断構造",
+                    AuthoredHtml: new VisualAuthoredHtmlSpec(
+                        "<div class=\"layout\"><h1>判断構造</h1></div>",
+                        ".slide{background:white}.slide .layout{display:grid}")),
+            ]);
+
+        var submission = service.AcquireForSubmission(Caller, started.DraftId);
+
+        Assert.Equal("visual-v7-author-html", submission.Deck?.RendererContract);
+        Assert.NotNull(submission.Deck?.Slides[0].AuthoredHtml);
+    }
+
+    [Fact]
+    public void ModelAuthoredHtmlContractAcceptsBoundedBatches()
+    {
+        var service = CreateService(useModelAuthoredHtmlRenderer: true);
+        var started = service.Begin(Caller, "HTML小分け追加", 5, null, null, "ja-JP", null);
+
+        Assert.Equal(4, started.MaximumBatchSlides);
+        Assert.Contains("next 2 consecutive complete slides", started.Instruction, StringComparison.Ordinal);
+        Assert.Contains("Only send 3 to 4", started.Instruction, StringComparison.Ordinal);
+
+        var undersizedException = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [CreateAuthoredSlide("1枚目")]));
+
+        Assert.Equal("visual_authored_html_batch_too_small", undersizedException.Code);
+
+        var accepted = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("1枚目"),
+                CreateAuthoredSlide("2枚目"),
+                CreateAuthoredSlide("3枚目"),
+            ]);
+
+        Assert.Equal(3, accepted.AcceptedSlideCount);
+        Assert.Contains("next 2 consecutive complete slides", accepted.Instruction, StringComparison.Ordinal);
+
+        var finished = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [CreateAuthoredSlide("4枚目"), CreateAuthoredSlide("5枚目")]);
+        Assert.Equal(0, finished.RemainingSlideCount);
+
+        var oversizedBatchService = CreateService(useModelAuthoredHtmlRenderer: true);
+        var oversizedBatchDraft = oversizedBatchService.Begin(Caller, "HTML過大batch", 5, null, null, "ja-JP", null);
+        var exception = Assert.Throws<PptxValidationException>(() => oversizedBatchService.AddSlides(
+            Caller,
+            oversizedBatchDraft.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("1枚目"),
+                CreateAuthoredSlide("2枚目"),
+                CreateAuthoredSlide("3枚目"),
+                CreateAuthoredSlide("4枚目"),
+                CreateAuthoredSlide("5枚目"),
+            ]));
+
+        Assert.Equal("visual_draft_batch_invalid", exception.Code);
+    }
+
+    [Fact]
+    public void DefaultTemplateBodyRequiresSeparateSemanticAndHtmlTitleClaim()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "organization-default",
+            defaultTemplateBodyUsesAccent2Headings: true);
+        var started = service.Begin(Caller, "HTML見出し契約", 2, null, null, "ja-JP", null);
+
+        var exception = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("表紙"),
+                CreateAuthoredSlide("本文") with { Subtitle = "主張" },
+            ]));
+
+        Assert.Equal("visual_default_body_heading_contract_required", exception.Code);
+        Assert.Contains("retry the same complete batch", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("no slide in the rejected batch was accepted", exception.Message, StringComparison.Ordinal);
+
+        var accepted = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("表紙"),
+                CreateAuthoredSlide("本文", "主張", includeBodyRoles: true),
+            ]);
+        Assert.Equal(0, accepted.RemainingSlideCount);
+    }
+
+    [Fact]
+    public void AlternateTemplateDoesNotInheritDefaultBodyHeadingContract()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "organization-default",
+            defaultTemplateBodyUsesAccent2Headings: true);
+        var started = service.Begin(
+            Caller,
+            "テンプレートなしHTML",
+            2,
+            null,
+            null,
+            "ja-JP",
+            null,
+            "none");
+
+        var accepted = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [CreateAuthoredSlide("表紙"), CreateAuthoredSlide("本文")]);
+
+        Assert.Equal(0, accepted.RemainingSlideCount);
+    }
+
+    private static VisualDeckDraftService CreateService(
+        int maximumSlides = 50,
+        bool useModelAuthoredHtmlRenderer = false,
+        string defaultTemplateId = "",
+        bool defaultTemplateBodyUsesAccent2Headings = false) =>
         new(
-            Options.Create(new PptxMcpOptions { MaxSlides = maximumSlides }),
+            Options.Create(new PptxMcpOptions
+            {
+                MaxSlides = maximumSlides,
+                UseModelAuthoredHtmlRenderer = useModelAuthoredHtmlRenderer,
+                DefaultTemplateId = defaultTemplateId,
+                DefaultTemplateBodyUsesAccent2Headings = defaultTemplateBodyUsesAccent2Headings,
+            }),
             TimeProvider.System);
+
+    private static VisualSlideSpec CreateAuthoredSlide(
+        string title,
+        string? subtitle = null,
+        bool includeBodyRoles = false) =>
+        new(
+            VisualSlideKind.StructuredBrief,
+            title,
+            Subtitle: subtitle,
+            AuthoredHtml: new VisualAuthoredHtmlSpec(
+                includeBodyRoles
+                    ? $"<div><h2 data-pptx-role=\"body-title\">{title}</h2><ul data-pptx-role=\"body-claim\"><li>{subtitle}</li></ul></div>"
+                    : $"<div><h2>{title}</h2></div>",
+                ".slide{padding:64px}.slide h2{font-size:40px}"));
 
     private static VisualSlideSpec[] CreateSlides(int start, int count) =>
         Enumerable.Range(start, count)

@@ -37,6 +37,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
         VisualSlideKind.TransformationEvidence,
         VisualSlideKind.ArtifactShowcase,
         VisualSlideKind.GanttSchedule,
+        VisualSlideKind.NativeDiagram,
     ];
 
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
@@ -46,22 +47,43 @@ public sealed class PptxGenJsVisualPresentationEngine(
 
     private readonly string rendererPath = options.Value.VisualRendererPath;
     private readonly TimeSpan timeout = TimeSpan.FromMinutes(options.Value.JobTimeoutMinutes);
+    private readonly bool requireDomOnlyRenderer = options.Value.RequireDomOnlyRenderer;
 
     public async Task<VisualDeckCreationResult> CreateAsync(
         string destinationPath,
         VisualDeckSpec deck,
         bool useTemplateChrome,
         bool useDefaultTemplateCoverOverlay,
+        bool useDefaultTemplateBodyStyle,
         CancellationToken cancellationToken)
     {
         var workingDirectory = Path.GetDirectoryName(destinationPath)
             ?? throw new InvalidOperationException("The presentation output directory is missing.");
         Directory.CreateDirectory(workingDirectory);
         var rendererContract = deck.RendererContract ?? "visual-v4";
-        var usePageLevelComposition = rendererContract.Equals("visual-v6-dom", StringComparison.OrdinalIgnoreCase)
-            && deck.Slides.Any(static slide => DomSupportedSlideKinds.Contains(slide.Kind))
-            && deck.Slides.Any(static slide => !DomSupportedSlideKinds.Contains(slide.Kind));
+        var isServerOwnedDomContract = rendererContract.Equals("visual-v6-dom", StringComparison.OrdinalIgnoreCase);
+        var isModelAuthoredHtmlContract = rendererContract.Equals("visual-v7-author-html", StringComparison.OrdinalIgnoreCase);
+        var isDomContract = isServerOwnedDomContract || isModelAuthoredHtmlContract;
+        var domSupport = deck.Slides
+            .Select(slide => CanRenderWithDom(slide, isModelAuthoredHtmlContract))
+            .ToArray();
+        if (requireDomOnlyRenderer && isDomContract && domSupport.Any(static supported => !supported))
+        {
+            var unsupportedKinds = deck.Slides
+                .Where((_, index) => !domSupport[index])
+                .Select(static slide => slide.Kind.ToString())
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static kind => kind, StringComparer.Ordinal);
+            throw new PptxValidationException(
+                "dom_renderer_required",
+                $"This deployment requires dom-to-pptx for every page in renderer contract {rendererContract}. Unsupported kinds: {string.Join(", ", unsupportedKinds)}.");
+        }
+        var usePageLevelComposition = isDomContract
+            && (isModelAuthoredHtmlContract && deck.Slides.Count > 1
+                || domSupport.Any(static supported => supported)
+                && domSupport.Any(static supported => !supported));
         var usedDomRenderer = false;
+        var rendererUsageBySlide = new List<string>(deck.Slides.Count);
         if (usePageLevelComposition)
         {
             var segmentDirectory = Path.Combine(workingDirectory, "visual-render-segments");
@@ -79,11 +101,13 @@ public sealed class PptxGenJsVisualPresentationEngine(
                     segmentDeck,
                     useTemplateChrome,
                     useDefaultTemplateCoverOverlay,
+                    useDefaultTemplateBodyStyle,
                     index,
                     deck.Slides.Count,
                     cancellationToken).ConfigureAwait(false);
                 PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(segmentPath);
                 usedDomRenderer |= segmentUsedDom;
+                rendererUsageBySlide.Add(segmentUsedDom ? "dom-to-pptx" : "pptxgenjs-fallback");
                 segmentPaths.Add(segmentPath);
             }
 
@@ -99,15 +123,25 @@ public sealed class PptxGenJsVisualPresentationEngine(
                 deck,
                 useTemplateChrome,
                 useDefaultTemplateCoverOverlay,
+                useDefaultTemplateBodyStyle,
                 0,
                 deck.Slides.Count,
                 cancellationToken).ConfigureAwait(false);
+            if (requireDomOnlyRenderer && isDomContract && !usedDomRenderer)
+            {
+                throw new PptxValidationException(
+                    "dom_renderer_required",
+                    $"The renderer did not confirm dom-to-pptx for renderer contract {rendererContract}.");
+            }
+            rendererUsageBySlide.AddRange(deck.Slides.Select(_ => usedDomRenderer ? "dom-to-pptx" : "pptxgenjs-fallback"));
         }
 
         PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(destinationPath);
 
         var renderer = usePageLevelComposition
-            ? $"page-level DOM/native composition: dom-to-pptx 2.1.1 + react-icons 5.7.0 with PptxGenJS 4.0.1 native fallback ({rendererContract})"
+            ? isModelAuthoredHtmlContract
+                ? $"page-level model-authored HTML/CSS: dom-to-pptx 2.1.1 + react-icons 5.7.0 ({rendererContract})"
+                : $"page-level DOM/native composition: dom-to-pptx 2.1.1 + react-icons 5.7.0 with PptxGenJS 4.0.1 native fallback ({rendererContract})"
             : usedDomRenderer
                 ? $"dom-to-pptx 2.1.1 HTML/CSS renderer + react-icons 5.7.0 Lucide allowlist ({rendererContract})"
                 : $"PptxGenJS 4.0.1 declarative fallback renderer {rendererContract}";
@@ -116,7 +150,10 @@ public sealed class PptxGenJsVisualPresentationEngine(
             deck.Slides.Select(slide => slide.Kind.ToString()).ToArray(),
             useTemplateChrome ? $"{renderer} + template chrome" : renderer,
             deck.Slides.Count(static slide => slide.SpeakerNotes is not null),
-            VisualDeckValidator.GetDesignWarnings(deck));
+            VisualDeckValidator.GetDesignWarnings(deck),
+            rendererUsageBySlide.Count(static usage => usage == "dom-to-pptx"),
+            rendererUsageBySlide.Count(static usage => usage == "pptxgenjs-fallback"),
+            rendererUsageBySlide);
     }
 
     private async Task<bool> RenderDeckAsync(
@@ -124,6 +161,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
         VisualDeckSpec deck,
         bool useTemplateChrome,
         bool useDefaultTemplateCoverOverlay,
+        bool useDefaultTemplateBodyStyle,
         int slideNumberOffset,
         int deckTotalSlides,
         CancellationToken cancellationToken)
@@ -135,6 +173,7 @@ public sealed class PptxGenJsVisualPresentationEngine(
             ?? throw new PptxValidationException("invalid_visual_deck", "The visual deck specification could not be serialized.");
         specification["templateChrome"] = useTemplateChrome;
         specification["defaultTemplateCoverOverlay"] = useDefaultTemplateCoverOverlay;
+        specification["defaultTemplateBodyStyle"] = useDefaultTemplateBodyStyle;
         specification["slideNumberOffset"] = slideNumberOffset;
         specification["deckTotalSlides"] = deckTotalSlides;
         var assetMetadata = new JsonObject();
@@ -220,6 +259,14 @@ public sealed class PptxGenJsVisualPresentationEngine(
 
     private static IEnumerable<string> EnumerateImageAssetIds(VisualSlideSpec slide)
     {
+        if (slide.AuthoredHtml?.AssetIds is not null)
+        {
+            foreach (var assetId in slide.AuthoredHtml.AssetIds)
+            {
+                yield return assetId;
+            }
+        }
+
         if (slide.Media is not null)
         {
             yield return slide.Media.AssetId;
@@ -234,5 +281,21 @@ public sealed class PptxGenJsVisualPresentationEngine(
         {
             yield return artifact.AssetId;
         }
+    }
+
+    private static bool CanRenderWithDom(VisualSlideSpec slide, bool modelAuthoredHtml)
+    {
+        if (modelAuthoredHtml)
+        {
+            return slide.AuthoredHtml is not null;
+        }
+
+        if (!DomSupportedSlideKinds.Contains(slide.Kind))
+        {
+            return false;
+        }
+
+        return slide.Kind != VisualSlideKind.NativeDiagram
+            || slide.Diagram?.Kind is VisualDiagramKind.Tree or VisualDiagramKind.Flow;
     }
 }

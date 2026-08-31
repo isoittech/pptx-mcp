@@ -12,8 +12,11 @@ services:
       PptxMcp__LibreChatUploadsRoot: /data/librechat-uploads
       PptxMcp__TemplatesRoot: /data/pptx-templates
       PptxMcp__DefaultTemplateId: ${PPTX_MCP_DEFAULT_TEMPLATE_ID:-}
+      PptxMcp__DefaultTemplateBodyUsesAccent2Headings: ${PPTX_MCP_DEFAULT_TEMPLATE_BODY_USES_ACCENT2_HEADINGS:-false}
       PptxMcp__BrandProfilesRoot: /data/pptx-brand-profiles
       PptxMcp__RequireDesignBrief: ${PPTX_MCP_REQUIRE_DESIGN_BRIEF:-false}
+      PptxMcp__UseModelAuthoredHtmlRenderer: ${PPTX_MCP_USE_MODEL_AUTHORED_HTML_RENDERER:-false}
+      PptxMcp__RequireDomOnlyRenderer: ${PPTX_MCP_REQUIRE_DOM_ONLY_RENDERER:-false}
       PptxMcp__FirstAssistantNotice: ${PPTX_MCP_FIRST_ASSISTANT_NOTICE:-}
     read_only: true
     tmpfs:

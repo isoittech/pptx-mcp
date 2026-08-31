@@ -90,7 +90,7 @@ public sealed class PowerPointTools
             "五線譜とウクレレTABを編集可能なPowerPoint図形で併記する場合はmusicScoreを使い、音高、音価、弦、フレット、指番号を指定する",
             "成功したVisual Deckへページを追加する場合はpptx_insert_visual_slidesへ追加分だけを渡し、既存ページを再送しない",
             "非同期ジョブ受領後はpptx_wait_for_jobでサーバー内待機し、短間隔の状態確認を繰り返さない",
-            "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡してサーバー強制の最大2巡で収束させる",
+            "pptx_get_preview_imagesで全ページを実際に見て、企業テンプレート資料はpptx_refine_deck、白紙・ブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡してサーバー強制の最大3巡で収束させる",
             "Visual Deck生成が一度成功したら全体生成を再開始せず、問題ページの差分修正または追加ページだけの挿入を使う",
             "視覚確認後にのみPPTXのダウンロードリンクを提示する",
         },
@@ -490,13 +490,13 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_add_visual_slides_to_draft", Destructive = true),
-     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページだけ追加します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。各ページは1枚1メッセージに絞り、speakerNotesへpurpose（このページで訴えること）とtalkScript（読み上げ原稿）を入れます。ノートはPowerPointの発表者ノートへ保存され、スライド面へ描画されません。Title/Agenda/Section/Bullets/Statement/Cards/Metrics/Comparison/StructuredBrief/Scorecard/DataTable/Media/NativeDiagram/MusicScore/Process/Timeline/Matrix/Funnel/Roadmap/Chart/Dashboard/Quote/Closingを内容に応じて使い分けます。NativeDiagramはdiagram.kind=tree|flow|cycle|concentric|networkと上限付きnodes/edgesを使い、座標・SVG/XMLは使いません。Mediaはvariant=splitと、pptx_register_uploaded_image_assetが返した同じ会話のmedia.assetId、cropIntent、textPositionを必須とし、空欄・仮画像・URL・pathを完成扱いしません。StructuredBriefはstructuredBrief.sections、Scorecardは評価軸×選択肢、DataTableはdataTableの編集可能なcolumns/rows/cells（header/cell textは明示改行なし）、MusicScoreはmusicScoreの五線譜とTABを使います。slide単位のdensityはairy/balanced/detailedでdeck既定を上書きできます。variantはautoのほか、MediaまたはBullets 4件以上かつtakeawayなしのsplit、Metrics正確に3件またはCards 3〜4件のspotlight、StructuredBrief 3 sectionsのeditorial、Processのloop、Timeline/Roadmapのstepped、Funnelのpyramidだけを使えます。prepared visual objectはslide.visualObjectsへ最大3 IDを明示できます。Design Brief利用時は省略すればAsset Planの同一IDをサーバーが補完し、明示した不一致は拒否します。Design Briefを使うdraftでは全slideへ計画済みrecipeIdをコピーし、recipeのkind/density/variantから変えません。6枚以上では4種類以上の構図を計画し、受理済みページを再送せず、remaining_slide_countが0になるまでfinishしません。")]
+     Description("新規Visual Deckのドラフトへ、順番どおりの完成済みVisualSlideSpecを1〜4ページ追加します。visual-v7-author-htmlでは各ページのHTML/CSSを最後まで完成させ、2〜4ページ、残りが1ページだけならその1ページを送ります。直前の結果の範囲内で、HTML/CSSを途中切れにせず完成できる最大のbatchを優先します。startSlideNumberは省略でき、サーバーが現在の末尾から自動計算します。各ページのspeakerNotesへpurpose（このページで訴えること）とtalkScript（読み上げ原稿）を入れます。ノートはPowerPointの発表者ノートへ保存され、スライド面へ描画されません。Title/Agenda/Section/Bullets/Statement/Cards/Metrics/Comparison/StructuredBrief/Scorecard/DataTable/Media/NativeDiagram/MusicScore/Process/Timeline/Matrix/Funnel/Roadmap/Chart/Dashboard/Quote/Closingを内容に応じて使い分けます。NativeDiagramはdiagram.kind=tree|flow|cycle|concentric|networkと上限付きnodes/edgesを使い、座標・SVG/XMLは使いません。Mediaはvariant=splitと、pptx_register_uploaded_image_assetが返した同じ会話のmedia.assetId、cropIntent、textPositionを必須とし、空欄・仮画像・URL・pathを完成扱いしません。StructuredBriefはstructuredBrief.sections、Scorecardは評価軸×選択肢、DataTableはdataTableの編集可能なcolumns/rows/cells（header/cell textは明示改行なし）、MusicScoreはmusicScoreの五線譜とTABを使います。slide単位のdensityはairy/balanced/detailedでdeck既定を上書きできます。variantはautoのほか、MediaまたはBullets 4件以上かつtakeawayなしのsplit、Metrics正確に3件またはCards 3〜4件のspotlight、StructuredBrief 3 sectionsのeditorial、Processのloop、Timeline/Roadmapのstepped、Funnelのpyramidだけを使えます。prepared visual objectはslide.visualObjectsへ最大3 IDを明示できます。Design Brief利用時は省略すればAsset Planの同一IDをサーバーが補完し、明示した不一致は拒否します。Design Briefを使うdraftでは全slideへ計画済みrecipeIdをコピーし、recipeのkind/density/variantから変えません。6枚以上では4種類以上の構図を計画し、受理済みページを再送せず、remaining_slide_countが0になるまでfinishしません。")]
     public static object AddVisualSlidesToDraft(
         CallerContextAccessor callerContext,
         VisualDeckDraftService drafts,
         [Required, Description("pptx_start_visual_deckが返したdraft_id。")]
         string draftId,
-        [Required, Description("追加する連続した1〜4ページだけ。各slideのspeakerNotesへ一行240文字以内のpurposeと1200文字以内のtalkScriptを指定します。Mediaはmedia.assetId、cropIntent=contain|cover|focalCenter|focalLeft|focalRight、textPosition=left|rightを指定し、画像が未登録ならMediaを使いません。NativeDiagramはcycle 3〜6、concentric 2〜4、network 3〜9、tree/flow 3〜12 nodes、edges最大18です。visualObjectsは同slide向けに準備したopaque assetIdを最大3件だけ指定できます。Design Briefで計画済みなら省略時にサーバーが補完します。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。DataTableはdataTable.columnsとdataTable.rowsを使い、全rowのcells数をcolumns数と一致させ、header/cell textを明示改行なしの1行にします。airyは最大4列×6行、balancedは5列×8行、detailedは6列×10行です。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件です。任意のdensityと、Design Brief利用時は必須のrecipeIdをslide直下に指定します。")]
+        [Required, Description("追加する完成済みの連続1〜4ページ。visual-v7-author-htmlでは各ページのHTML/CSSを完結させ、2〜4ページ、残りが1ページだけならその1ページをまとめます。4ページへ届かせるためにHTML/CSSを省略しません。各slideのspeakerNotesへ一行240文字以内のpurposeと1200文字以内のtalkScriptを指定します。Mediaはmedia.assetId、cropIntent=contain|cover|focalCenter|focalLeft|focalRight、textPosition=left|rightを指定し、画像が未登録ならMediaを使いません。NativeDiagramはcycle 3〜6、concentric 2〜4、network 3〜9、tree/flow 3〜12 nodes、edges最大18です。visualObjectsは同slide向けに準備したopaque assetIdを最大3件だけ指定できます。Design Briefで計画済みなら省略時にサーバーが補完します。Metricsはmetricsを2〜6件、Dashboardはmetricsを2〜4件とchart、Cardsはcardsを3〜6件、Comparisonはpanelsを2〜3件、StructuredBriefはsectionsを2〜3件・合計900文字以内、Scorecardはoptionsを2〜4件、criteriaを2〜6行かつ各cells数をoptions数と一致させます。DataTableはdataTable.columnsとdataTable.rowsを使い、全rowのcells数をcolumns数と一致させ、header/cell textを明示改行なしの1行にします。airyは最大4列×6行、balancedは5列×8行、detailedは6列×10行です。MusicScoreはmusicScoreへ1〜8小節・最大64イベントを指定します。Process/Timeline/Funnel/Roadmapはstepsを3〜6件、Matrixはquadrantsを正確に4件です。任意のdensityと、Design Brief利用時は必須のrecipeIdをslide直下に指定します。")]
         IReadOnlyList<VisualSlideSpec> slides,
         [Description("省略推奨。明示する場合はこのバッチの先頭ページ番号で、直前のnext_slide_numberと一致させます。")]
         int? startSlideNumber = null)
@@ -609,7 +609,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_deck", Destructive = true),
-     Description("互換用のVisual Deck差分修正ツールです。サーバーは1回につき問題ページ1枚だけを受理し、最大2巡を強制します。通常はjobId=latestを自動解決して30秒待機するpptx_refine_visual_slideを優先してください。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトを維持します。Design Brief / Brand Profile-bound deckの差し替えslideは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示します。visualObjectsの異なるIDへの変更は拒否します。資料全体を再送してはいけません。")]
+     Description("互換用のVisual Deck差分修正ツールです。サーバーは1回につき問題ページ1枚だけを受理し、最大3巡を強制します。通常はjobId=latestを自動解決して30秒待機するpptx_refine_visual_slideを優先してください。ブランドVisual Deckでは元の企業テンプレートと選択レイアウトを維持します。Design Brief / Brand Profile-bound deckの差し替えslideは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示します。visualObjectsの異なるIDへの変更は拒否します。資料全体を再送してはいけません.")]
     public static async Task<object> RefineVisualDeckAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -655,7 +655,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。Design Brief / Brand Profile-bound deckでは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示し、visualObjectsの異なるIDへの変更は拒否します。別recipeや別構図へ変更しません。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大2巡に制限します。上限後は全体を再作成しません。")]
+     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。Design Brief / Brand Profile-bound deckでは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示し、visualObjectsの異なるIDへの変更は拒否します。別recipeや別構図へ変更しません。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大3巡に制限します。上限後は全体を再作成しません.")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -790,7 +790,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
-     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全ページ確認はスライド番号順の連続4枚ずつ、最後の端数だけ1〜3枚で取得し、同じjobの同じページを重複取得しません。文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大2巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません。")]
+     Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全ページ確認はスライド番号順の連続4枚ずつ、最後の端数だけ1〜3枚で取得し、同じjobの同じページを重複取得しません。文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大3巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません.")]
     public static async Task<CallToolResult> GetPreviewImagesAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -816,7 +816,7 @@ public sealed class PowerPointTools
 
             content.Add(new TextContentBlock
             {
-                Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck use pptx_refine_visual_slide with one complete replacement slide at a time. Never resend, restart, or rebuild the complete deck after a successful generation. The server permits at most two visual refinement rounds.",
+                Text = "Evaluate the returned slides for clipping, overflow, overlap, legibility, spacing, alignment, contrast, hierarchy, density, balance, visual variety, and consistency. Also verify that the heading sequence tells the story without body text, reading order is unambiguous, each block has one main point, emphasis color occupies roughly 15% or less, and content text does not appear below 9 pt. For a placeholder template deck use pptx_refine_deck; for a visual or branded visual deck use pptx_refine_visual_slide with one complete replacement slide at a time. Never resend, restart, or rebuild the complete deck after a successful generation. The server permits at most three visual refinement rounds. If clipping survives one revision, shorten visible copy or simplify the structure instead of merely tightening spacing or reducing font size.",
             });
             return new CallToolResult
             {

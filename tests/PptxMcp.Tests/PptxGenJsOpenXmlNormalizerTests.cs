@@ -139,6 +139,20 @@ public sealed class PptxGenJsOpenXmlNormalizerTests
     }
 
     [Fact]
+    public void LeavesTableCellWithoutAnchorUnchanged()
+    {
+        var cellProperties = new A.TableCellProperties();
+        var slide = new P.Slide(cellProperties);
+
+        var correctionCount = PptxGenJsOpenXmlNormalizer.NormalizeSlide(slide);
+
+        Assert.Equal(0, correctionCount);
+        Assert.DoesNotContain(
+            cellProperties.GetAttributes(),
+            static attribute => attribute.LocalName == "anchor");
+    }
+
+    [Fact]
     public void NormalizesNegativePptxGenJsShapeExtentsWithoutChangingItsVisualBounds()
     {
         var offset = new A.Offset { X = 10_716_768L, Y = 658_368L };

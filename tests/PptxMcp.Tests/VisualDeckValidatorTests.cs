@@ -1195,4 +1195,97 @@ public sealed class VisualDeckValidatorTests
 
         Assert.Equal("visual_axis_columns_out_of_range", error.Code);
     }
+
+    [Fact]
+    public void ModelAuthoredHtmlContractRequiresSafeStaticHtmlAndScopedCss()
+    {
+        var valid = new VisualDeckSpec(
+            "AI HTML",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.NativeDiagram,
+                    "判断構造",
+                    AuthoredHtml: new VisualAuthoredHtmlSpec(
+                        "<div class=\"layout\"><h1>判断構造</h1><div data-pptx-icon=\"decision\"></div></div>",
+                        ".slide{background:transparent}.slide .layout{display:grid;gap:32px}")),
+            ],
+            RendererContract: "visual-v7-author-html");
+
+        VisualDeckValidator.Validate(valid, 50);
+
+        var missing = valid with
+        {
+            Slides = [valid.Slides[0] with { AuthoredHtml = null }],
+        };
+        var unsafeHtml = valid with
+        {
+            Slides =
+            [
+                valid.Slides[0] with
+                {
+                    AuthoredHtml = new VisualAuthoredHtmlSpec(
+                        "<script>alert(1)</script>",
+                        ".slide{background:white}"),
+                },
+            ],
+        };
+        var unsafeCss = valid with
+        {
+            Slides =
+            [
+                valid.Slides[0] with
+                {
+                    AuthoredHtml = new VisualAuthoredHtmlSpec(
+                        "<div>外部参照</div>",
+                        ".slide{background-image:url(https://invalid.example/a.png)}"),
+                },
+            ],
+        };
+        var legacyWithHtml = valid with { RendererContract = "visual-v6-dom" };
+
+        Assert.Equal(
+            "visual_authored_html_required",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(missing, 50)).Code);
+        Assert.Equal(
+            "visual_authored_html_unsafe",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(unsafeHtml, 50)).Code);
+        Assert.Equal(
+            "visual_authored_css_unsafe",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(unsafeCss, 50)).Code);
+        Assert.Equal(
+            "visual_authored_html_not_supported",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(legacyWithHtml, 50)).Code);
+    }
+
+    [Fact]
+    public void ModelAuthoredHtmlContractIgnoresLegacySemanticRendererGeometry()
+    {
+        var columns = new[]
+        {
+            new VisualDataTableColumnSpec("狭い列", WidthWeight: 0.5),
+            new VisualDataTableColumnSpec("列2", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列3", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列4", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列5", WidthWeight: 4),
+            new VisualDataTableColumnSpec("列6", WidthWeight: 4),
+        };
+        var deck = new VisualDeckSpec(
+            "AI HTML",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.DataTable,
+                    "HTML表",
+                    DataTable: new VisualDataTableSpec(
+                        columns,
+                        [new VisualDataTableRowSpec(
+                            columns.Select((_, index) => new VisualDataTableCellSpec($"値{index + 1}")).ToArray())]),
+                    Density: "detailed",
+                    AuthoredHtml: new VisualAuthoredHtmlSpec(
+                        "<div class=\"page\"><table><tr><td>HTMLが正本</td></tr></table></div>",
+                        ".slide .page{display:block;font-size:24px}")),
+            ],
+            RendererContract: "visual-v7-author-html");
+
+        VisualDeckValidator.Validate(deck, 50);
+    }
 }

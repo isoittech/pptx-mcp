@@ -2,7 +2,7 @@
 
 ## 状態
 
-採用
+一部置換（新規生成の役割分担はADR 0022、保存済み`visual-v6-dom`互換は本ADR）
 
 ## 背景
 
@@ -12,17 +12,21 @@
 
 ## 決定
 
+以下は`visual-v6-dom`の決定として維持する。新規生成でモデルが完成HTML/CSSを設計する`visual-v7-author-html`は[ADR 0022](0022-model-authored-html-slides.md)を正本とする。
+
 - 新規段階生成のレンダラー契約を`visual-v6-dom`とする。保存済み`visual-v4`／`visual-v5` lineageは従来どおり再生成する。
 - DOM対応layoutは、サーバーが生成したoffline HTML/CSSから`dom-to-pptx` 2.1.1で変換する。対応範囲と選択基準は[ADR 0021](0021-page-level-visual-composition-and-quality-components.md)および[Visual Component Catalog](../visual-component-catalog.md)を参照する。
-- ネイティブグラフ、dashboard、nativeDiagram、musicScoreはPptxGenJSの互換レンダラーを使い、DOM対応ページとページ単位で合成する。これらのネイティブ構造をCSS図形へ退化させず、同じdeckのDOM対応ページまで互換レンダラーへ戻さない。
+- NativeDiagramのtree/flowはDOMへ移し、ネイティブグラフ、dashboard、NativeDiagramのcycle/concentric/network、musicScoreだけをPptxGenJSの互換レンダラーへ残す。DOM対応ページとページ単位で合成し、同じdeckのDOM対応ページまで互換レンダラーへ戻さない。
 - モデルが渡すのは従来の`VisualDeckSpec`だけとする。HTML、CSS、JavaScript、任意SVG／XML、座標、URL、path、browser optionを公開tool入力へ追加しない。
 - DOMは本文をHTML attributeとtext nodeへエスケープし、外部script、外部stylesheet、外部font、外部画像を参照しない。画像は会話scopeとSHA-256を検証済みのmetadataなしPNG data URIだけを使う。
 - Chromiumはコンテナへ固定インストールし、実行時のbrowser自動downloadに依存しない。`dom-to-pptx`のNode exporterは`--no-sandbox`とfile accessを使用するため、非root、read-only、全capability削除、内部network、サーバー生成HTML限定の境界を同時に維持する。
 - Cardsの`icon`意味IDは`react-icons` 5.7.0の`react-icons/lu`（Lucide）allowlistへサーバー側で解決する。モデルにReact code、package名、SVG本文を渡させない。DOM経路では同じSVGを使い、互換レンダラーでも`visual-v6-dom` lineageだけはLucide SVGを使う。
 - アイコンはベクターSVG画像として出力する。PowerPointの「図形に変換」で分解できるが、変換前から個別DrawingML図形であるとは表現しない。本文、カード、工程等は編集可能なPowerPointテキスト・図形として出力する。
 - 企業テンプレート使用時はDOM slide rootを透明にし、従来のOpen XML合成で選択済み白紙レイアウトへ接続する。マスター、ロゴ、フッター、ページ番号を生成側で描き直さない。
+- 導入環境の既定本文見出し規則を有効にした場合、タイトル30ptと主張16pt実箇条書きを別DOM要素・別PowerPointオブジェクトにし、ともにAccent 2を使う。添付された別テンプレートには適用しない。
+- DOM移行の検収時は互換rendererを禁止でき、生成結果にページ別rendererとDOM／fallback件数を返す。fallbackが1ページでもあれば合格にしない。
 - 読ませる本文はPowerPoint内部値で14pt以上にする。dom-to-pptxの換算に合わせてDOM本文は24px以上とし、箇条書きは`ul`/`li`からDrawingMLの`buChar`へ変換する。nativeDiagramのノード・関係ラベルも14pt以上とし、収まらない場合は文字縮小ではなく内容整理またはページ分割を行う。
-- 生成直後とテンプレート合成後にOpen XML検証を行い、完成PPTXはLibreOfficeでPDFへ変換して全ページをPNG化する。LibreChatのパワポ職人はOpus 5で全image blockを確認し、問題ページだけ最大2巡修正する。LibreOffice previewをMicrosoft PowerPointのpixel-perfect保証とは扱わない。
+- 生成直後とテンプレート合成後にOpen XML検証を行い、完成PPTXはLibreOfficeでPDFへ変換して全ページをPNG化する。LibreChatのパワポ職人はOpus 5で全image blockを確認し、問題ページだけ最大3巡修正する。LibreOffice previewをMicrosoft PowerPointのpixel-perfect保証とは扱わない。
 
 ## 依存関係と脆弱性境界
 

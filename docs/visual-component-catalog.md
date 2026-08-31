@@ -1,5 +1,7 @@
 # Visual Component Catalog
 
+> `visual-v7-author-html`では、この一覧は内容構造を考えるための部品語彙であり固定レイアウトの金型ではない。会話モデルが同じ情報構造を必要に応じて組み替え、完成したHTML/CSSを設計する。serverがここに記載された固定構図へ戻すことはしない。保存済み`visual-v6-dom`の互換生成では従来のrenderer選択基準として使う。
+
 ## 目的
 
 Visual Deckのレイアウトを完成形の「金型」ではなく、内容に応じて組み替える「部品セット」として管理する。モデルは座標、HTML、CSS、SVGを生成せず、意味データだけを`VisualDeckSpec`へ渡す。サーバーが承認済みDOM/CSSまたはPowerPointネイティブ要素へ変換する。
@@ -58,9 +60,11 @@ Visual Deckのレイアウトを完成形の「金型」ではなく、内容に
 ## レンダリングの役割分担
 
 - 標準本文ページ: サーバー管理DOMを`dom-to-pptx`で変換する。
-- native chart、dashboard、nativeDiagram、musicScore: PptxGenJS/Open XMLのネイティブ要素を維持する。
+- NativeDiagramのtree/flow: サーバー管理DOMで、編集可能なノードと接続線を描画する。独立ノード間には明確な空白を保つ。
+- native chart、dashboard、NativeDiagramのcycle/concentric/network、musicScore: PptxGenJS/Open XMLのネイティブ要素を維持する。
 - 混在deck: deck全体を旧方式へ戻さず、ページ単位でDOMとネイティブ描画を合成する。
 - 既定テンプレート: 導入環境がcover/bodyの見本スライド番号を設定した場合、1枚目はcover、2枚目以降はbodyのレイアウトを使う。
+- 既定テンプレートの本文見出し規則を有効にした場合: タイトルと主張を別オブジェクトにし、タイトル30pt、主張16pt実箇条書き、両方Accent 2とする。
 - ユーザー指定テンプレート: 導入環境の既定cover/body設定を適用せず、ユーザーが選んだlayoutを優先する。
 
 ## 品質確認

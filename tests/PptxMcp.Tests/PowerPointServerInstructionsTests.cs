@@ -23,7 +23,7 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("never start a new draft merely to bypass the insertion restriction", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_start_visual_deck exactly once", instructions, StringComparison.Ordinal);
         Assert.Contains("Omit startSlideNumber", instructions, StringComparison.Ordinal);
-        Assert.Contains("next 1-4 complete slides", instructions, StringComparison.Ordinal);
+        Assert.Contains("append 2 to 4 consecutive complete slides", instructions, StringComparison.Ordinal);
         Assert.Contains("remaining_slide_count is zero", instructions, StringComparison.Ordinal);
         Assert.Contains("only one recovery restart", instructions, StringComparison.Ordinal);
         Assert.Contains("openxml_validation_failed", instructions, StringComparison.Ordinal);
@@ -38,11 +38,11 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("roughly 15% or less", instructions, StringComparison.Ordinal);
         Assert.Contains("visible content appears at least 14pt", instructions, StringComparison.Ordinal);
         Assert.Contains("12pt exception", instructions, StringComparison.Ordinal);
-        Assert.Contains("enforces at most two rounds", instructions, StringComparison.Ordinal);
+        Assert.Contains("enforces at most three rounds", instructions, StringComparison.Ordinal);
         Assert.Contains("speakerNotes with both purpose and talkScript", instructions, StringComparison.Ordinal);
         Assert.Contains("included in the downloaded PPTX", instructions, StringComparison.Ordinal);
         Assert.Contains("hidden chain-of-thought", instructions, StringComparison.Ordinal);
-        Assert.Contains("omit speakerNotes to inherit", instructions, StringComparison.Ordinal);
+        Assert.Contains("Omit speakerNotes to inherit", instructions, StringComparison.Ordinal);
         Assert.Contains("For a text-only edit such as translation", instructions, StringComparison.Ordinal);
         Assert.Contains("without any model-controlled override", instructions, StringComparison.Ordinal);
         Assert.Contains("pptx_analyze with includeLayouts=false", instructions, StringComparison.Ordinal);
@@ -80,6 +80,76 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("successfully producing a PDF is not visual reflection", instructions, StringComparison.Ordinal);
         Assert.Contains("not a pixel-perfect guarantee for Microsoft PowerPoint", instructions, StringComparison.Ordinal);
         Assert.Contains("PowerPoint as the final rendering authority", instructions, StringComparison.Ordinal);
+        Assert.Contains("touching or nearly touching independent objects as a failure", instructions, StringComparison.Ordinal);
+        Assert.Contains("Compare title hierarchy across all body pages", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DomOnlyCompanyTemplateTrialPublishesRendererAndHeadingContract()
+    {
+        var instructions = PowerPointServerInstructions.Build(new PptxMcpOptions
+        {
+            DefaultTemplateId = "organization-default",
+            DefaultTemplateCoverSampleSlideNumber = 2,
+            DefaultTemplateBodySampleSlideNumber = 4,
+            DefaultTemplateBodyUsesAccent2Headings = true,
+            RequireDomOnlyRenderer = true,
+        });
+
+        Assert.Contains("DOM-only visual-renderer trial", instructions, StringComparison.Ordinal);
+        Assert.Contains("server rejects a deck that would use the PptxGenJS compatibility renderer", instructions, StringComparison.Ordinal);
+        Assert.Contains("NativeDiagram tree and flow are DOM-supported", instructions, StringComparison.Ordinal);
+        Assert.Contains("fallback_rendered_slide_count", instructions, StringComparison.Ordinal);
+        Assert.Contains("title and its supporting claim in separate fields", instructions, StringComparison.Ordinal);
+        Assert.Contains("title at 30pt", instructions, StringComparison.Ordinal);
+        Assert.Contains("subtitle as a 16pt native bullet", instructions, StringComparison.Ordinal);
+        Assert.Contains("Accent 2 dark blue", instructions, StringComparison.Ordinal);
+        Assert.Contains("does not apply to an uploaded alternate template", instructions, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModelAuthoredHtmlDeploymentMakesOpusTheSlideDesigner()
+    {
+        var instructions = PowerPointServerInstructions.Build(new PptxMcpOptions
+        {
+            DefaultTemplateId = "organization-default",
+            DefaultTemplateCoverSampleSlideNumber = 2,
+            DefaultTemplateBodySampleSlideNumber = 4,
+            DefaultTemplateBodyUsesAccent2Headings = true,
+            UseModelAuthoredHtmlRenderer = true,
+            RequireDomOnlyRenderer = true,
+        });
+
+        Assert.Contains("visual-v7-author-html", instructions, StringComparison.Ordinal);
+        Assert.Contains("You, the conversation model, design every slide as a static 1600x900 web page", instructions, StringComparison.Ordinal);
+        Assert.Contains("authoredHtml.html", instructions, StringComparison.Ordinal);
+        Assert.Contains("authoredHtml.css", instructions, StringComparison.Ordinal);
+        Assert.Contains("must not replace your layout with a fixed card, tree, or diagram template", instructions, StringComparison.Ordinal);
+        Assert.Contains("CSS grid/flex/absolute positioning", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-icon", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-asset", instructions, StringComparison.Ordinal);
+        Assert.Contains("Every CSS selector must start with .slide", instructions, StringComparison.Ordinal);
+        Assert.Contains("do not call pptx_prepare_visual_objects", instructions, StringComparison.Ordinal);
+        Assert.Contains("do not set slide.visualObjects", instructions, StringComparison.Ordinal);
+        Assert.Contains("leave every assetPlan.visual_object_asset_ids list empty", instructions, StringComparison.Ordinal);
+        Assert.Contains("Build every tree, flow, cycle, network, timeline, arrow, frame, and callout as real HTML elements", instructions, StringComparison.Ordinal);
+        Assert.Contains("roughly 15% spare height", instructions, StringComparison.Ordinal);
+        Assert.Contains("replace the complete authoredHtml composition", instructions, StringComparison.Ordinal);
+        Assert.Contains("fallback_rendered_slide_count must be zero", instructions, StringComparison.Ordinal);
+        Assert.Contains("send 2 to 4 consecutive complete slides", instructions, StringComparison.Ordinal);
+        Assert.Contains("Use two slides as the normal batch size", instructions, StringComparison.Ordinal);
+        Assert.Contains("Never shorten or omit a page merely to increase the batch size", instructions, StringComparison.Ordinal);
+        Assert.Contains("server rejects a smaller batch", instructions, StringComparison.Ordinal);
+        Assert.Contains("every authored font-size must be a literal px value of at least 24px", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-role=\"source-meta\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-role=\"body-title\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("data-pptx-role=\"body-claim\"", instructions, StringComparison.Ordinal);
+        Assert.Contains("50px (30pt)", instructions, StringComparison.Ordinal);
+        Assert.Contains("27px (about 16pt)", instructions, StringComparison.Ordinal);
+        Assert.Contains("body-title must use exactly 50px", instructions, StringComparison.Ordinal);
+        Assert.Contains("body-claim plus its li must use exactly 27px", instructions, StringComparison.Ordinal);
+        Assert.Contains("Reserve a clear lower safe area", instructions, StringComparison.Ordinal);
+        Assert.Contains("shorten visible copy and move supporting detail to speaker notes", instructions, StringComparison.Ordinal);
     }
 
     [Fact]

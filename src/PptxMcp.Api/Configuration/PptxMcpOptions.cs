@@ -26,6 +26,8 @@ public sealed class PptxMcpOptions
 
     public bool DefaultTemplateCoverUsesLightForeground { get; init; }
 
+    public bool DefaultTemplateBodyUsesAccent2Headings { get; init; }
+
     public string BrandProfilesRoot { get; init; } = "/data/pptx-brand-profiles";
 
     public bool RequireDesignBrief { get; init; }
@@ -35,6 +37,10 @@ public sealed class PptxMcpOptions
     public string FirstAssistantNotice { get; init; } = string.Empty;
 
     public string VisualRendererPath { get; init; } = "/app/visual-renderer/index.mjs";
+
+    public bool UseModelAuthoredHtmlRenderer { get; init; }
+
+    public bool RequireDomOnlyRenderer { get; init; }
 
     public string ImageSanitizerPath { get; init; } = "/app/visual-renderer/sanitize-image.mjs";
 

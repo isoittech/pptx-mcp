@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exportHtmlToPptx } from "dom-to-pptx/node";
+import { parseFragment, serialize } from "parse5";
 import { renderApprovedReactIcon } from "./react-icons.mjs";
 
 const SLIDE_WIDTH_INCHES = 13.333333;
@@ -50,12 +51,24 @@ export const domSupportedSlideKinds = Object.freeze(new Set([
   "artifact_showcase",
   "ganttschedule",
   "gantt_schedule",
+  "nativediagram",
+  "native_diagram",
 ]));
 
 export function canRenderDeckWithDom(spec) {
   return Array.isArray(spec?.slides)
     && spec.slides.length > 0
-    && spec.slides.every((slide) => domSupportedSlideKinds.has(normalizeKind(slide.kind)));
+    && spec.slides.every(canRenderSlideWithDom);
+}
+
+export function canRenderSlideWithDom(slide) {
+  if (slide?.authoredHtml && typeof slide.authoredHtml.html === "string" && typeof slide.authoredHtml.css === "string") {
+    return true;
+  }
+  const kind = normalizeKind(slide?.kind);
+  if (!domSupportedSlideKinds.has(kind)) return false;
+  if (kind !== "nativediagram" && kind !== "native_diagram") return true;
+  return ["tree", "flow"].includes(String(slide?.diagram?.kind ?? "").toLowerCase());
 }
 
 export async function renderDomDeck(spec, outputPath, imageAssets = {}) {
@@ -91,12 +104,17 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
   };
   const templateChrome = spec.templateChrome === true;
   const defaultTemplateCoverOverlay = spec.defaultTemplateCoverOverlay === true;
+  const defaultTemplateBodyStyle = spec.defaultTemplateBodyStyle === true;
   const slideNumberOffset = Number.isInteger(spec.slideNumberOffset) && spec.slideNumberOffset >= 0
     ? spec.slideNumberOffset
     : 0;
   const deckTotalSlides = Number.isInteger(spec.deckTotalSlides) && spec.deckTotalSlides >= spec.slides.length
     ? spec.deckTotalSlides
     : spec.slides.length;
+  const usesModelAuthoredHtml = String(spec.rendererContract ?? "").toLowerCase() === "visual-v7-author-html";
+  if (usesModelAuthoredHtml && spec.slides.some((slide) => !slide?.authoredHtml)) {
+    throw new Error("Every visual-v7-author-html slide must contain authoredHtml.");
+  }
   const slides = spec.slides.map((slide, index) => renderSlide(
     slide,
     slideNumberOffset + index,
@@ -104,21 +122,51 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
     theme,
     templateChrome,
     defaultTemplateCoverOverlay,
+    defaultTemplateBodyStyle,
     imageAssets,
   )).join("\n");
+  const css = usesModelAuthoredHtml
+    ? `${modelAuthoredBaseCss(theme, templateChrome)}\n${spec.slides.map((slide, index) => validateAndScopeAuthoredCss(
+      slide.authoredHtml.css,
+      slideNumberOffset + index,
+      {
+        requireDefaultBodyContract: defaultTemplateBodyStyle && slideNumberOffset + index > 0,
+        roleClassNames: collectAuthoredRoleClassNames(slide.authoredHtml.html),
+      },
+    )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateBodyStyle, templateChrome)}`
+    : baseCss(theme);
 
   return `<!doctype html>
 <html lang="${escapeAttribute(spec.language ?? "ja-JP")}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=${VIEWPORT_WIDTH},initial-scale=1">
-<style>${baseCss(theme)}</style>
+<style>${css}</style>
 </head>
 <body>${slides}</body>
 </html>`;
 }
 
-function renderSlide(slide, index, totalSlides, theme, templateChrome, defaultTemplateCoverOverlay, imageAssets) {
+function renderSlide(
+  slide,
+  index,
+  totalSlides,
+  theme,
+  templateChrome,
+  defaultTemplateCoverOverlay,
+  defaultTemplateBodyStyle,
+  imageAssets,
+) {
+  if (slide.authoredHtml) {
+    return renderModelAuthoredSlide(
+      slide,
+      index,
+      theme,
+      templateChrome,
+      defaultTemplateBodyStyle,
+      imageAssets,
+    );
+  }
   const kind = normalizeKind(slide.kind);
   const content = renderers[kind](slide, index, theme, imageAssets);
   const notes = slide.speakerNotes
@@ -127,9 +175,15 @@ function renderSlide(slide, index, totalSlides, theme, templateChrome, defaultTe
   const usesDefaultCover = defaultTemplateCoverOverlay
     && index === 0
     && (kind === "title" || kind === "section");
-  const backgroundClass = `${templateChrome ? " template-chrome" : ""}${usesDefaultCover ? " default-template-cover" : ""}`;
+  const usesDefaultBody = defaultTemplateBodyStyle && index > 0;
+  const backgroundClass = `${templateChrome ? " template-chrome" : ""}${usesDefaultCover ? " default-template-cover" : ""}${usesDefaultBody ? " default-template-body" : ""}${usesDefaultBody && slide.subtitle ? " has-header-claim" : ""}`;
   const eyebrow = slide.eyebrow
     ? `<div class="eyebrow">${escapeHtml(slide.eyebrow)}</div>`
+    : "";
+  const subtitle = slide.subtitle
+    ? usesDefaultBody
+      ? `<ul class="header-claim"><li>${escapeHtml(slide.subtitle)}</li></ul>`
+      : `<p>${escapeHtml(slide.subtitle)}</p>`
     : "";
   const footer = templateChrome || kind === "title" || kind === "section" || kind === "closing"
     ? ""
@@ -138,11 +192,366 @@ function renderSlide(slide, index, totalSlides, theme, templateChrome, defaultTe
   return `<section class="slide${backgroundClass}">
     ${notes ? `<template data-pptx-notes>${escapeHtml(notes)}</template>` : ""}
     <div class="accent-rail"></div>
-    <header>${eyebrow}<h1>${escapeHtml(slide.title)}</h1>${slide.subtitle ? `<p>${escapeHtml(slide.subtitle)}</p>` : ""}</header>
+    <header>${eyebrow}<h1>${escapeHtml(slide.title)}</h1>${subtitle}</header>
     <main class="kind-${escapeAttribute(kind)}">${content}</main>
     ${renderPreparedVisualObjects(slide, index, theme)}
     ${footer}
   </section>`;
+}
+
+const allowedAuthoredHtmlTags = new Set([
+  "div", "section", "article", "header", "footer", "main", "aside",
+  "h1", "h2", "h3", "h4", "h5", "h6", "p", "blockquote", "span", "strong", "b", "em", "i", "small",
+  "ul", "ol", "li", "dl", "dt", "dd", "table", "colgroup", "col", "thead", "tbody", "tfoot", "tr", "th", "td",
+  "figure", "figcaption", "img", "br", "hr",
+]);
+const allowedAuthoredHtmlAttributes = new Set([
+  "class", "id", "style", "title", "alt", "role", "aria-label", "aria-hidden",
+  "colspan", "rowspan", "width", "height", "data-pptx-icon", "data-pptx-asset", "data-pptx-role",
+]);
+const allowedAuthoredRoles = new Set(["body-title", "body-claim", "source-meta"]);
+const authoredRoleFontSizes = Object.freeze({
+  "body-title": 50,
+  "body-claim": 27,
+});
+
+function renderModelAuthoredSlide(
+  slide,
+  index,
+  _theme,
+  _templateChrome,
+  defaultTemplateBodyStyle,
+  imageAssets,
+) {
+  const notes = slide.speakerNotes
+    ? `このスライドの狙い\n${safeText(slide.speakerNotes.purpose)}\n\nトークスクリプト\n${safeText(slide.speakerNotes.talkScript)}`
+    : "";
+  const authored = slide.authoredHtml ?? {};
+  const fragment = sanitizeAuthoredHtmlFragment(
+    authored.html,
+    Array.isArray(authored.assetIds) ? authored.assetIds : [],
+    imageAssets,
+    {
+      requireDefaultBodyContract: defaultTemplateBodyStyle && index > 0,
+      expectedBodyTitle: slide.title,
+      expectedBodyClaim: slide.subtitle,
+    },
+  );
+  return `<section class="slide" data-author-slide="${index + 1}">
+    ${notes ? `<template data-pptx-notes>${escapeHtml(notes)}</template>` : ""}
+    ${fragment}
+  </section>`;
+}
+
+export function sanitizeAuthoredHtmlFragment(
+  html,
+  declaredAssetIds = [],
+  imageAssets = {},
+  {
+    requireDefaultBodyContract = false,
+    expectedBodyTitle = "",
+    expectedBodyClaim = "",
+  } = {},
+) {
+  if (typeof html !== "string" || html.length < 1 || html.length > 24_000) {
+    throw new Error("Model-authored HTML must contain between 1 and 24000 characters.");
+  }
+  assertNoUnsafeResourceSyntax(html, "HTML");
+  const fragment = parseFragment(html);
+  const declared = new Set(declaredAssetIds);
+  const referenced = new Set();
+  const roleNodes = new Map();
+  let elementCount = 0;
+
+  const visit = (node) => {
+    if (node.nodeName === "#comment") {
+      throw new Error("Model-authored HTML comments are not accepted.");
+    }
+    if (!node.tagName) {
+      for (const child of node.childNodes ?? []) visit(child);
+      return;
+    }
+
+    elementCount += 1;
+    if (elementCount > 500) {
+      throw new Error("Model-authored HTML may contain at most 500 elements per slide.");
+    }
+    const tag = String(node.tagName).toLowerCase();
+    if (!allowedAuthoredHtmlTags.has(tag)) {
+      throw new Error(`Model-authored HTML tag is not allowed: ${tag}`);
+    }
+
+    const attributes = new Map();
+    for (const attribute of node.attrs ?? []) {
+      const name = String(attribute.name).toLowerCase();
+      if (!allowedAuthoredHtmlAttributes.has(name)) {
+        throw new Error(`Model-authored HTML attribute is not allowed: ${name}`);
+      }
+      if (attributes.has(name)) {
+        throw new Error(`Model-authored HTML contains a duplicate attribute: ${name}`);
+      }
+      attributes.set(name, attribute.value);
+    }
+    const authoredRole = String(attributes.get("data-pptx-role") ?? "").trim().toLowerCase();
+    if (authoredRole) {
+      if (!allowedAuthoredRoles.has(authoredRole)) {
+        throw new Error(`Model-authored HTML role is not allowed: ${authoredRole}`);
+      }
+      const roleAttribute = node.attrs.find((attribute) => attribute.name === "data-pptx-role");
+      if (roleAttribute) roleAttribute.value = authoredRole;
+      const entries = roleNodes.get(authoredRole) ?? [];
+      entries.push(node);
+      roleNodes.set(authoredRole, entries);
+    }
+    if (attributes.has("style")) {
+      validateSafeCssDeclarations(attributes.get("style"), "inline style");
+      validateAuthoredFontSizes(
+        attributes.get("style"),
+        authoredRole || null,
+        "inline style",
+      );
+    }
+
+    const iconName = attributes.get("data-pptx-icon");
+    if (iconName) {
+      if (tag === "img") throw new Error("data-pptx-icon must be placed on a container element, not img.");
+      const iconFragment = parseFragment(renderApprovedReactIcon(iconName, { color: "currentColor" }));
+      node.childNodes = iconFragment.childNodes ?? [];
+      for (const child of node.childNodes) child.parentNode = node;
+      node.attrs = (node.attrs ?? []).filter((attribute) => attribute.name !== "data-pptx-icon");
+      const classAttribute = node.attrs.find((attribute) => attribute.name === "class");
+      if (classAttribute) classAttribute.value = `${classAttribute.value} pptx-icon`.trim();
+      else node.attrs.push({ name: "class", value: "pptx-icon" });
+    }
+
+    const assetId = attributes.get("data-pptx-asset");
+    if (tag === "img") {
+      if (!assetId || !declared.has(assetId) || !imageAssets[assetId]?.data) {
+        throw new Error("Every model-authored img must reference one declared, server-verified data-pptx-asset ID.");
+      }
+      if (!attributes.get("alt")?.trim()) {
+        throw new Error("Every model-authored img must have non-empty alt text.");
+      }
+      referenced.add(assetId);
+      node.attrs = (node.attrs ?? []).filter((attribute) => attribute.name !== "data-pptx-asset");
+      node.attrs.push({ name: "src", value: imageAssets[assetId].data });
+    } else if (assetId) {
+      throw new Error("data-pptx-asset is valid only on img elements.");
+    }
+
+    if (iconName) return;
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  visit(fragment);
+
+  if (declared.size !== referenced.size || [...declared].some((assetId) => !referenced.has(assetId))) {
+    throw new Error("authoredHtml.assetIds must exactly match the data-pptx-asset references in HTML.");
+  }
+  if (requireDefaultBodyContract) {
+    const titles = roleNodes.get("body-title") ?? [];
+    const claims = roleNodes.get("body-claim") ?? [];
+    if (titles.length !== 1 || !["h1", "h2"].includes(String(titles[0]?.tagName ?? "").toLowerCase())) {
+      throw new Error("A default-template body slide must contain exactly one h1 or h2 with data-pptx-role=\"body-title\".");
+    }
+    if (claims.length !== 1 || String(claims[0]?.tagName ?? "").toLowerCase() !== "ul") {
+      throw new Error("A default-template body slide must contain exactly one ul with data-pptx-role=\"body-claim\".");
+    }
+    const claimItems = (claims[0].childNodes ?? []).filter((child) => child.tagName === "li");
+    if (claimItems.length !== 1 || !textContent(claimItems[0]).trim()) {
+      throw new Error("The default-template body claim must contain exactly one non-empty native list item.");
+    }
+    const visibleTitle = normalizeVisibleText(textContent(titles[0]));
+    const visibleClaim = normalizeVisibleText(textContent(claimItems[0]));
+    if (!visibleTitle) {
+      throw new Error("The default-template body title must not be empty.");
+    }
+    if (visibleTitle !== normalizeVisibleText(expectedBodyTitle)
+        || visibleClaim !== normalizeVisibleText(expectedBodyClaim)) {
+      throw new Error("The default-template body title and claim must exactly match slide.title and slide.subtitle.");
+    }
+  }
+  return serialize(fragment);
+}
+
+export function validateAndScopeAuthoredCss(css, slideIndex, options = {}) {
+  if (typeof css !== "string" || css.length < 1 || css.length > 16_000) {
+    throw new Error("Model-authored CSS must contain between 1 and 16000 characters.");
+  }
+  assertNoUnsafeResourceSyntax(css, "CSS");
+  if (css.includes("/*") || css.includes("*/") || css.includes("@") || /::?(?:before|after)\b/iu.test(css)) {
+    throw new Error("Model-authored CSS may not use comments, @rules, or pseudo-element content.");
+  }
+  validateSafeCssDeclarations(css, "CSS");
+
+  let cursor = 0;
+  let scoped = "";
+  const declaredRoleFontSizes = new Set();
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/gu;
+  for (const match of css.matchAll(rulePattern)) {
+    if (match.index !== cursor && css.slice(cursor, match.index).trim()) {
+      throw new Error("Model-authored CSS must contain only flat style rules.");
+    }
+    const selectors = match[1].split(",").map((selector) => selector.trim());
+    if (selectors.length === 0 || selectors.some((selector) => !/^\.slide(?:$|[\s.#:[>+~])/u.test(selector))) {
+      throw new Error("Every model-authored CSS selector must be scoped below .slide.");
+    }
+    const hasFontSize = /(?:^|;)\s*font-size\s*:/iu.test(match[2]);
+    const authoredRole = hasFontSize
+      ? classifyAuthoredFontRole(selectors, options.roleClassNames)
+      : null;
+    validateAuthoredFontSizes(match[2], authoredRole, "CSS");
+    if (authoredRole) declaredRoleFontSizes.add(authoredRole);
+    const scope = `.slide[data-author-slide="${slideIndex + 1}"]`;
+    scoped += `${selectors.map((selector) => selector.replace(/^\.slide/u, scope)).join(",")}{${match[2]}}\n`;
+    cursor = match.index + match[0].length;
+  }
+  if (cursor === 0 || css.slice(cursor).trim()) {
+    throw new Error("Model-authored CSS contains an incomplete or nested rule.");
+  }
+  if (options.requireDefaultBodyContract
+      && (!declaredRoleFontSizes.has("body-title") || !declaredRoleFontSizes.has("body-claim"))) {
+    throw new Error("Default-template body CSS must explicitly size body-title at 50px and body-claim plus its li at 27px so the authored layout matches the final PowerPoint.");
+  }
+  return scoped;
+}
+
+function classifyAuthoredFontRole(selectors, roleClassNames = {}) {
+  const roleSelector = (role) => new RegExp(
+    `\\[data-pptx-role=(?:"${role}"|'${role}'|${role})\\]\\s*$`,
+    "u",
+  );
+  const classSelector = (role, selector) => (roleClassNames[role] ?? []).some((className) => {
+    const escapedClassName = escapeRegExp(className);
+    if (role === "body-claim") {
+      return new RegExp(`\\.${escapedClassName}(?:\\s+li)?\\s*$`, "u").test(selector);
+    }
+    return new RegExp(`\\.${escapedClassName}\\s*$`, "u").test(selector);
+  });
+  const roles = selectors.map((selector) => {
+    if (roleSelector("source-meta").test(selector) || classSelector("source-meta", selector)) return "source-meta";
+    if (roleSelector("body-title").test(selector) || classSelector("body-title", selector)) return "body-title";
+    if (roleSelector("body-claim").test(selector)
+        || /\[data-pptx-role=(?:"body-claim"|'body-claim'|body-claim)\]\s+li\s*$/u.test(selector)
+        || classSelector("body-claim", selector)) {
+      return "body-claim";
+    }
+    return null;
+  });
+  const matchedRoles = [...new Set(roles.filter(Boolean))];
+  if (matchedRoles.length === 0) return null;
+  if (matchedRoles.length !== 1 || roles.some((role) => role === null)) {
+    throw new Error("A CSS font-size rule for a protected PowerPoint role may not be grouped with unrelated selectors or another protected role.");
+  }
+  return matchedRoles[0];
+}
+
+function collectAuthoredRoleClassNames(html) {
+  const fragment = parseFragment(String(html ?? ""));
+  const classUsages = new Map();
+  const visit = (node) => {
+    if (node?.tagName) {
+      const role = String((node.attrs ?? []).find((attribute) => attribute.name === "data-pptx-role")?.value ?? "")
+        .trim()
+        .toLowerCase();
+      const classes = String((node.attrs ?? []).find((attribute) => attribute.name === "class")?.value ?? "")
+        .split(/\s+/u)
+        .filter((className) => /^[A-Za-z_][A-Za-z0-9_-]*$/u.test(className));
+      for (const className of classes) {
+        const roles = classUsages.get(className) ?? new Set();
+        roles.add(role || null);
+        classUsages.set(className, roles);
+      }
+    }
+    for (const child of node?.childNodes ?? []) visit(child);
+  };
+  visit(fragment);
+
+  const result = {};
+  for (const [className, roles] of classUsages.entries()) {
+    if (roles.size !== 1) continue;
+    const [role] = roles;
+    if (!allowedAuthoredRoles.has(role)) continue;
+    result[role] ??= [];
+    result[role].push(className);
+  }
+  return result;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function validateAuthoredFontSizes(declarations, authoredRole, label) {
+  for (const match of String(declarations).matchAll(/(?:^|;)\s*font-size\s*:\s*([^;}]*)/giu)) {
+    const value = match[1].trim();
+    const parsed = /^(\d+(?:\.\d+)?)px(?:\s*!important)?$/iu.exec(value);
+    if (!parsed) {
+      throw new Error(`Model-authored ${label} font-size must use a literal px value.`);
+    }
+    const pixels = Number(parsed[1]);
+    const required = authoredRoleFontSizes[authoredRole];
+    if (required !== undefined && pixels !== required) {
+      throw new Error(`Model-authored ${label} font-size for ${authoredRole} must be exactly ${required}px so the authored layout matches the final PowerPoint size.`);
+    }
+    const sourceMetadataOnly = authoredRole === "source-meta";
+    const minimum = sourceMetadataOnly ? 20 : 24;
+    if (!Number.isFinite(pixels) || pixels < minimum) {
+      throw new Error(`Model-authored ${label} font-size must be at least ${minimum}px${sourceMetadataOnly ? " for source metadata" : ""}.`);
+    }
+  }
+}
+
+function textContent(node) {
+  if (!node) return "";
+  if (typeof node.value === "string") return node.value;
+  return (node.childNodes ?? []).map(textContent).join("");
+}
+
+function normalizeVisibleText(value) {
+  return String(value ?? "").replace(/\s+/gu, " ").trim();
+}
+
+function validateSafeCssDeclarations(value, label) {
+  if (/url\s*\(|expression\s*\(|(?:^|[;{])\s*(?:animation|transition|behavior|-moz-binding|content)\s*:|position\s*:\s*fixed|(?:box|text)-shadow\s*:/iu.test(value)) {
+    throw new Error(`Model-authored ${label} contains a disallowed CSS feature.`);
+  }
+}
+
+function assertNoUnsafeResourceSyntax(value, label) {
+  if (/(?:https?|file|javascript|data):|(?:^|[\s'"(])\/\/|\\\\/iu.test(value)) {
+    throw new Error(`Model-authored ${label} may not reference remote resources, data URIs, or local paths.`);
+  }
+  if (/<\/?(?:html|head|body|style|script|link|meta|base|iframe|object|embed|form|input|button|textarea|select|video|audio|canvas|svg)\b/iu.test(value)
+    || /\son[a-z][a-z0-9_-]*\s*=/iu.test(value)
+    || /\s(?:src|href|xlink:href)\s*=/iu.test(value)) {
+    throw new Error(`Model-authored ${label} contains executable markup or an unmanaged resource attribute.`);
+  }
+}
+
+function modelAuthoredBaseCss(theme, templateChrome) {
+  return `
+*{box-sizing:border-box;box-shadow:none!important;text-shadow:none!important}
+html,body{margin:0;padding:0;background:transparent}
+body{font-family:"${theme.bodyFont}",sans-serif;color:#${theme.text}}
+.slide{--primary:#${theme.primary};--secondary:#${theme.secondary};--accent:#${theme.accent};--bg:#${theme.background};--surface:#${theme.surface};--text:#${theme.text};--muted:#${theme.muted};--footer:#${theme.footer};--positive:#${theme.positive};--warning:#${theme.warning};--critical:#${theme.critical};position:relative;width:${VIEWPORT_WIDTH}px;height:${VIEWPORT_HEIGHT}px;overflow:hidden;background:${templateChrome ? "transparent" : "var(--bg)"};font-family:"${theme.bodyFont}",sans-serif;font-size:24px;color:var(--text)}
+.slide .pptx-icon svg{display:block;width:100%;height:100%}
+.slide img{display:block;max-width:100%;max-height:100%}
+`;
+}
+
+function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateBodyStyle, templateChrome) {
+  const rules = [];
+  for (let index = 0; index < slides.length; index += 1) {
+    const number = slideNumberOffset + index + 1;
+    const scope = `.slide[data-author-slide="${number}"]`;
+    if (templateChrome) rules.push(`${scope}{background:transparent!important}`);
+    rules.push(`${scope} [data-pptx-role="source-meta"]{font-size:20px!important}`);
+    if (defaultTemplateBodyStyle && number > 1) {
+      rules.push(`${scope} [data-pptx-role="body-title"]{font-size:50px!important;color:var(--secondary)!important;font-weight:800!important}`);
+      rules.push(`${scope} [data-pptx-role="body-claim"],${scope} [data-pptx-role="body-claim"] li{font-size:27px!important;color:var(--secondary)!important;font-weight:700!important}`);
+    }
+  }
+  return rules.length > 0 ? `\n${rules.join("\n")}` : "";
 }
 
 const renderers = Object.freeze({
@@ -175,6 +584,8 @@ const renderers = Object.freeze({
   artifact_showcase: renderArtifactShowcase,
   ganttschedule: renderGanttSchedule,
   gantt_schedule: renderGanttSchedule,
+  nativediagram: renderNativeDiagram,
+  native_diagram: renderNativeDiagram,
 });
 
 function renderTitle(slide) {
@@ -356,6 +767,121 @@ function renderGanttSchedule(slide) {
   return `<div class="gantt-stage">${gantt.effortLabel ? `<div class="effort-label">${escapeHtml(gantt.effortLabel)}</div>` : ""}<div class="gantt-grid" style="--axis-count:${columns.length};--task-count:${tasks.length}"><div class="gantt-head" style="grid-row:1;grid-column:1">カテゴリ</div><div class="gantt-head" style="grid-row:1;grid-column:2">主なタスク</div>${header}${cells}${markerRanges}${taskRows}</div>${renderChips(gantt.legend)}</div>${takeaway(slide.takeaway)}`;
 }
 
+const DIAGRAM_WIDTH = 1408;
+const DIAGRAM_HEIGHT = 520;
+const DIAGRAM_MINIMUM_GAP = 32;
+
+export function layoutDirectedDiagram(diagram) {
+  const nodes = Array.isArray(diagram?.nodes) ? diagram.nodes : [];
+  const edges = Array.isArray(diagram?.edges) ? diagram.edges : [];
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const incoming = new Map(nodes.map((node) => [node.id, 0]));
+  for (const edge of edges) {
+    if (nodeById.has(edge.from) && nodeById.has(edge.to)) {
+      incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
+    }
+  }
+  const levels = new Map(nodes.filter((node) => incoming.get(node.id) === 0).map((node) => [node.id, 0]));
+  for (let pass = 0; pass < nodes.length; pass += 1) {
+    for (const edge of edges) {
+      if (!levels.has(edge.from) || !nodeById.has(edge.to)) continue;
+      levels.set(edge.to, Math.max(levels.get(edge.to) ?? 0, levels.get(edge.from) + 1));
+    }
+  }
+  nodes.forEach((node, index) => {
+    if (!levels.has(node.id)) levels.set(node.id, index);
+  });
+
+  const maximumLevel = Math.max(...levels.values(), 0);
+  const vertical = String(diagram?.direction ?? "leftToRight").toLowerCase() === "toptobottom";
+  const nodeWidth = vertical ? 330 : 340;
+  const nodeHeight = vertical ? 94 : 104;
+  const margin = 24;
+  const positions = new Map();
+
+  for (let level = 0; level <= maximumLevel; level += 1) {
+    const levelNodes = nodes.filter((node) => levels.get(node.id) === level);
+    if (vertical) {
+      const available = DIAGRAM_WIDTH - margin * 2;
+      const width = Math.min(nodeWidth, (available - DIAGRAM_MINIMUM_GAP * Math.max(0, levelNodes.length - 1)) / Math.max(1, levelNodes.length));
+      const groupWidth = width * levelNodes.length + DIAGRAM_MINIMUM_GAP * Math.max(0, levelNodes.length - 1);
+      const y = maximumLevel === 0
+        ? (DIAGRAM_HEIGHT - nodeHeight) / 2
+        : margin + level * (DIAGRAM_HEIGHT - margin * 2 - nodeHeight) / maximumLevel;
+      levelNodes.forEach((node, itemIndex) => {
+        positions.set(node.id, {
+          x: (DIAGRAM_WIDTH - groupWidth) / 2 + itemIndex * (width + DIAGRAM_MINIMUM_GAP),
+          y,
+          width,
+          height: nodeHeight,
+        });
+      });
+      continue;
+    }
+
+    const x = maximumLevel === 0
+      ? (DIAGRAM_WIDTH - nodeWidth) / 2
+      : margin + level * (DIAGRAM_WIDTH - margin * 2 - nodeWidth) / maximumLevel;
+    const gap = (DIAGRAM_HEIGHT - nodeHeight * levelNodes.length) / (levelNodes.length + 1);
+    if (levelNodes.length > 1 && gap < DIAGRAM_MINIMUM_GAP) {
+      throw new Error("The directed diagram cannot preserve the required spacing between nodes.");
+    }
+    levelNodes.forEach((node, itemIndex) => {
+      positions.set(node.id, {
+        x,
+        y: gap + itemIndex * (nodeHeight + gap),
+        width: nodeWidth,
+        height: nodeHeight,
+      });
+    });
+  }
+
+  return { positions, edges, vertical };
+}
+
+function renderNativeDiagram(slide, index) {
+  const diagram = slide.diagram ?? {};
+  const kind = String(diagram.kind ?? "").toLowerCase();
+  if (!["tree", "flow"].includes(kind)) {
+    throw new Error("The DOM renderer currently supports tree and flow NativeDiagram pages only.");
+  }
+  const nodes = Array.isArray(diagram.nodes) ? diagram.nodes : [];
+  const layout = layoutDirectedDiagram(diagram);
+  const markerId = `diagram-arrow-${index + 1}`;
+  const connectorMarkup = layout.edges.map((edge) => {
+    const from = layout.positions.get(edge.from);
+    const to = layout.positions.get(edge.to);
+    if (!from || !to) return "";
+    const x1 = layout.vertical ? from.x + from.width / 2 : from.x + from.width;
+    const y1 = layout.vertical ? from.y + from.height : from.y + from.height / 2;
+    const x2 = layout.vertical ? to.x + to.width / 2 : to.x;
+    const y2 = layout.vertical ? to.y : to.y + to.height / 2;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-end="url(#${markerId})"/>`;
+  }).join("");
+  const edgeLabels = layout.edges.map((edge) => {
+    if (!edge.label) return "";
+    const from = layout.positions.get(edge.from);
+    const to = layout.positions.get(edge.to);
+    if (!from || !to) return "";
+    const x1 = layout.vertical ? from.x + from.width / 2 : from.x + from.width;
+    const y1 = layout.vertical ? from.y + from.height : from.y + from.height / 2;
+    const x2 = layout.vertical ? to.x + to.width / 2 : to.x;
+    const y2 = layout.vertical ? to.y : to.y + to.height / 2;
+    const width = 188;
+    const height = 42;
+    const left = Math.max(0, Math.min(DIAGRAM_WIDTH - width, (x1 + x2 - width) / 2));
+    const top = Math.max(0, Math.min(DIAGRAM_HEIGHT - height, (y1 + y2 - height) / 2));
+    return `<div class="diagram-edge-label" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px">${escapeHtml(edge.label)}</div>`;
+  }).join("");
+  const nodeMarkup = nodes.map((node) => {
+    const position = layout.positions.get(node.id);
+    if (!position) return "";
+    const emphasis = node.emphasize ? " emphasized" : "";
+    return `<article class="diagram-node tone-${toneClass(node.tone)}${emphasis}" style="${toneStyle(node.tone)}left:${position.x}px;top:${position.y}px;width:${position.width}px;height:${position.height}px"><strong>${escapeHtml(node.label)}</strong>${node.description ? `<p>${escapeHtml(node.description)}</p>` : ""}</article>`;
+  }).join("");
+  return `<div class="diagram-stage kind-${escapeAttribute(kind)}"><svg class="diagram-connectors" viewBox="0 0 ${DIAGRAM_WIDTH} ${DIAGRAM_HEIGHT}" aria-hidden="true"><defs><marker id="${markerId}" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z"/></marker></defs>${connectorMarkup}</svg>${nodeMarkup}${edgeLabels}</div>${takeaway(slide.takeaway)}`;
+}
+
 function renderDataTableMarkup(table) {
   const columns = Array.isArray(table?.columns) ? table.columns : [];
   const rows = Array.isArray(table?.rows) ? table.rows : [];
@@ -415,6 +941,7 @@ function baseCss(theme) {
 *{box-sizing:border-box;box-shadow:none!important;text-shadow:none!important}html,body{margin:0;padding:0;background:transparent}body{font-family:"${theme.bodyFont}",sans-serif;color:#${theme.text}}
 .slide{--primary:#${theme.primary};--secondary:#${theme.secondary};--accent:#${theme.accent};--bg:#${theme.background};--surface:#${theme.surface};--text:#${theme.text};--muted:#${theme.muted};--footer:#${theme.footer};--positive:#${theme.positive};--warning:#${theme.warning};--critical:#${theme.critical};position:relative;width:${VIEWPORT_WIDTH}px;height:${VIEWPORT_HEIGHT}px;overflow:hidden;background:var(--bg);padding:70px 96px 62px}.slide.template-chrome{background:transparent}.accent-rail{position:absolute;left:0;top:0;width:18px;height:100%;background:var(--accent)}
 header{height:154px;position:relative;z-index:2}header h1{font-family:"${theme.headingFont}",sans-serif;font-size:50px;line-height:1.08;letter-spacing:-1.2px;margin:8px 0 0;color:var(--primary);max-width:1320px}header p{font-size:24px;line-height:1.35;color:var(--muted);margin:12px 0 0}.eyebrow{font-size:24px;line-height:1;text-transform:uppercase;letter-spacing:2.4px;font-weight:700;color:var(--secondary)}main{height:588px;position:relative;z-index:2}.footer{position:absolute;left:96px;right:96px;bottom:24px;display:flex;justify-content:space-between;font-size:14px;color:var(--footer)}.footer>span:first-child{flex:1}.footer>span:last-child{display:block;width:88px;text-align:right;white-space:nowrap}
+.slide.default-template-body header h1{font-size:50px;color:var(--secondary);font-weight:800}.header-claim{margin:10px 0 0;padding-left:34px;color:var(--secondary);font-size:27px;line-height:1.3;font-weight:700}.header-claim li{margin:0;padding-left:4px}.header-claim li::marker{font-size:19px}.slide.has-header-claim header{height:176px}.slide.has-header-claim main{height:566px}
 .slide.default-template-cover{padding:246px 112px 138px}.default-template-cover .accent-rail{display:none}.default-template-cover header{height:auto;max-width:1230px}.default-template-cover header h1{margin:0;color:#fff;font-size:54px;line-height:1.12;max-width:1230px}.default-template-cover header p,.default-template-cover .eyebrow{color:#f5f7fb}.default-template-cover main{height:auto;margin-top:34px}.default-template-cover .section-stage{height:auto;display:block}.default-template-cover .section-number{display:none}.default-template-cover .section-stage p,.default-template-cover .hero-copy p{color:#f5f7fb;font-size:27px;line-height:1.45;max-width:1040px;margin:0}.default-template-cover .hero-grid{display:block}.default-template-cover .hero-mark{display:none}
 .hero-grid{display:grid;grid-template-columns:2fr 1fr;gap:72px;height:100%;align-items:center}.hero-copy p{font-size:29px;line-height:1.45;max-width:860px}.hero-mark{height:360px;border-radius:40px;background:var(--surface);border:2px solid color-mix(in srgb,var(--secondary) 20%,transparent);display:flex;align-items:center;justify-content:center}.icon-shell{width:170px;height:170px}.agenda-list{display:grid;grid-template-columns:1fr 1fr;gap:22px 32px}.agenda-row{display:flex;gap:28px;align-items:center;padding:22px 28px;background:var(--surface);border-radius:22px;border:1px solid color-mix(in srgb,var(--muted) 22%,transparent)}.agenda-row span{font-size:24px;font-weight:800;color:var(--secondary)}.agenda-row p{font-size:25px;margin:0;font-weight:600}.section-stage{height:100%;display:flex;align-items:center;gap:56px}.section-number{font-size:190px;line-height:1;font-weight:800;color:var(--accent);letter-spacing:-10px}.section-stage p{font-size:32px;line-height:1.45;max-width:780px}.lead{font-size:24px;line-height:1.45;margin:0 0 28px}.bullet-list{display:grid;grid-template-columns:1fr;gap:28px;height:100%}.bullet-list.split{grid-template-columns:1fr 1fr}.bullet-column{display:block;height:100%;background:var(--surface);padding:22px 30px 22px 58px;border-radius:18px;margin:0;list-style-type:disc;list-style-position:outside}.bullet-column li{font-size:24px;line-height:1.3;margin:0 0 13px;padding-left:5px}.bullet-column li:last-child{margin-bottom:0}.bullet-column li::marker{color:var(--accent);font-size:18px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}.metric-grid.spotlight{grid-template-columns:1.55fr repeat(3,1fr)}.metric-card{--tone:var(--secondary);min-height:288px;padding:34px 30px;border-radius:26px;background:var(--surface);border-top:9px solid var(--tone)}.metric-card.featured{background:color-mix(in srgb,var(--tone) 9%,var(--surface))}.metric-value{font-size:60px;line-height:1;font-weight:800;color:var(--tone);letter-spacing:-2px}.metric-label{font-size:24px;font-weight:700;margin-top:24px}.metric-card p{font-size:24px;line-height:1.4;color:var(--muted)}
 .tone-accent{--tone:var(--accent)}.tone-primary{--tone:var(--primary)}.tone-secondary{--tone:var(--secondary)}.tone-positive{--tone:var(--positive)}.tone-warning{--tone:var(--warning)}.tone-critical{--tone:var(--critical)}.tone-neutral{--tone:var(--muted)}.panel-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:28px}.panel-grid.count-3{grid-template-columns:repeat(3,1fr)}.panel{position:relative;min-height:370px;padding:36px;background:var(--surface);border-radius:28px;border:1px solid color-mix(in srgb,var(--muted) 20%,transparent)}.panel-index{font-size:18px;font-weight:800;color:var(--accent)}.panel h2{font-size:29px;margin:14px 0}.panel strong{display:block;font-size:22px;color:var(--secondary);margin-bottom:16px}.compact-list p{font-size:19px;line-height:1.4;margin:12px 0;padding-left:18px;border-left:4px solid var(--accent)}.step-flow{display:flex;align-items:center;justify-content:center;height:410px}.step{width:230px;min-height:250px;padding:28px 24px;background:var(--surface);border-radius:26px;text-align:center;border:1px solid color-mix(in srgb,var(--muted) 18%,transparent)}.step span{font-size:17px;font-weight:800;color:var(--accent)}.step h2{font-size:24px;margin:22px 0 10px}.step p{font-size:17px;line-height:1.4;color:var(--muted)}.connector{font-size:42px;color:var(--secondary);padding:0 16px}.loop-label{text-align:center;color:var(--secondary);font-size:18px;font-weight:800;letter-spacing:2px}.timeline{position:relative;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding-top:110px}.timeline-line{position:absolute;left:7%;right:7%;top:148px;height:6px;background:var(--secondary);border-radius:3px}.timeline-step{text-align:center;position:relative}.timeline-step>span{font-size:17px;font-weight:800;color:var(--secondary)}.timeline-step>div{width:30px;height:30px;border:8px solid var(--accent);background:var(--surface);border-radius:50%;margin:21px auto 28px}.timeline-step h2{font-size:21px;margin:0 10px 12px}.timeline-step p{font-size:16px;line-height:1.35;color:var(--muted);margin:0 10px}.statement{height:100%;display:grid;grid-template-columns:180px 1fr;align-items:center;gap:52px}.statement-icon{width:150px;height:150px}.statement p{font-family:"${theme.headingFont}",sans-serif;font-size:45px;line-height:1.3;font-weight:700;margin:0;color:var(--primary)}.statement strong{display:block;font-size:22px;color:var(--secondary);margin-top:28px}.card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}.card-grid.count-4{grid-template-columns:repeat(4,1fr)}.visual-card{min-height:355px;padding:28px;border-radius:26px;background:var(--surface);border-bottom:8px solid var(--tone)}.card-icon{width:70px;height:70px;color:var(--tone)}.visual-card>strong{display:block;font-size:38px;margin-top:20px;color:var(--tone)}.visual-card h2{font-size:24px;margin:20px 0 10px}.visual-card p{font-size:17px;line-height:1.45;color:var(--muted)}.matrix-wrap{position:relative;padding:0 0 44px 55px}.matrix-grid{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;height:430px;border-left:5px solid var(--primary);border-bottom:5px solid var(--primary)}.matrix-grid article{padding:22px 28px;background:var(--surface);border:1px solid color-mix(in srgb,var(--muted) 18%,transparent)}.matrix-grid h2{font-size:22px;margin:0 0 10px}.matrix-grid strong{color:var(--secondary)}.matrix-grid p{font-size:16px;margin:7px 0}.matrix-y{position:absolute;left:0;top:180px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:18px;font-weight:700}.matrix-x{text-align:center;margin-top:16px;font-size:18px;font-weight:700}.funnel{display:flex;flex-direction:column;align-items:center;gap:8px}.funnel>div{min-height:72px;padding:13px 28px;background:var(--secondary);color:white;text-align:center;clip-path:polygon(5% 0,95% 0,100% 100%,0 100%)}.funnel span{font-size:14px;font-weight:800;margin-right:18px}.funnel strong{font-size:22px}.funnel p{display:inline;font-size:15px;margin-left:18px}.roadmap{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;padding-top:58px}.roadmap article{min-height:330px;background:var(--surface);border-radius:26px;padding:30px;border-top:9px solid var(--secondary)}.roadmap span{font-size:15px;font-weight:800;color:var(--accent)}.roadmap h2{font-size:24px;margin:24px 0 14px}.roadmap p{font-size:17px;line-height:1.45;color:var(--muted)}.quote{height:100%;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}.quote>div{font-size:120px;line-height:.5;color:var(--accent)}.quote blockquote{font-family:"${theme.headingFont}",sans-serif;font-size:42px;line-height:1.35;max-width:1120px;margin:42px 0 24px}.quote p{font-size:20px;color:var(--muted)}.closing{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.closing-icon{width:110px;height:110px}.closing>p{font-size:28px;max-width:900px}.closing>div:last-child{display:flex;gap:18px;margin-top:24px}.closing span{background:var(--surface);padding:13px 22px;border-radius:999px;font-size:17px}.brief-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}.brief-grid.count-2{grid-template-columns:repeat(2,1fr)}.brief-grid article{min-height:380px;background:var(--surface);padding:28px;border-radius:24px;border-top:8px solid var(--tone)}.brief-grid article>span{font-size:16px;font-weight:800;color:var(--tone)}.brief-grid h2{font-size:24px;margin:14px 0}.brief-grid strong{display:block;color:var(--tone);font-size:19px;margin-bottom:12px}.brief-grid p,.brief-bullet{font-size:16px;line-height:1.45;color:var(--muted)}.brief-bullet{margin-top:9px;padding-left:13px;border-left:3px solid var(--tone)}.data-grid{display:grid;gap:2px;background:color-mix(in srgb,var(--muted) 20%,transparent);border:2px solid color-mix(in srgb,var(--muted) 20%,transparent);border-radius:16px;overflow:hidden}.table-head,.row-head,.table-cell{background:var(--surface);padding:16px 18px;min-height:54px;font-size:16px;display:flex;flex-direction:column;justify-content:center}.table-head{background:var(--primary);color:white;font-weight:700}.table-head span,.table-cell span{font-size:13px;line-height:1.35;margin-top:5px}.row-head{font-weight:700}.table-cell strong{color:var(--tone)}.table-cell.emphasized{font-weight:800}.align-center{text-align:center;align-items:center}.align-right{text-align:right;align-items:flex-end}.media-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:34px;height:430px}.media-copy{background:var(--surface);border-radius:25px;padding:32px}.media-copy>p{font-size:22px;line-height:1.5;margin:0 0 24px}.media-copy>div{font-size:18px;line-height:1.4;margin:14px 0;padding-left:16px;border-left:4px solid var(--accent)}.media-copy small{display:block;margin-top:24px;color:var(--muted)}figure{margin:0;border-radius:28px;overflow:hidden;background:var(--surface)}figure img{width:100%;height:100%;display:block}.takeaway{position:absolute;left:0;right:0;bottom:4px;min-height:70px;display:flex;align-items:center;gap:22px;padding:13px 24px;background:color-mix(in srgb,var(--accent) 12%,var(--surface));border-left:8px solid var(--accent);border-radius:10px}.takeaway span{font-size:13px;font-weight:800;letter-spacing:1px;color:var(--secondary)}.takeaway p{flex:1;min-width:0;font-size:18px;line-height:1.35;margin:0}.visual-object{position:absolute;z-index:3;color:var(--accent)}.visual-object span{font-size:15px;font-weight:700}.recipe-sectionrule{left:96px;right:96px;bottom:112px;border-top:5px solid var(--secondary);padding-top:8px}.recipe-focuscorners{right:84px;top:220px;width:320px;height:280px;border:7px solid var(--accent);background:transparent}.recipe-directionalcue{left:50%;top:55%;font-size:40px}.recipe-directionalcue:after{content:"→"}.recipe-growthpath{right:110px;top:250px;width:160px;height:160px;border-top:8px solid var(--positive);transform:rotate(-28deg)}.recipe-cyclecue{right:95px;bottom:100px;width:110px;height:110px;border:8px solid var(--secondary);border-radius:50%}.recipe-annotationpin{right:120px;top:300px;background:var(--surface);border:3px solid var(--primary);border-radius:18px;padding:12px 18px}
@@ -422,6 +949,7 @@ header{height:154px;position:relative;z-index:2}header h1{font-family:"${theme.h
 .transformation-grid{display:grid;grid-template-columns:1fr 84px 1.24fr;gap:20px;height:505px;align-items:stretch}.evidence-input,.evidence-output{background:color-mix(in srgb,var(--primary) 6%,var(--surface));border:2px solid color-mix(in srgb,var(--primary) 18%,transparent);padding:24px;overflow:hidden}.evidence-input h2,.evidence-output h2{font-size:28px;margin:0 0 12px}.evidence-input small{display:block;font-size:20px;color:var(--muted);margin-bottom:16px}.tagged-copy{font-size:23px;line-height:1.58;background:var(--surface);border:1px solid color-mix(in srgb,var(--muted) 35%,transparent);padding:20px;height:365px;overflow:hidden}.tagged-segment{--tone:var(--muted)}.tagged-segment b{display:inline-block;border-radius:13px;padding:1px 8px;margin:0 5px;background:var(--tone);color:white;font-size:18px}.transformation-arrow{display:flex;align-items:center;justify-content:center;color:var(--secondary)}.transformation-arrow svg{width:70px;height:70px}.output-copy{min-height:132px;background:var(--primary);color:white;padding:18px;border-radius:4px;font-size:22px;line-height:1.4}.evidence-output h3{font-size:21px;margin:13px 0 8px}.compact-evidence-table .table-head,.compact-evidence-table .table-cell{font-size:19px;min-height:43px;padding:8px 10px}.compact-evidence-table{border-radius:6px}
 .artifact-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;height:500px}.artifact-grid.count-1{grid-template-columns:1fr}.artifact-grid.count-2{grid-template-columns:repeat(2,1fr)}.artifact-group{position:relative;background:var(--surface);border:2px solid color-mix(in srgb,var(--muted) 22%,transparent);padding:24px;overflow:hidden}.artifact-group h2{font-size:27px;margin:0 0 8px}.artifact-group>p{font-size:20px;line-height:1.35;color:var(--muted);margin:0}.artifact-stack{position:absolute;left:28px;right:28px;top:112px;bottom:24px}.artifact-preview{position:absolute;width:78%;height:82%;left:11%;top:8%;margin:0;border:2px solid color-mix(in srgb,var(--muted) 42%,transparent);border-radius:2px;background:white;overflow:visible}.artifact-preview img{display:block;width:100%;height:100%;background:white}.artifact-preview figcaption{position:absolute;left:0;bottom:-34px;font-size:19px;font-weight:700;color:var(--text)}.artifact-preview.preview-1{transform:translate(-8%,-3%) rotate(-2deg)}.artifact-preview.preview-2{transform:translate(7%,3%) rotate(2deg)}.artifact-preview.preview-3{transform:translate(0,8%)}.artifact-preview.preview-4{transform:translate(10%,-1%)}
 .effort-label{position:absolute;right:0;top:-48px;font-size:25px;font-weight:800}.gantt-grid{display:grid;grid-template-columns:235px 390px repeat(var(--axis-count),minmax(0,1fr));grid-template-rows:60px repeat(var(--task-count),52px);position:relative;border:1px solid color-mix(in srgb,var(--muted) 28%,transparent);background:var(--surface)}.gantt-head{justify-content:flex-start;background:var(--primary);color:white}.gantt-axis{font-size:20px;padding:5px}.gantt-axis span{font-size:16px}.gantt-category,.gantt-task{display:flex;align-items:center;padding:5px 10px;border-right:1px solid color-mix(in srgb,var(--muted) 28%,transparent);border-bottom:1px solid color-mix(in srgb,var(--muted) 28%,transparent);font-size:19px;background:var(--surface);z-index:2}.gantt-task{flex-direction:column;align-items:flex-start;justify-content:center}.gantt-task strong{font-size:20px}.gantt-task span{font-size:16px;color:var(--muted)}.gantt-bar{--tone:var(--secondary);align-self:center;height:22px;margin:0 3px;background:var(--tone);border-radius:2px;z-index:4}.gantt-marker{--tone:var(--muted);position:relative;background:color-mix(in srgb,var(--tone) 12%,transparent);border-left:2px solid var(--tone);border-right:2px solid var(--tone);z-index:3}.gantt-marker span{position:absolute;top:5px;left:5px;writing-mode:vertical-rl;font-size:15px;color:var(--tone);font-weight:700}
+.diagram-stage{position:relative;width:${DIAGRAM_WIDTH}px;height:${DIAGRAM_HEIGHT}px;margin:0 auto}.diagram-connectors{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.diagram-connectors line{stroke:var(--secondary);stroke-width:2.4;fill:none}.diagram-connectors marker path{fill:var(--secondary)}.diagram-node{--tone:var(--secondary);position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:12px 16px;background:color-mix(in srgb,var(--tone) 10%,var(--surface));border:2px solid color-mix(in srgb,var(--tone) 72%,var(--surface));border-radius:8px;text-align:center;color:var(--text);z-index:2;overflow:hidden}.diagram-node.emphasized{background:var(--tone);border-color:var(--tone);color:white}.diagram-node strong{font-size:24px;line-height:1.2}.diagram-node p{font-size:24px;line-height:1.2;margin:5px 0 0}.diagram-edge-label{position:absolute;display:flex;align-items:center;justify-content:center;padding:2px 8px;background:var(--bg);color:var(--secondary);font-size:24px;line-height:1.15;font-weight:700;text-align:center;z-index:3}
 .coverage-axis span,.coverage-group span,.gantt-axis span,.gantt-task span,.gantt-marker span,.tagged-segment b{font-size:19px}
 `;
 }

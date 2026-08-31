@@ -4,6 +4,7 @@
 - `react` / `react-dom` 19.1.1: MIT License
 - `react-icons` 5.7.0: MIT License
 - Lucide icon set exposed through `react-icons/lu`: ISC License
+- `parse5` 8.0.0: MIT License
 - `pptxgenjs` 4.0.1: MIT License
 
 The renderer exposes only a server-owned Lucide allowlist. Other icon packs bundled by the `react-icons` package are not selected or presented as approved assets.

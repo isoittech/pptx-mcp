@@ -719,7 +719,7 @@ public sealed class JobServiceTests
     }
 
     [Fact]
-    public async Task VisualRefinementIsSequentialSingleSlideAndLimitedToTwoRounds()
+    public async Task VisualRefinementIsSequentialSingleSlideAndLimitedToThreeRounds()
     {
         var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
         var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
@@ -760,11 +760,19 @@ public sealed class JobServiceTests
             var secondSlideJob = await repository.GetAsync(secondSlide.JobId, CancellationToken.None);
             var secondRoundJob = await repository.GetAsync(firstSlideAgain.JobId, CancellationToken.None);
 
-            var thirdRound = await Assert.ThrowsAsync<PptxValidationException>(() =>
+            var firstSlideThird = await service.SubmitRefineVisualDeckAsync(
+                caller,
+                firstSlideAgain.JobId,
+                [new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "表紙3巡目"))],
+                CancellationToken.None);
+            await SetStateAsync(repository, firstSlideThird.JobId, JobState.Succeeded);
+            var thirdRoundJob = await repository.GetAsync(firstSlideThird.JobId, CancellationToken.None);
+
+            var fourthRound = await Assert.ThrowsAsync<PptxValidationException>(() =>
                 service.SubmitRefineVisualDeckAsync(
                     caller,
-                    firstSlideAgain.JobId,
-                    [new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "表紙3巡目"))],
+                    firstSlideThird.JobId,
+                    [new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "表紙4巡目"))],
                     CancellationToken.None));
             var staleBranch = await Assert.ThrowsAsync<PptxValidationException>(() =>
                 service.SubmitRefineVisualDeckAsync(
@@ -775,7 +783,7 @@ public sealed class JobServiceTests
             var multiSlide = await Assert.ThrowsAsync<PptxValidationException>(() =>
                 service.SubmitRefineVisualDeckAsync(
                     caller,
-                    firstSlideAgain.JobId,
+                    firstSlideThird.JobId,
                     [
                         new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "一括1")),
                         new VisualSlideRevision(2, new VisualSlideSpec(VisualSlideKind.Statement, "一括2", Body: "不可")),
@@ -787,7 +795,8 @@ public sealed class JobServiceTests
             Assert.Equal(1, secondSlideJob?.VisualRevisionRound);
             Assert.Equal([1, 2], secondSlideJob?.VisualRevisedSlidesInRound);
             Assert.Equal(2, secondRoundJob?.VisualRevisionRound);
-            Assert.Equal("visual_refinement_limit_reached", thirdRound.Code);
+            Assert.Equal(3, thirdRoundJob?.VisualRevisionRound);
+            Assert.Equal("visual_refinement_limit_reached", fourthRound.Code);
             Assert.Equal("visual_deck_job_superseded", staleBranch.Code);
             Assert.Equal("visual_refinement_must_be_single_slide", multiSlide.Code);
         }

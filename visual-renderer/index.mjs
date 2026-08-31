@@ -24,10 +24,10 @@ const visualObjectAssets = new Map(
   (spec.visual_object_assets ?? []).map((asset) => [asset.asset_id, asset]),
 );
 const rendererContract = String(spec.rendererContract ?? "visual-v4").toLowerCase();
-if (!["visual-v4", "visual-v5", "visual-v6-dom"].includes(rendererContract)) {
+if (!["visual-v4", "visual-v5", "visual-v6-dom", "visual-v7-author-html"].includes(rendererContract)) {
   throw new Error(`Unsupported renderer contract: ${rendererContract}`);
 }
-if (rendererContract === "visual-v6-dom") {
+if (rendererContract === "visual-v6-dom" || rendererContract === "visual-v7-author-html") {
   const { canRenderDeckWithDom, renderDomDeck } = await import("./dom-renderer.mjs");
   if (canRenderDeckWithDom(spec)) {
     await renderDomDeck(spec, outputPath, imageAssets);

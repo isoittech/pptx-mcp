@@ -214,7 +214,7 @@ public sealed class JobWorker(
                         ?? throw new PptxValidationException("invalid_job_payload", "Visual deck specification is missing.");
                     VisualDeckValidator.Validate(deck, options.MaxSlides);
                     var outputPath = Path.Combine(directory, "presentation.pptx");
-                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, false, false, cancellationToken)
+                    var creation = await visualPresentationEngine.CreateAsync(outputPath, deck, false, false, false, cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
                     var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
@@ -247,6 +247,8 @@ public sealed class JobWorker(
                             true,
                             defaultTemplateRolePolicy is not null
                                 && options.DefaultTemplateCoverUsesLightForeground,
+                            defaultTemplateRolePolicy is not null
+                                && options.DefaultTemplateBodyUsesAccent2Headings,
                             cancellationToken)
                         .ConfigureAwait(false);
                     await packageGuard.ValidateAsync(visualPath, cancellationToken).ConfigureAwait(false);
@@ -270,7 +272,10 @@ public sealed class JobWorker(
                         composition.TemplateLayoutName,
                         templateSummary.Theme is not null,
                         visualCreation.SpeakerNotesCount,
-                        visualCreation.DesignWarnings);
+                        visualCreation.DesignWarnings,
+                        visualCreation.DomRenderedSlideCount,
+                        visualCreation.FallbackRenderedSlideCount,
+                        visualCreation.RendererUsageBySlide);
                     return (
                         JsonSerializer.SerializeToElement(result, SerializerOptions),
                         CreateOutputArtifacts(outputPath, images, directory));
