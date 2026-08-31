@@ -37,7 +37,7 @@
 ## 品質確認
 
 - dom-to-pptxが未対応または挙動差のある複雑なCSSは使用せず、変換実績のあるHTML要素、grid、flex、absolute配置、単純なborder／fill／typographyを中心にする。
-- ChromiumとPowerPoint／LibreOfficeの文字メトリクス差に備え、タイトルと主張は同じヘッダー群として8px間隔にし、主張と次の独立ブロック間には20px以上の見える余白を置く。既定本文の`body-claim`は`padding-left:0`へ正規化し、`dom-to-pptx`がリスト左paddingをPowerPointの上insetへ誤写像して主張を不自然に下げることを防ぐ。ネイティブ箇条書きのindentは変換側の既定値を使う。文字量の多い領域は高さを使い切らず概ね15%の予備を残す。
+- ChromiumとPowerPoint／LibreOfficeの文字メトリクス差に備え、タイトルと主張は同じヘッダー群として8px間隔にし、主張と次の独立ブロック間には20px以上の見える余白を置く。既定本文の`body-claim`は`padding-left:0`へ正規化する。さらに`dom-to-pptx` 2.1.1が出す`[top,right,bottom,left]`と、同梱PptxGenJS 4.0.1が読む`[left,right,bottom,top]`の配列順差を、DOM変換直後のリスト文字箱だけで補正する。これにより一般の`ul`／`ol`でも左paddingがPowerPointの上insetへ誤写像されず、本来の左insetとなる。リスト領域の縦余白は原則として外側wrapperで設計し、最初の項目前だけ項目間より大きな説明不能の空白を残さない。文字量の多い領域は高さを使い切らず概ね15%の予備を残す。
 - 生成後はLibreOfficeで全ページを画像化し、Opusが見切れだけでなく、情報階層、余白、主張、内容密度、原資料忠実性を確認する。ただし画像だけではpt値や実箇条書き構造を判定できないため、Open XMLの構造検査を必ず併用する。LibreOfficeとMicrosoft PowerPointの文字組み・gradient差は区別し、最終表示の正本はPowerPointとする。
 - 独立オブジェクトの接触、本文14pt未満、既定本文タイトル30pt未満、タイトルと主張の結合、fallback発生を検収不合格とする。
 

@@ -155,6 +155,8 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("Do not add left padding to the required body-claim ul", instructions, StringComparison.Ordinal);
         Assert.Contains("use an 8px vertical gap between them", instructions, StringComparison.Ordinal);
         Assert.Contains("at least 20px of visible whitespace between the claim and the next independent block", instructions, StringComparison.Ordinal);
+        Assert.Contains("keep list margin-top and padding-top at zero", instructions, StringComparison.Ordinal);
+        Assert.Contains("unexplained whitespace before the first bullet", instructions, StringComparison.Ordinal);
         Assert.Contains("Reserve a clear lower safe area", instructions, StringComparison.Ordinal);
         Assert.Contains("shorten visible copy and move supporting detail to speaker notes", instructions, StringComparison.Ordinal);
     }

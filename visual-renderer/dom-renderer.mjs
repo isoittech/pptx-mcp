@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { exportHtmlToPptx } from "dom-to-pptx/node";
+import JSZip from "jszip";
 import { parseFragment, serialize } from "parse5";
 import { renderApprovedReactIcon } from "./react-icons.mjs";
 
@@ -94,7 +95,46 @@ export async function renderDomDeck(spec, outputPath, imageAssets = {}) {
       svgAsVector: true,
     },
   });
-  await writeFile(outputPath, buffer, { flag: "wx" });
+  const normalizedBuffer = await normalizeDomListTextInsets(buffer);
+  await writeFile(outputPath, normalizedBuffer, { flag: "wx" });
+}
+
+// dom-to-pptx 2.1.1 supplies text margins as [top, right, bottom, left], while
+// its bundled PptxGenJS 4.0.1 consumes arrays as [left, right, bottom, top].
+// The mismatch turns a normal UL/OL left indent into a large top inset. Swap
+// those two generated DrawingML attributes only for native list text boxes;
+// non-list text boxes and intentionally separate wrapper padding stay intact.
+export async function normalizeDomListTextInsets(pptxBuffer) {
+  const archive = await JSZip.loadAsync(pptxBuffer);
+  const slidePaths = Object.keys(archive.files)
+    .filter((path) => /^ppt\/slides\/slide\d+\.xml$/u.test(path));
+  let changed = false;
+
+  for (const slidePath of slidePaths) {
+    const entry = archive.file(slidePath);
+    if (!entry) continue;
+    const xml = await entry.async("string");
+    const normalizedXml = xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/gu, (shape) => {
+      if (!/<a:bu(?:Char|AutoNum)\b/u.test(shape)) return shape;
+      return shape.replace(/<a:bodyPr\b[^>]*>/u, (bodyProperties) => {
+        const leftInset = bodyProperties.match(/\blIns="(\d+)"/u)?.[1];
+        const topInset = bodyProperties.match(/\btIns="(\d+)"/u)?.[1];
+        if (leftInset === undefined || topInset === undefined) return bodyProperties;
+        changed = true;
+        return bodyProperties
+          .replace(/\blIns="\d+"/u, `lIns="${topInset}"`)
+          .replace(/\btIns="\d+"/u, `tIns="${leftInset}"`);
+      });
+    });
+    if (normalizedXml !== xml) archive.file(slidePath, normalizedXml);
+  }
+
+  if (!changed) return pptxBuffer;
+  return archive.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
 }
 
 export function buildDomDeckHtml(spec, imageAssets = {}) {

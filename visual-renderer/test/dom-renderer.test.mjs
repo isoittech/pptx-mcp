@@ -13,6 +13,7 @@ import {
   canRenderSlideWithDom,
   domSupportedSlideKinds,
   layoutDirectedDiagram,
+  normalizeDomListTextInsets,
   sanitizeAuthoredHtmlFragment,
   validateAndScopeAuthoredCss,
 } from "../dom-renderer.mjs";
@@ -36,6 +37,26 @@ test("the DOM renderer supports the bounded business-layout allowlist", () => {
   assert.equal(canRenderSlideWithDom({ kind: "NativeDiagram", diagram: { kind: "Flow" } }), true);
   assert.equal(canRenderSlideWithDom({ kind: "NativeDiagram", diagram: { kind: "Cycle" } }), false);
   assert.equal(canRenderDeckWithDom({ slides: [{ kind: "NativeDiagram", diagram: { kind: "Tree" } }] }), true);
+});
+
+test("DOM list inset normalization keeps list left padding on the left edge", async () => {
+  const archive = new JSZip();
+  archive.file("ppt/slides/slide1.xml", `<p:sld><p:cSld><p:spTree>
+    <p:sp><p:txBody><a:bodyPr lIns="0" tIns="198120" rIns="0" bIns="0"/><a:p><a:pPr><a:buChar char="•"/></a:pPr><a:r><a:t>箇条書き</a:t></a:r></a:p></p:txBody></p:sp>
+    <p:sp><p:txBody><a:bodyPr lIns="111" tIns="222" rIns="0" bIns="0"/><a:p><a:r><a:t>通常本文</a:t></a:r></a:p></p:txBody></p:sp>
+  </p:spTree></p:cSld></p:sld>`);
+  const input = await archive.generateAsync({ type: "nodebuffer" });
+
+  const output = await normalizeDomListTextInsets(input);
+  const normalizedArchive = await JSZip.loadAsync(output);
+  const slide = await normalizedArchive.file("ppt/slides/slide1.xml")?.async("string") ?? "";
+  const listShape = (slide.match(/<p:sp>[\s\S]*?<\/p:sp>/gu) ?? [])
+    .find((shape) => shape.includes("箇条書き"));
+  const bodyShape = (slide.match(/<p:sp>[\s\S]*?<\/p:sp>/gu) ?? [])
+    .find((shape) => shape.includes("通常本文"));
+
+  assert.match(listShape ?? "", /<a:bodyPr[^>]*\blIns="198120"[^>]*\btIns="0"/u);
+  assert.match(bodyShape ?? "", /<a:bodyPr[^>]*\blIns="111"[^>]*\btIns="222"/u);
 });
 
 test("the default company body style separates a 30pt title from a 16pt claim bullet", () => {
@@ -764,6 +785,10 @@ test("model-authored HTML/CSS is converted without replacing the AI composition"
     assert.match(slide, /目的外利用の禁止/u);
     assert.match(slide, /第三者開示の禁止/u);
     assert.match(slide, /<a:buChar char="•"\/>/u);
+    const authoredClaimShape = (slide.match(/<p:sp>.*?<\/p:sp>/gu) ?? [])
+      .find((shape) => shape.includes("共通して問題になるのは目的外利用と第三者開示の2条項"));
+    assert.ok(authoredClaimShape, "the ordinary authored list must remain editable text");
+    assert.match(authoredClaimShape, /<a:bodyPr[^>]*\blIns="[1-9]\d*"[^>]*\btIns="0"/u);
     const claimShape = (bodySlide.match(/<p:sp>.*?<\/p:sp>/gu) ?? [])
       .find((shape) => shape.includes("本文を補足する主張"));
     assert.ok(claimShape, "the protected body claim must remain an editable bullet");
