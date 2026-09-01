@@ -719,6 +719,57 @@ public sealed class JobServiceTests
     }
 
     [Fact]
+    public async Task RecoverableAuthoredHtmlFailureUsesPageRefinementInsteadOfFullRestart()
+    {
+        var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
+        var uploadsRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-uploads-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(uploadsRoot);
+
+        try
+        {
+            var (service, repository) = CreateJobService(storageRoot, uploadsRoot);
+            var caller = new CallerContext("user-1", "conversation-1", null);
+            var deck = new VisualDeckSpec(
+                "HTML復旧",
+                [new VisualSlideSpec(VisualSlideKind.Title, "表紙")]);
+            var failed = await service.SubmitVisualDeckAsync(caller, deck, false, CancellationToken.None);
+            await SetStateAsync(
+                repository,
+                failed.JobId,
+                JobState.Failed,
+                "visual_authored_html_invalid",
+                "Slide 1 model-authored HTML/CSS is invalid.");
+
+            var restart = await Assert.ThrowsAsync<PptxValidationException>(() =>
+                service.AuthorizeVisualDeckStartAsync(caller, false, CancellationToken.None));
+            Assert.Equal("visual_deck_failed_page_refinement_required", restart.Code);
+
+            var recovered = await service.SubmitRefineVisualDeckAsync(
+                caller,
+                failed.JobId,
+                [new VisualSlideRevision(1, new VisualSlideSpec(VisualSlideKind.Title, "修正版表紙"))],
+                CancellationToken.None);
+            var recoveryJob = await repository.GetAsync(recovered.JobId, CancellationToken.None);
+
+            Assert.NotNull(recoveryJob);
+            Assert.Equal(failed.JobId, recoveryJob.ParentJobId);
+            Assert.Equal(failed.JobId, recoveryJob.VisualRootJobId);
+            Assert.Equal(1, recoveryJob.VisualRevisionRound);
+            var recoveredDeck = recoveryJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions);
+            Assert.Equal("修正版表紙", recoveredDeck?.Slides[0].Title);
+        }
+        finally
+        {
+            if (Directory.Exists(storageRoot))
+            {
+                Directory.Delete(storageRoot, recursive: true);
+            }
+
+            Directory.Delete(uploadsRoot, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task VisualRefinementIsSequentialSingleSlideAndLimitedToThreeRounds()
     {
         var storageRoot = Path.Combine(Path.GetTempPath(), $"pptx-mcp-jobs-{Guid.NewGuid():N}");
@@ -889,7 +940,9 @@ public sealed class JobServiceTests
     private static Task<JobRecord> SetStateAsync(
         FileJobRepository repository,
         string jobId,
-        JobState state) =>
+        JobState state,
+        string? errorCode = null,
+        string? errorMessage = null) =>
         repository.UpdateAsync(
             jobId,
             current => current with
@@ -897,6 +950,8 @@ public sealed class JobServiceTests
                 State = state,
                 ProgressPercent = state == JobState.Succeeded ? 100 : current.ProgressPercent,
                 CompletedAt = DateTimeOffset.UtcNow,
+                ErrorCode = errorCode,
+                ErrorMessage = errorMessage,
             },
             CancellationToken.None);
 

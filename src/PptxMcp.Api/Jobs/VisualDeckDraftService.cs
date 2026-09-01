@@ -73,7 +73,7 @@ public sealed class VisualDeckDraftService(
 
                 throw new PptxValidationException(
                     "visual_draft_already_active",
-                    "A different Visual Deck draft is already active in this conversation. Continue it with the returned draft_id; do not replace its locked title, slide count, theme, design, template, or Design Brief.");
+                    $"Visual Deck draft {active.Id} is already active in this conversation with {active.Slides.Count} of {active.ExpectedSlideCount} slides accepted. Continue it at slide {active.Slides.Count + 1}; do not validate another Design Brief or call pptx_start_visual_deck again.");
             }
 
             if (active is not null && !allowSubmittedReplacement)
@@ -213,6 +213,14 @@ public sealed class VisualDeckDraftService(
                         "visual_default_cover_contract_required",
                         "Slide 1 must set a concise subtitle and contain only the visible title and subtitle, using exactly one h1 or h2 with data-pptx-role=\"cover-title\" plus one p with data-pptx-role=\"cover-subtitle\". Move classifications, sources, target audiences, issue lists, and other details to body slides or speaker notes, then retry the same complete batch; no slide in the rejected batch was accepted.");
                 }
+                if (options.DefaultTemplateCoverUsesLightForeground
+                    && (!HasExplicitRoleFontSize(html, slide.AuthoredHtml?.Css, "cover-title", 54, "h1", "h2")
+                        || !HasExplicitRoleFontSize(html, slide.AuthoredHtml?.Css, "cover-subtitle", 27, "p")))
+                {
+                    throw new PptxValidationException(
+                        "visual_default_cover_css_contract_required",
+                        "Slide 1 CSS must explicitly set data-pptx-role=\"cover-title\" to font-size:54px and data-pptx-role=\"cover-subtitle\" to font-size:27px. Correct slide 1 and retry the same complete batch; no slide in the rejected batch was accepted.");
+                }
                 continue;
             }
 
@@ -224,6 +232,13 @@ public sealed class VisualDeckDraftService(
                     "visual_default_body_heading_contract_required",
                     $"Slide {slideNumber} must set a separate subtitle claim and include exactly one h1 or h2 with data-pptx-role=\"body-title\" plus one single-item ul with data-pptx-role=\"body-claim\". Copy the visible title and claim into slide.title and slide.subtitle, then retry the same complete batch; no slide in the rejected batch was accepted.");
             }
+            if (!HasExplicitRoleFontSize(html, slide.AuthoredHtml?.Css, "body-title", 50, "h1", "h2")
+                || !HasExplicitRoleFontSize(html, slide.AuthoredHtml?.Css, "body-claim", 27, "ul", "li"))
+            {
+                throw new PptxValidationException(
+                    "visual_default_body_css_contract_required",
+                    $"Slide {slideNumber} CSS must explicitly set data-pptx-role=\"body-title\" to font-size:50px and data-pptx-role=\"body-claim\" (or its li) to font-size:27px. Correct that slide and retry the same complete batch; no slide in the rejected batch was accepted.");
+            }
         }
     }
 
@@ -231,6 +246,55 @@ public sealed class VisualDeckDraftService(
         html,
         $"""\bdata-pptx-role\s*=\s*["']{Regex.Escape(role)}["']""",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool HasExplicitRoleFontSize(
+        string html,
+        string? css,
+        string role,
+        int pixels,
+        params string[] protectedTags)
+    {
+        if (string.IsNullOrWhiteSpace(css))
+        {
+            return false;
+        }
+
+        var roleSelector = new Regex(
+            $"""\[data-pptx-role\s*=\s*(?:["']{Regex.Escape(role)}["']|{Regex.Escape(role)})\](?:\s+li)?\s*$""",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var uniqueTags = protectedTags
+            .Where(tag => Regex.Matches(
+                html,
+                $"""<\s*{Regex.Escape(tag)}\b""",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Count == 1)
+            .ToArray();
+        var fontSize = new Regex(
+            $"""(?:^|;)\s*font-size\s*:\s*{pixels}(?:\.0+)?px(?:\s*!important)?\s*(?:;|$)""",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (Match rule in Regex.Matches(
+                     css,
+                     "(?<selectors>[^{}]+)\\{(?<declarations>[^{}]*)\\}",
+                     RegexOptions.CultureInvariant))
+        {
+            if (!fontSize.IsMatch(rule.Groups["declarations"].Value))
+            {
+                continue;
+            }
+
+            if (rule.Groups["selectors"].Value
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(selector => roleSelector.IsMatch(selector)
+                    || uniqueTags.Any(tag => Regex.IsMatch(
+                        selector,
+                        $"""(?:^|[\s>+~]){Regex.Escape(tag)}\s*$""",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static IReadOnlyList<VisualSlideSpec> MaterializePlannedVisualObjects(
         DraftState draft,

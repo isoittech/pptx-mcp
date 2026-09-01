@@ -173,6 +173,7 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
         requireDefaultCoverContract: defaultTemplateCoverOverlay && slideNumberOffset + index === 0,
         requireDefaultBodyContract: defaultTemplateBodyStyle && slideNumberOffset + index > 0,
         roleClassNames: collectAuthoredRoleClassNames(slide.authoredHtml.html),
+        roleTagNames: collectAuthoredRoleTagNames(slide.authoredHtml.html),
       },
     )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome)}`
     : baseCss(theme);
@@ -474,7 +475,7 @@ export function validateAndScopeAuthoredCss(css, slideIndex, options = {}) {
     }
     const hasFontSize = /(?:^|;)\s*font-size\s*:/iu.test(match[2]);
     const authoredRole = hasFontSize
-      ? classifyAuthoredFontRole(selectors, options.roleClassNames)
+      ? classifyAuthoredFontRole(selectors, options.roleClassNames, options.roleTagNames)
       : null;
     validateAuthoredFontSizes(match[2], authoredRole, "CSS");
     if (authoredRole) declaredRoleFontSizes.add(authoredRole);
@@ -496,7 +497,7 @@ export function validateAndScopeAuthoredCss(css, slideIndex, options = {}) {
   return scoped;
 }
 
-function classifyAuthoredFontRole(selectors, roleClassNames = {}) {
+function classifyAuthoredFontRole(selectors, roleClassNames = {}, roleTagNames = {}) {
   const roleSelector = (role) => new RegExp(
     `\\[data-pptx-role=(?:"${role}"|'${role}'|${role})\\]\\s*$`,
     "u",
@@ -508,14 +509,17 @@ function classifyAuthoredFontRole(selectors, roleClassNames = {}) {
     }
     return new RegExp(`\\.${escapedClassName}\\s*$`, "u").test(selector);
   });
+  const tagSelector = (role, selector) => (roleTagNames[role] ?? []).some((tagName) =>
+    new RegExp(`(?:^|[\\s>+~])${escapeRegExp(tagName)}\\s*$`, "u").test(selector));
   const roles = selectors.map((selector) => {
-    if (roleSelector("source-meta").test(selector) || classSelector("source-meta", selector)) return "source-meta";
-    if (roleSelector("cover-title").test(selector) || classSelector("cover-title", selector)) return "cover-title";
-    if (roleSelector("cover-subtitle").test(selector) || classSelector("cover-subtitle", selector)) return "cover-subtitle";
-    if (roleSelector("body-title").test(selector) || classSelector("body-title", selector)) return "body-title";
+    if (roleSelector("source-meta").test(selector) || classSelector("source-meta", selector) || tagSelector("source-meta", selector)) return "source-meta";
+    if (roleSelector("cover-title").test(selector) || classSelector("cover-title", selector) || tagSelector("cover-title", selector)) return "cover-title";
+    if (roleSelector("cover-subtitle").test(selector) || classSelector("cover-subtitle", selector) || tagSelector("cover-subtitle", selector)) return "cover-subtitle";
+    if (roleSelector("body-title").test(selector) || classSelector("body-title", selector) || tagSelector("body-title", selector)) return "body-title";
     if (roleSelector("body-claim").test(selector)
         || /\[data-pptx-role=(?:"body-claim"|'body-claim'|body-claim)\]\s+li\s*$/u.test(selector)
-        || classSelector("body-claim", selector)) {
+        || classSelector("body-claim", selector)
+        || tagSelector("body-claim", selector)) {
       return "body-claim";
     }
     return null;
@@ -556,6 +560,35 @@ function collectAuthoredRoleClassNames(html) {
     if (!allowedAuthoredRoles.has(role)) continue;
     result[role] ??= [];
     result[role].push(className);
+  }
+  return result;
+}
+
+function collectAuthoredRoleTagNames(html) {
+  const fragment = parseFragment(String(html ?? ""));
+  const usages = new Map();
+  const visit = (node) => {
+    if (node?.tagName) {
+      const tagName = String(node.tagName).toLowerCase();
+      const role = String((node.attrs ?? []).find((attribute) => attribute.name === "data-pptx-role")?.value ?? "")
+        .trim()
+        .toLowerCase();
+      const usage = usages.get(tagName) ?? { count: 0, roles: new Set() };
+      usage.count += 1;
+      usage.roles.add(role || null);
+      usages.set(tagName, usage);
+    }
+    for (const child of node?.childNodes ?? []) visit(child);
+  };
+  visit(fragment);
+
+  const result = {};
+  for (const [tagName, usage] of usages.entries()) {
+    if (usage.count !== 1 || usage.roles.size !== 1) continue;
+    const [role] = usage.roles;
+    if (!allowedAuthoredRoles.has(role)) continue;
+    result[role] ??= [];
+    result[role].push(tagName);
   }
   return result;
 }

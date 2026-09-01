@@ -655,7 +655,7 @@ public sealed class PowerPointTools
     }
 
     [McpServerTool(Name = "pptx_refine_visual_slide", Destructive = true),
-     Description("成功したVisual DeckまたはブランドVisual Deckの既存ページを1枚だけ差し替えます。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。Design Brief / Brand Profile-bound deckでは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示し、visualObjectsの異なるIDへの変更は拒否します。別recipeや別構図へ変更しません。jobIdは通常latestを使い、会話内の最新成功Visual Deckを自動選択します。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大3巡に制限します。上限後は全体を再作成しません.")]
+     Description("成功したVisual Deck／ブランドVisual Deck、またはvisual_authored_html_invalid等の回復可能なHTML/CSS検証エラーで失敗したVisual Deckの既存ページを1枚だけ差し替えます。失敗jobの復旧ではエラーに示されたページだけを完全なHTML/CSSへ直し、元のjobIdを明示します。新しいDesign Briefやdraftを開始しません。ページ追加には使わずpptx_insert_visual_slidesを使ってください。Bedrock/Claudeでの自動視覚リフレクションではこのツールを優先します。revisionにslide_numberと差し替え後の完全なslideを必ず含めます。Design Brief / Brand Profile-bound deckでは、元ページのrecipeId、kind、実効density、variantを完全に保持します。prepared visual objectのvisualObjectsとspeakerNotesは省略すればサーバーが元ページの値を継承します。ノートを直す場合だけ新しいpurposeとtalkScriptを明示し、visualObjectsの異なるIDへの変更は拒否します。別recipeや別構図へ変更しません。成功済み資料はjobId=latestを使えますが、失敗jobの復旧では返された正確なjobIdを使います。通常はサーバー内で完了まで待って最終statusと成果物を返すため、Succeededなら状態確認ツールを呼ばず次のページへ進んでください。30秒以内に完了せずqueuedを返した場合だけjob_idをpptx_wait_for_jobで待ちます。複数ページを1ページずつ直すと修正が累積します。同じページの再修正で次巡へ進み、サーバーが全体を最大3巡に制限します。上限後は全体を再作成しません.")]
     public static async Task<object> RefineVisualSlideAsync(
         CallerContextAccessor callerContext,
         JobService jobs,
@@ -712,6 +712,10 @@ public sealed class PowerPointTools
 
     internal static object PrepareGetJobResult(JobView job)
     {
+        if (JobService.IsRecoverableAuthoredVisualFailure(job.Status, job.ErrorCode, job.ErrorMessage))
+        {
+            return PrepareRecoverableVisualFailure(job);
+        }
         if (job.Kind != JobKind.Analyze || job.Status != JobState.Succeeded)
         {
             return job;
@@ -776,6 +780,10 @@ public sealed class PowerPointTools
 
     internal static object PrepareWaitForJobResult(JobView job)
     {
+        if (JobService.IsRecoverableAuthoredVisualFailure(job.Status, job.ErrorCode, job.ErrorMessage))
+        {
+            return PrepareRecoverableVisualFailure(job);
+        }
         if (job.Kind != JobKind.Analyze || job.Status != JobState.Succeeded)
         {
             return job;
@@ -788,6 +796,24 @@ public sealed class PowerPointTools
 
         return job.Result is { } result ? result : PrepareGetJobResult(job);
     }
+
+    private static object PrepareRecoverableVisualFailure(JobView job) => new
+    {
+        job_id = job.JobId,
+        kind = job.Kind,
+        status = job.Status,
+        progress_percent = job.ProgressPercent,
+        created_at = job.CreatedAt,
+        completed_at = job.CompletedAt,
+        artifacts = job.Artifacts,
+        error_code = job.ErrorCode,
+        error_message = job.ErrorMessage,
+        visual_root_job_id = job.VisualRootJobId,
+        visual_revision_round = job.VisualRevisionRound,
+        visual_revised_slides_in_round = job.VisualRevisedSlidesInRound,
+        instruction =
+            "This failed job is recoverable without rebuilding the deck. Call pptx_refine_visual_slide once with this exact job_id and replace only the slide identified in error_message with corrected complete HTML/CSS. Do not validate another Design Brief, call pptx_start_visual_deck, or resend unaffected slides.",
+    };
 
     [McpServerTool(Name = "pptx_get_preview_images", ReadOnly = true, Idempotent = true),
      Description("成功済みジョブのスライド画像をClaude自身の視覚確認用に返します。全ページ確認はスライド番号順の連続4枚ずつ、最後の端数だけ1〜3枚で取得し、同じjobの同じページを重複取得しません。文字切れ・重なり・可読性に加え、見出しだけで話が追えるか、読む順序が一意か、1ブロック1論点か、強調色が概ね15%以内か、本文が9pt未満に見えないか、単調な構図、余白、整列、コントラスト、密度、バランス、全体一貫性を確認してください。厳密なプレースホルダー資料はpptx_refine_deck、白紙またはブランドVisual Deckはpptx_refine_visual_slideへ問題ページを1枚ずつ渡します。最大3巡で収束させ、このツールを呼ばずに視覚確認済みと述べてはいけません.")]
@@ -951,6 +977,8 @@ public sealed class PowerPointTools
                 "Wait for the existing job with pptx_wait_for_job. Do not start or branch another full-deck job.",
             "visual_deck_recovery_limit_reached" or "visual_refinement_limit_reached" =>
                 "Stop calling PowerPoint mutation tools and report the latest successful result or failure to the user.",
+            "visual_deck_failed_page_refinement_required" =>
+                "Do not validate another Design Brief or call pptx_start_visual_deck. Use the exact failed job ID in message with pptx_refine_visual_slide and replace only the page identified by its HTML/CSS validation error.",
             "visual_deck_job_superseded" =>
                 "Call the same page-level operation once with jobId=latest so all accepted changes are preserved.",
             "visual_creative_direction_locked" =>
@@ -959,6 +987,10 @@ public sealed class PowerPointTools
                 "Stop this turn. Do not call pptx_add_visual_slides_to_draft or a finish tool with this draftId again. Tell the user that the draft is unavailable or expired; a fresh Design Brief and pptx_start_visual_deck are required to generate the deck again.",
             "visual_draft_not_editable" or "visual_draft_already_submitted" =>
                 "Do not retry this draft mutation. Use the existing submitted job when available, or report that the draft can no longer be edited.",
+            "visual_draft_already_active" =>
+                "Do not validate another Design Brief and do not call pptx_start_visual_deck again. Continue the exact active draft_id and next slide stated in message with pptx_add_visual_slides_to_draft.",
+            "visual_deck_job_not_refinable" =>
+                "Do not retry refinement or restart the deck. Report the exact job error, unless a separate successful Visual Deck job is already available for page-level refinement.",
             "design_brief_required" =>
                 "Call pptx_get_design_catalog, resolve only material user questions, call pptx_validate_design_brief, and then retry pptx_start_visual_deck once with the returned briefId.",
             "design_catalog_profile_required" =>
