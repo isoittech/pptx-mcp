@@ -213,6 +213,23 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void PreviewToolRequiresIndependentPerSlideAcceptanceReview()
+    {
+        var method = typeof(PowerPointTools).GetMethod(
+            nameof(PowerPointTools.GetPreviewImagesAsync),
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        var toolDescription = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
+
+        Assert.Contains("独立した厳しい検収者", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("構図と視覚的重心", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("PASS／FAIL", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("四角い断片", toolDescription, StringComparison.Ordinal);
+        Assert.Contains("左右の過密・空疎", toolDescription, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NewDeckToolsDefaultToDeploymentTemplate()
     {
         var startMethod = typeof(PowerPointTools).GetMethod(

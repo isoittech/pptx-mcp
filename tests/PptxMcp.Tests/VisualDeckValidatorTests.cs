@@ -1258,6 +1258,56 @@ public sealed class VisualDeckValidatorTests
     }
 
     [Fact]
+    public void ModelAuthoredHtmlContractAllowsHeaderWithoutMistakingItForHead()
+    {
+        var deck = new VisualDeckSpec(
+            "AI HTML",
+            [
+                new VisualSlideSpec(
+                    VisualSlideKind.Bullets,
+                    "災害概要",
+                    AuthoredHtml: new VisualAuthoredHtmlSpec(
+                        "<header class=\"title\"><h1>災害概要</h1></header><div class=\"body\">本文</div>",
+                        ".slide .title{font-size:50px}.slide .body{font-size:24px}")),
+            ],
+            RendererContract: "visual-v7-author-html");
+
+        VisualDeckValidator.Validate(deck, 50);
+
+        var unsafeHead = deck with
+        {
+            Slides =
+            [
+                deck.Slides[0] with
+                {
+                    AuthoredHtml = new VisualAuthoredHtmlSpec(
+                        "<head><title>unsafe</title></head><div>本文</div>",
+                        ".slide div{font-size:24px}"),
+                },
+            ],
+        };
+        var unsafeNavigation = deck with
+        {
+            Slides =
+            [
+                deck.Slides[0] with
+                {
+                    AuthoredHtml = new VisualAuthoredHtmlSpec(
+                        "<div href=\"/internal\">本文</div>",
+                        ".slide div{font-size:24px}"),
+                },
+            ],
+        };
+
+        Assert.Equal(
+            "visual_authored_html_unsafe",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(unsafeHead, 50)).Code);
+        Assert.Equal(
+            "visual_authored_html_unsafe",
+            Assert.Throws<PptxValidationException>(() => VisualDeckValidator.Validate(unsafeNavigation, 50)).Code);
+    }
+
+    [Fact]
     public void ModelAuthoredHtmlContractIgnoresLegacySemanticRendererGeometry()
     {
         var columns = new[]

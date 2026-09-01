@@ -2526,13 +2526,8 @@ public static partial class VisualDeckValidator
         ValidateText(authoredHtml.Css, $"{prefix}.authoredHtml.css", 1, 16_000);
         var html = authoredHtml.Html;
         var css = authoredHtml.Css;
-        var forbiddenHtmlTokens = new[]
-        {
-            "<html", "<head", "<body", "<style", "<script", "<link", "<meta", "<base",
-            "<iframe", "<object", "<embed", "<form", "<input", "<button", "<textarea",
-            "<select", "<video", "<audio", "<canvas", "<svg", "src=", "href=", "xlink:href",
-        };
-        if (forbiddenHtmlTokens.Any(token => html.Contains(token, StringComparison.OrdinalIgnoreCase))
+        if (ForbiddenHtmlElementRegex().IsMatch(html)
+            || NavigationAttributeRegex().IsMatch(html)
             || EventAttributeRegex().IsMatch(html)
             || UnsafeResourceRegex().IsMatch(html))
         {
@@ -2617,6 +2612,12 @@ public static partial class VisualDeckValidator
 
     [GeneratedRegex("\\son[a-z][a-z0-9_-]*\\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex EventAttributeRegex();
+
+    [GeneratedRegex("<\\s*/?\\s*(?:html|head|body|style|script|link|meta|base|iframe|object|embed|form|input|button|textarea|select|video|audio|canvas|svg)\\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ForbiddenHtmlElementRegex();
+
+    [GeneratedRegex("(?:^|\\s)(?:src|href|xlink:href)\\s*=", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex NavigationAttributeRegex();
 
     [GeneratedRegex("(?:https?|file|javascript|data):|(?:^|[\\s'\"(])//|\\\\\\\\", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UnsafeResourceRegex();
