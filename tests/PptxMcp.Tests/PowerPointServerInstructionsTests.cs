@@ -82,6 +82,13 @@ public sealed class PowerPointServerInstructionsTests
         Assert.Contains("PowerPoint as the final rendering authority", instructions, StringComparison.Ordinal);
         Assert.Contains("touching or nearly touching independent objects as a failure", instructions, StringComparison.Ordinal);
         Assert.Contains("Compare title hierarchy across all body pages", instructions, StringComparison.Ordinal);
+        Assert.Contains("independent acceptance reviewer", instructions, StringComparison.Ordinal);
+        Assert.Contains("visual center of gravity", instructions, StringComparison.Ordinal);
+        Assert.Contains("Absence of clipping alone is not sufficient for PASS", instructions, StringComparison.Ordinal);
+        Assert.Contains("broken or square-fragment connectors", instructions, StringComparison.Ordinal);
+        Assert.Contains("unintentionally crowded or empty side", instructions, StringComparison.Ordinal);
+        Assert.Contains("equal outer box dimensions alone do not prove balance", instructions, StringComparison.Ordinal);
+        Assert.Contains("reassess the same five gates", instructions, StringComparison.Ordinal);
     }
 
     [Fact]
