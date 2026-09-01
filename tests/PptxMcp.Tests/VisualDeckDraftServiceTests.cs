@@ -292,10 +292,83 @@ public sealed class VisualDeckDraftServiceTests
             started.DraftId,
             null,
             [
-                CreateAuthoredSlide("表紙", "副題", includeCoverRoles: true),
+                CreateAuthoredSlide("表紙", "副題", includeCoverRoles: true) with
+                {
+                    AuthoredHtml = new VisualAuthoredHtmlSpec(
+                        "<div class=\"cover\"><h1 data-pptx-role=\"cover-title\">表紙</h1><p data-pptx-role=\"cover-subtitle\">副題</p></div>",
+                        ".slide .cover h1{font-size:54px}.slide .cover p{font-size:27px}"),
+                },
                 CreateAuthoredSlide("本文", "主張", includeBodyRoles: true),
             ]);
         Assert.Equal(0, accepted.RemainingSlideCount);
+    }
+
+    [Fact]
+    public void DefaultTemplateRejectsMissingProtectedRoleFontSizesBeforeAcceptingBatch()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "organization-default",
+            defaultTemplateBodyUsesAccent2Headings: true,
+            defaultTemplateCoverUsesLightForeground: true);
+        var started = service.Begin(Caller, "HTML CSS契約", 2, null, null, "ja-JP", null);
+        var coverWithoutRequiredSizes = CreateAuthoredSlide(
+            "表紙",
+            "副題",
+            includeCoverRoles: true) with
+        {
+            AuthoredHtml = new VisualAuthoredHtmlSpec(
+                "<div><h1 data-pptx-role=\"cover-title\">表紙</h1><p data-pptx-role=\"cover-subtitle\">副題</p></div>",
+                ".slide{padding:64px}.slide [data-pptx-role=\"cover-title\"]{font-size:50px}.slide [data-pptx-role=\"cover-subtitle\"]{font-size:27px}"),
+        };
+
+        var exception = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [coverWithoutRequiredSizes, CreateAuthoredSlide("本文", "主張", includeBodyRoles: true)]));
+
+        Assert.Equal("visual_default_cover_css_contract_required", exception.Code);
+        Assert.Contains("no slide in the rejected batch was accepted", exception.Message, StringComparison.Ordinal);
+
+        var accepted = service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [
+                CreateAuthoredSlide("表紙", "副題", includeCoverRoles: true),
+                CreateAuthoredSlide("本文", "主張", includeBodyRoles: true),
+            ]);
+        Assert.Equal(2, accepted.AcceptedSlideCount);
+    }
+
+    [Fact]
+    public void DefaultTemplateRejectsMissingBodyRoleFontSizesBeforeAcceptingBatch()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "organization-default",
+            defaultTemplateBodyUsesAccent2Headings: true,
+            defaultTemplateCoverUsesLightForeground: true);
+        var started = service.Begin(Caller, "HTML本文CSS契約", 2, null, null, "ja-JP", null);
+        var bodyWithoutRequiredSizes = CreateAuthoredSlide(
+            "本文",
+            "主張",
+            includeBodyRoles: true) with
+        {
+            AuthoredHtml = new VisualAuthoredHtmlSpec(
+                "<div><h2 data-pptx-role=\"body-title\">本文</h2><ul data-pptx-role=\"body-claim\"><li>主張</li></ul></div>",
+                ".slide{padding:64px}.slide [data-pptx-role=\"body-title\"]{font-size:50px}.slide [data-pptx-role=\"body-claim\"]{font-size:24px}"),
+        };
+
+        var exception = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller,
+            started.DraftId,
+            null,
+            [CreateAuthoredSlide("表紙", "副題", includeCoverRoles: true), bodyWithoutRequiredSizes]));
+
+        Assert.Equal("visual_default_body_css_contract_required", exception.Code);
+        Assert.Contains("Slide 2", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -356,7 +429,11 @@ public sealed class VisualDeckDraftServiceTests
                     : includeBodyRoles
                     ? $"<div><h2 data-pptx-role=\"body-title\">{title}</h2><ul data-pptx-role=\"body-claim\"><li>{subtitle}</li></ul></div>"
                     : $"<div><h2>{title}</h2></div>",
-                ".slide{padding:64px}.slide h2{font-size:40px}"));
+                includeCoverRoles
+                    ? ".slide{padding:64px}.slide [data-pptx-role=\"cover-title\"]{font-size:54px}.slide [data-pptx-role=\"cover-subtitle\"]{font-size:27px}"
+                    : includeBodyRoles
+                    ? ".slide{padding:64px}.slide [data-pptx-role=\"body-title\"]{font-size:50px}.slide [data-pptx-role=\"body-claim\"],.slide [data-pptx-role=\"body-claim\"] li{font-size:27px}"
+                    : ".slide{padding:64px}.slide h2{font-size:40px}"));
 
     private static VisualSlideSpec[] CreateSlides(int start, int count) =>
         Enumerable.Range(start, count)

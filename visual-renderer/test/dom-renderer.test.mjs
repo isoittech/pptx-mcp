@@ -339,7 +339,7 @@ test("model-authored default cover is limited to a simple title and subtitle ove
       subtitle: "NDAの二つの論点から考える",
       authoredHtml: {
         html: `<div class="cover"><h1 data-pptx-role="cover-title">生成AIに秘密情報を入力してよいか</h1><p data-pptx-role="cover-subtitle">NDAの二つの論点から考える</p></div>`,
-        css: `.slide .cover{padding:260px 110px;background:#fff}.slide [data-pptx-role="cover-title"]{font-size:54px}.slide [data-pptx-role="cover-subtitle"]{font-size:27px}`,
+        css: `.slide .cover{padding:260px 110px;background:#fff}.slide .cover h1{font-size:54px}.slide .cover p{font-size:27px}`,
         assetIds: [],
       },
     }],

@@ -414,6 +414,34 @@ public sealed class ToolInputContractTests
     }
 
     [Fact]
+    public void RecoverableAuthoredHtmlFailureDirectsPageRefinementWithoutRestart()
+    {
+        var job = new JobView(
+            "33333333333333333333333333333333",
+            JobKind.CreateBrandedVisualDeck,
+            JobState.Failed,
+            5,
+            DateTimeOffset.UtcNow.AddSeconds(-1),
+            DateTimeOffset.UtcNow,
+            null,
+            [],
+            "visual_authored_html_invalid",
+            "Slide 1 model-authored HTML/CSS is invalid.",
+            null,
+            0,
+            []);
+
+        var prepared = PowerPointTools.PrepareWaitForJobResult(job);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(prepared, SerializerOptions));
+        var root = document.RootElement;
+
+        Assert.Equal(job.JobId, root.GetProperty("job_id").GetString());
+        Assert.Contains("pptx_refine_visual_slide", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+        Assert.Contains("Do not validate another Design Brief", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("pptx_start_visual_deck again", root.GetProperty("instruction").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SuccessfulAnalysisWaitReturnsTheCompactResultOnlyOnce()
     {
         using var resultDocument = JsonDocument.Parse("""{"slides":[{"slide_number":1}]}""");

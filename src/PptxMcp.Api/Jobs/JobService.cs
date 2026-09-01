@@ -390,6 +390,13 @@ public sealed class JobService(
             return new VisualDeckStartDecision(AllowSubmittedReplacement: true, IsRecoveryRestart: false);
         }
 
+        if (!userRequestedNewWorkflow && IsRecoverableAuthoredVisualFailure(latestRootAttempt))
+        {
+            throw new PptxValidationException(
+                "visual_deck_failed_page_refinement_required",
+                $"Visual deck job {latestRootAttempt.Id} failed while validating model-authored HTML/CSS. Replace only the page identified by its error with pptx_refine_visual_slide using this exact job ID; do not create another Design Brief or start another draft.");
+        }
+
         var failedRootAttempts = rootAttempts
             .TakeWhile(static job => job.State is JobState.Failed or JobState.Canceled)
             .Count();
@@ -434,12 +441,12 @@ public sealed class JobService(
         IReadOnlyList<VisualSlideRevision> revisions,
         CancellationToken cancellationToken)
     {
-        if (sourceJob.State != JobState.Succeeded
+        if ((sourceJob.State != JobState.Succeeded && !IsRecoverableAuthoredVisualFailure(sourceJob))
             || sourceJob.Kind is not (JobKind.CreateVisualDeck or JobKind.CreateBrandedVisualDeck))
         {
             throw new PptxValidationException(
                 "visual_deck_job_not_refinable",
-                "Only a successful visual or branded visual deck job can be refined.");
+                "Only a successful visual deck, or a failed visual deck with a recoverable model-authored HTML/CSS validation error, can be refined.");
         }
 
         if (revisions is null || revisions.Count != 1)
@@ -1182,6 +1189,21 @@ public sealed class JobService(
 
     private static string GetVisualRootJobId(JobRecord job) =>
         string.IsNullOrWhiteSpace(job.VisualRootJobId) ? job.Id : job.VisualRootJobId;
+
+    internal static bool IsRecoverableAuthoredVisualFailure(JobRecord job) =>
+        IsRecoverableAuthoredVisualFailure(job.State, job.ErrorCode, job.ErrorMessage);
+
+    internal static bool IsRecoverableAuthoredVisualFailure(
+        JobState state,
+        string? errorCode,
+        string? errorMessage) =>
+        state == JobState.Failed
+        && (string.Equals(errorCode, "visual_authored_html_invalid", StringComparison.Ordinal)
+            || (string.Equals(errorCode, "visual_renderer_failed", StringComparison.Ordinal)
+                && errorMessage is { } message
+                && (message.Contains("Model-authored", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("Default-template cover", StringComparison.OrdinalIgnoreCase)
+                    || message.Contains("Default-template body", StringComparison.OrdinalIgnoreCase))));
 
     private SemaphoreSlim GetVisualMutationLock(JobRecord job)
     {

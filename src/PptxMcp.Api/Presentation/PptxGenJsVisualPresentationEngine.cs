@@ -96,15 +96,25 @@ public sealed class PptxGenJsVisualPresentationEngine(
                 Directory.CreateDirectory(slideDirectory);
                 var segmentPath = Path.Combine(slideDirectory, "slide.pptx");
                 var segmentDeck = deck with { Slides = [deck.Slides[index]] };
-                var segmentUsedDom = await RenderDeckAsync(
-                    segmentPath,
-                    segmentDeck,
-                    useTemplateChrome,
-                    useDefaultTemplateCoverOverlay,
-                    useDefaultTemplateBodyStyle,
-                    index,
-                    deck.Slides.Count,
-                    cancellationToken).ConfigureAwait(false);
+                bool segmentUsedDom;
+                try
+                {
+                    segmentUsedDom = await RenderDeckAsync(
+                        segmentPath,
+                        segmentDeck,
+                        useTemplateChrome,
+                        useDefaultTemplateCoverOverlay,
+                        useDefaultTemplateBodyStyle,
+                        index,
+                        deck.Slides.Count,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch (PptxValidationException exception) when (exception.Code == "visual_authored_html_invalid")
+                {
+                    throw new PptxValidationException(
+                        exception.Code,
+                        $"Slide {index + 1} model-authored HTML/CSS is invalid: {exception.Message}");
+                }
                 PptxGenJsOpenXmlNormalizer.NormalizeAndValidate(segmentPath);
                 usedDomRenderer |= segmentUsedDom;
                 rendererUsageBySlide.Add(segmentUsedDom ? "dom-to-pptx" : "pptxgenjs-fallback");
@@ -168,6 +178,10 @@ public sealed class PptxGenJsVisualPresentationEngine(
     {
         var workingDirectory = Path.GetDirectoryName(outputPath)
             ?? throw new InvalidOperationException("The presentation output directory is missing.");
+        var isModelAuthoredHtmlContract = string.Equals(
+            deck.RendererContract,
+            "visual-v7-author-html",
+            StringComparison.OrdinalIgnoreCase);
         var specificationPath = Path.Combine(workingDirectory, "visual-deck.json");
         var specification = JsonSerializer.SerializeToNode(deck, SerializerOptions)?.AsObject()
             ?? throw new PptxValidationException("invalid_visual_deck", "The visual deck specification could not be serialized.");
@@ -197,65 +211,95 @@ public sealed class PptxGenJsVisualPresentationEngine(
             await JsonSerializer.SerializeAsync<JsonNode>(stream, specification, SerializerOptions, cancellationToken).ConfigureAwait(false);
         }
 
-        using var process = new Process
+        for (var attempt = 1; attempt <= 2; attempt++)
         {
-            StartInfo = new ProcessStartInfo
+            using var process = new Process
             {
-                FileName = "node",
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            },
-        };
-        process.StartInfo.ArgumentList.Add(rendererPath);
-        process.StartInfo.ArgumentList.Add(specificationPath);
-        process.StartInfo.ArgumentList.Add(outputPath);
-        process.StartInfo.Environment["PPTX_MCP_IMAGE_ASSET_ROOT"] = imageAssets.AssetsRoot;
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "node",
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                },
+            };
+            process.StartInfo.ArgumentList.Add(rendererPath);
+            process.StartInfo.ArgumentList.Add(specificationPath);
+            process.StartInfo.ArgumentList.Add(outputPath);
+            process.StartInfo.Environment["PPTX_MCP_IMAGE_ASSET_ROOT"] = imageAssets.AssetsRoot;
 
-        if (!process.Start())
-        {
-            throw new PptxValidationException("visual_renderer_failed", "Could not start the visual presentation renderer.");
-        }
-
-        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeoutSource = new CancellationTokenSource(timeout);
-        using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
-        try
-        {
-            await process.WaitForExitAsync(linkedSource.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            if (!process.HasExited)
+            if (!process.Start())
             {
-                process.Kill(entireProcessTree: true);
+                throw new PptxValidationException("visual_renderer_failed", "Could not start the visual presentation renderer.");
             }
 
-            throw;
-        }
+            var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            using var timeoutSource = new CancellationTokenSource(timeout);
+            using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+            try
+            {
+                await process.WaitForExitAsync(linkedSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
 
-        var standardOutput = await standardOutputTask.ConfigureAwait(false);
-        var standardError = await standardErrorTask.ConfigureAwait(false);
-        if (process.ExitCode != 0 || !File.Exists(outputPath))
-        {
+                throw;
+            }
+
+            var standardOutput = await standardOutputTask.ConfigureAwait(false);
+            var standardError = await standardErrorTask.ConfigureAwait(false);
+            if (process.ExitCode == 0 && File.Exists(outputPath))
+            {
+                return standardOutput
+                    .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Contains("PPTX_MCP_RENDERER=dom-to-pptx@2.1.1+react-icons@5.7.0", StringComparer.Ordinal);
+            }
+
             var diagnostic = string.Join(' ', standardError, standardOutput).Trim();
             if (diagnostic.Length > 2_000)
             {
                 diagnostic = diagnostic[..2_000];
             }
 
+            if (attempt == 1 && IsTransientBrowserLaunchFailure(diagnostic))
+            {
+                if (File.Exists(outputPath))
+                {
+                    File.Delete(outputPath);
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            var errorCode = isModelAuthoredHtmlContract && IsAuthoredHtmlValidationFailure(diagnostic)
+                ? "visual_authored_html_invalid"
+                : "visual_renderer_failed";
             throw new PptxValidationException(
-                "visual_renderer_failed",
+                errorCode,
                 $"The visual presentation renderer failed with exit code {process.ExitCode}: {diagnostic}");
         }
 
-        return standardOutput
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Contains("PPTX_MCP_RENDERER=dom-to-pptx@2.1.1+react-icons@5.7.0", StringComparer.Ordinal);
+        throw new UnreachableException();
     }
+
+    private static bool IsAuthoredHtmlValidationFailure(string diagnostic) =>
+        diagnostic.Contains("Model-authored", StringComparison.OrdinalIgnoreCase)
+        || diagnostic.Contains("default-template cover", StringComparison.OrdinalIgnoreCase)
+        || diagnostic.Contains("default-template body", StringComparison.OrdinalIgnoreCase)
+        || diagnostic.Contains("data-pptx-role", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsTransientBrowserLaunchFailure(string diagnostic) =>
+        diagnostic.Contains("Failed to launch headless browser", StringComparison.OrdinalIgnoreCase)
+        && diagnostic.Contains("Timed out", StringComparison.OrdinalIgnoreCase)
+        && diagnostic.Contains("WS endpoint URL", StringComparison.OrdinalIgnoreCase);
 
     private static IEnumerable<string> EnumerateImageAssetIds(VisualSlideSpec slide)
     {
