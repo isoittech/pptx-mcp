@@ -14,6 +14,7 @@ public enum JobKind
     CreateDeck,
     CreateVisualDeck,
     CreateBrandedVisualDeck,
+    ExportSlides,
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<JobState>))]

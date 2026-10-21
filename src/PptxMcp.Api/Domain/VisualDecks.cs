@@ -58,7 +58,11 @@ public sealed record VisualDeckSpec(
     [property: JsonPropertyName("brand_profile_binding"), Description("Server-owned immutable Brand Profile and per-slide recipe contract. Omitted for legacy and unprofiled decks.")]
     VisualDeckBrandProfileBinding? BrandProfileBinding = null,
     [property: JsonPropertyName("visual_object_assets"), Description("Server-owned immutable semantic visual object snapshots. Callers provide only slide.visualObjects asset IDs.")]
-    IReadOnlyList<VisualObjectRenderSpec>? VisualObjectAssets = null);
+    IReadOnlyList<VisualObjectRenderSpec>? VisualObjectAssets = null,
+    [property: Description("Whether the first page uses the cover role. Set false for body-only slides; this does not insert or remove a page. Locked at draft start and retained during refinement.")]
+    bool FirstSlideIsCover = true,
+    [property: JsonPropertyName("source_slide_numbers"), Description("Server-owned mapping to source pages for a separately generated subset. Output page numbers remain one-based within this deck.")]
+    IReadOnlyList<int>? SourceSlideNumbers = null);
 
 public sealed record VisualDeckDraftView(
     [property: JsonPropertyName("draft_id")] string DraftId,
@@ -71,7 +75,8 @@ public sealed record VisualDeckDraftView(
     [property: JsonPropertyName("template_source_file_id")] string TemplateSourceFileId,
     [property: JsonPropertyName("template_layout_id")] string TemplateLayoutId,
     [property: JsonPropertyName("creative_direction_locked")] bool CreativeDirectionLocked,
-    [property: JsonPropertyName("instruction")] string Instruction);
+    [property: JsonPropertyName("instruction")] string Instruction,
+    [property: JsonPropertyName("first_slide_is_cover")] bool FirstSlideIsCover = true);
 
 public sealed record BrandedVisualDeckSpec(
     [property: JsonPropertyName("deck")] VisualDeckSpec Deck,
@@ -500,7 +505,8 @@ public sealed record VisualDeckCreationResult(
     [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
     [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
     [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
-    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide,
+    [property: JsonPropertyName("source_slide_numbers")] IReadOnlyList<int>? SourceSlideNumbers = null);
 
 public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("slide_count")] int SlideCount,
@@ -513,7 +519,8 @@ public sealed record BrandedVisualDeckCreationResult(
     [property: JsonPropertyName("design_warnings")] IReadOnlyList<string> DesignWarnings,
     [property: JsonPropertyName("dom_rendered_slide_count")] int DomRenderedSlideCount,
     [property: JsonPropertyName("fallback_rendered_slide_count")] int FallbackRenderedSlideCount,
-    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide);
+    [property: JsonPropertyName("renderer_usage_by_slide")] IReadOnlyList<string> RendererUsageBySlide,
+    [property: JsonPropertyName("source_slide_numbers")] IReadOnlyList<int>? SourceSlideNumbers = null);
 
 public sealed record VisualSlideRevision(
     [property: JsonPropertyName("slide_number"), Description("One-based slide number to replace.")] int SlideNumber,
@@ -700,6 +707,15 @@ public static partial class VisualDeckValidator
             throw new PptxValidationException(
                 "visual_slide_count_out_of_range",
                 $"Visual decks must contain between 1 and {maximumSlides} slides.");
+        }
+
+        if (deck.SourceSlideNumbers is not null)
+        {
+            new SlideSelection(deck.SourceSlideNumbers).Validate(maximumSlides);
+            if (deck.SourceSlideNumbers.Count != deck.Slides.Count)
+            {
+                throw new PptxValidationException("slide_selection_invalid", "Source page mapping must match the output slide count.");
+            }
         }
 
         for (var index = 0; index < deck.Slides.Count; index++)

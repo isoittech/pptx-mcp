@@ -35,7 +35,7 @@
 - `pptx_analyze` の `theme` はaccent1〜3、light1、dark1、日本語優先の見出し・本文フォントを返す。白紙生成へ企業スタイルを移す場合はこの値を `VisualDeckSpec.theme` に使う。
 - 新規Visual Deckは`pptx_start_visual_deck`、最大4ページずつの`pptx_add_visual_slides_to_draft`、finishの順で作る。`visual-v7-author-html`は各ページのHTML/CSSを完結させた連続2〜4ページを受理し、残り1ページだけは単独で受理する。完成HTML/CSSは出力量が大きいため通常は2ページを1batchとし、3〜4ページは短いページだけを完全なtool引数が応答枠へ十分収まる場合に選ぶ。ページ数を増やすためにHTML/CSSを省略しない。最大50ページの完全仕様を一度に要求する公開ツールへ戻さない。`startSlideNumber`は省略可能とし、サーバーが受理済み末尾から追番する。明示値は順序検証にだけ使う。
 - start時にテンプレート、テーマ、デザインを固定し、finishでの変更を拒否する。テンプレート抽出値は未指定テーマ項目だけを補完し、明示色・フォントを上書きしない。`pptx_create_deck` は既存プレースホルダー配置への厳密な流し込みが明示された場合だけ使う。
-- 導入環境の既定テンプレートは外部マウントと`DefaultTemplateId`で指定し、実PPTX・会社名・ロゴ・固有文言をOSSへ含めない。起動時に検証・解析し、startの`templateSourceFileId=default`で自動適用する。cover/body見本スライド番号を設定した環境では1枚目と2枚目以降へ各layoutをサーバー側で適用する。既定表紙が濃色なら`DefaultTemplateCoverUsesLightForeground`も明示し、1枚目のTitle/Sectionだけ白文字・装飾番号なしで重ねる。添付テンプレートはstartで`latest`または`file_id`、テンプレートなしは`none`を選び、ユーザー指定テンプレートへ既定cover/body設定を流用しない。
+- 導入環境の既定テンプレートは外部マウントと`DefaultTemplateId`で指定し、実PPTX・会社名・ロゴ・固有文言をOSSへ含めない。起動時に検証・解析し、startの`templateSourceFileId=default`で自動適用する。cover/body見本スライド番号を設定した環境では、firstSlideIsCover=trueの先頭だけcover、それ以外はbodyのlayoutを適用する。既定表紙が濃色なら`DefaultTemplateCoverUsesLightForeground`も明示し、1枚目のTitle/Sectionだけ白文字・装飾番号なしで重ねる。添付テンプレートはstartで`latest`または`file_id`、テンプレートなしは`none`を選び、ユーザー指定テンプレートへ既定cover/body設定を流用しない。
 - `DefaultTemplateBodyUsesAccent2Headings`を有効にする導入環境では、既定テンプレートの本文タイトルを30pt、主張を別オブジェクトの16pt実箇条書きにし、両方へAccent 2を使う。タイトルへ主張を連結しない。ユーザー指定テンプレートとテンプレートなしには流用しない。
 - `UseModelAuthoredHtmlRenderer`は新規draftを`visual-v7-author-html`へ切り替える導入設定で、OSS既定はoffとする。検収環境では`RequireDomOnlyRenderer`も有効にし、全ページの`renderer_usage_by_slide`が`dom-to-pptx`、`fallback_rendered_slide_count`が0であることを確認する。
 - Brand Profileは`BrandProfilesRoot/<profile-id>/brand-profile.json`から読み取り専用で起動時に検証し、会社固有値、URL、パスをOSSコードへ含めない。`pptx_get_design_catalog`はsummary＋compactなstyle directionsと、選択profile＋directionの最終detailを各1回だけ返す。`pptx_validate_design_brief`はuser・conversation・profile version/hashへ束縛した期限付き`brief_id`を担当する。`RequireDesignBrief`はOSS既定offとし、導入環境で有効化した場合だけstart前に必須化する。詳細はADR 0013を参照する。
@@ -65,6 +65,8 @@
 - `dom-to-pptx`へ渡すflex内テキスト要素を内容幅のままにすると、PowerPointのtextbox内余白で行末1文字だけが折り返す。可変本文には`flex: 1; min-width: 0`で残り幅を与え、生成XMLのtextbox幅を確認する回帰テストを維持する。
 - 互換rendererの色role、surface、style profileを拡張するときは`visual-v5`／`visual-v6-dom`へ限定し、保存済み`visual-v4` lineageの固定foreground、semantic tone、shape構成を変えない。`visual-v7-author-html`の視覚変更はモデルが渡すHTML/CSSで行い、server側へ新たな固定構図を増やさない。
 - `VisualSlideSpec.speakerNotes`はvisible canvasとは別のPowerPoint発表者ノートである。`purpose`は1文、`talkScript`は発表用原稿として検証する。refineで省略されたノートは元ページから継承し、明示値だけを更新する。結果の`speaker_notes_count`で保持件数を返す。詳細はADR 0018を参照する。
+- 本文だけの生成はstartの`firstSlideIsCover=false`を使う。先頭ページの本文検証、DOM CSS、既定テンプレート合成を同じ役割に揃える。省略時と旧payloadは表紙ありの動作を維持する。
+- 修正1枚だけの出力は`pptx_refine_visual_slide(outputOnlyRevisedSlide=true)`で対象だけを生成し、元資料とは別lineageにする。recipe、Asset Plan、ノート、修正巡を引き継ぎ、出力内の番号を1へ対応付ける。無変更の抽出は`pptx_export_slides`を使い、指定順、ノート保持、除外ページへの参照除去、元ファイル不変、会話認可、保持期限をテストする。設計判断と部分資料への挿入制約はADR 0024を参照する。
 
 ## セキュリティと制約
 

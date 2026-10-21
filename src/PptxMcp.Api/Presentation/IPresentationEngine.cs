@@ -6,6 +6,12 @@ public interface IPresentationEngine
 {
     Task<PresentationSummary> AnalyzeAsync(string sourcePath, CancellationToken cancellationToken);
 
+    Task<SlideExportResult> ExportSlidesAsync(
+        string sourcePath,
+        string destinationPath,
+        SlideSelection selection,
+        CancellationToken cancellationToken);
+
     Task<EditResult> ReplaceTextAsync(
         string sourcePath,
         string destinationPath,

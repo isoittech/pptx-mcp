@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using PptxMcp.Artifacts;
 using PptxMcp.Configuration;
 using PptxMcp.Domain;
 using PptxMcp.Security;
@@ -28,6 +29,7 @@ public sealed class JobService(
         .Select(static _ => new SemaphoreSlim(1, 1))
         .ToArray();
     private readonly PptxMcpOptions options = options.Value;
+    private readonly RetentionPolicy retentionPolicy = new(options);
     private readonly ImageAssetRepository? imageAssets = imageAssets;
 
     public Task<JobReceipt> SubmitAnalyzeAsync(
@@ -245,6 +247,44 @@ public sealed class JobService(
         }
     }
 
+    public async Task<JobReceipt> SubmitExportSlidesAsync(
+        CallerContext caller,
+        SlideSelection selection,
+        string? sourceFileId,
+        string? jobId,
+        CancellationToken cancellationToken)
+    {
+        selection.Validate(options.MaxSlides);
+        if (string.IsNullOrWhiteSpace(sourceFileId) == string.IsNullOrWhiteSpace(jobId))
+        {
+            throw new PptxValidationException(
+                "slide_export_source_required",
+                "Specify exactly one source: sourceFileId for a current upload, or the exact successful jobId for a generated or edited presentation.");
+        }
+        if (!string.IsNullOrWhiteSpace(sourceFileId))
+        {
+            return await SubmitAsync(caller, sourceFileId, JobKind.ExportSlides, selection, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        var sourceJob = await GetOwnedAsync(caller, jobId!, cancellationToken).ConfigureAwait(false);
+        if (sourceJob.State != JobState.Succeeded
+            || !sourceJob.Artifacts.Any(static artifact => artifact.FileName == "presentation.pptx"))
+        {
+            throw new PptxValidationException(
+                "slide_export_source_not_ready",
+                "Export requires a successful job containing a PowerPoint artifact. Wait for the requested generation or edit job to finish.");
+        }
+        var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "presentation.pptx");
+        if (retentionPolicy.EffectiveExpiry(sourceJob) <= timeProvider.GetUtcNow() || !File.Exists(sourcePath))
+        {
+            throw new PptxValidationException("source_expired", "The source presentation is no longer available. Attach the saved PPTX to export its slides.");
+        }
+        return await SubmitFromPathAsync(
+            caller, sourceJob.SourceFileId, sourcePath, JobKind.ExportSlides, selection, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public Task<JobReceipt> SubmitPopulateTemplateAsync(
         CallerContext caller,
         string sourceFileId,
@@ -416,7 +456,8 @@ public sealed class JobService(
         CallerContext caller,
         string jobId,
         IReadOnlyList<VisualSlideRevision> revisions,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool outputOnlyRevisedSlide = false)
     {
         var sourceJob = await GetOwnedAsync(caller, jobId, cancellationToken).ConfigureAwait(false);
         var mutationLock = GetVisualMutationLock(sourceJob);
@@ -427,6 +468,7 @@ public sealed class JobService(
                 caller,
                 sourceJob,
                 revisions,
+                outputOnlyRevisedSlide,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -439,6 +481,7 @@ public sealed class JobService(
         CallerContext caller,
         JobRecord sourceJob,
         IReadOnlyList<VisualSlideRevision> revisions,
+        bool outputOnlyRevisedSlide,
         CancellationToken cancellationToken)
     {
         if ((sourceJob.State != JobState.Succeeded && !IsRecoverableAuthoredVisualFailure(sourceJob))
@@ -461,12 +504,25 @@ public sealed class JobService(
             sourceJob,
             revisions[0].SlideNumber,
             cancellationToken).ConfigureAwait(false);
+        if (outputOnlyRevisedSlide)
+        {
+            visualSubmission = visualSubmission with
+            {
+                IsRoot = true,
+                RootJobId = null,
+                RevisedSlidesInRound = [1],
+            };
+        }
 
         if (sourceJob.Kind == JobKind.CreateBrandedVisualDeck)
         {
             var branded = sourceJob.Payload?.Deserialize<BrandedVisualDeckSpec>(SerializerOptions)
                 ?? throw new PptxValidationException("invalid_job_payload", "The source branded visual deck specification is missing.");
             var refinedBrandedDeck = ApplyVisualDeckRevisions(branded.Deck, revisions, options.MaxSlides);
+            if (outputOnlyRevisedSlide)
+            {
+                refinedBrandedDeck = SelectVisualSlide(refinedBrandedDeck, revisions[0].SlideNumber);
+            }
             VisualDeckValidator.Validate(refinedBrandedDeck, options.MaxSlides);
             ValidateImageAssetsOwned(caller, refinedBrandedDeck);
             var sourcePath = Path.Combine(repository.GetJobDirectory(sourceJob.Id), "source.pptx");
@@ -488,6 +544,10 @@ public sealed class JobService(
         var originalDeck = sourceJob.Payload?.Deserialize<VisualDeckSpec>(SerializerOptions)
             ?? throw new PptxValidationException("invalid_job_payload", "The source visual deck specification is missing.");
         var refinedDeck = ApplyVisualDeckRevisions(originalDeck, revisions, options.MaxSlides);
+        if (outputOnlyRevisedSlide)
+        {
+            refinedDeck = SelectVisualSlide(refinedDeck, revisions[0].SlideNumber);
+        }
         VisualDeckValidator.Validate(refinedDeck, options.MaxSlides);
         ValidateImageAssetsOwned(caller, refinedDeck);
         return await SubmitGeneratedAsync(
@@ -496,6 +556,33 @@ public sealed class JobService(
             refinedDeck,
             cancellationToken,
             visualSubmission).ConfigureAwait(false);
+    }
+
+    internal static VisualDeckSpec SelectVisualSlide(VisualDeckSpec deck, int slideNumber)
+    {
+        new SlideSelection([slideNumber]).Validate(deck.Slides.Count);
+        var slide = deck.Slides[slideNumber - 1];
+        var binding = deck.BrandProfileBinding;
+        var audit = binding?.DesignBriefAudit;
+        var objectIds = (slide.VisualObjects ?? []).Select(static item => item.AssetId).ToHashSet(StringComparer.Ordinal);
+        return deck with
+        {
+            Slides = [slide],
+            FirstSlideIsCover = deck.FirstSlideIsCover && slideNumber == 1,
+            SourceSlideNumbers = [deck.SourceSlideNumbers?[slideNumber - 1] ?? slideNumber],
+            BrandProfileBinding = binding is null ? null : binding with
+            {
+                Slides = binding.Slides.Where(item => item.SlideNumber == slideNumber)
+                    .Select(static item => item with { SlideNumber = 1 }).ToArray(),
+                DesignBriefAudit = audit is null ? null : audit with
+                {
+                    Slides = audit.Slides.Where(item => item.SlideNumber == slideNumber)
+                        .Select(static item => item with { SlideNumber = 1 }).ToArray(),
+                },
+            },
+            VisualObjectAssets = deck.VisualObjectAssets?.Where(item => objectIds.Contains(item.AssetId))
+                .ToArray(),
+        };
     }
 
     public async Task<JobReceipt> SubmitInsertVisualSlidesAsync(
@@ -1002,6 +1089,13 @@ public sealed class JobService(
                 "Slide insertion into a Brand Profile-bound deck is unavailable in phase 1 because the new slides have no validated Asset Plan or immutable recipe binding. Create a separately validated workflow when insertion support is added; do not bypass the existing profile contract.");
         }
 
+        if (originalDeck.SourceSlideNumbers is not null && originalDeck.VisualObjectAssets is { Count: > 0 })
+        {
+            throw new PptxValidationException(
+                "visual_subset_insert_requires_source",
+                "Insert pages into the original deck before selecting output pages. Inserting into a selected deck with prepared visual objects would lose their original page bindings.");
+        }
+
         var insertionIndex = afterSlideNumber ?? originalDeck.Slides.Count;
         if (insertionIndex < 0 || insertionIndex > originalDeck.Slides.Count)
         {
@@ -1015,7 +1109,7 @@ public sealed class JobService(
             .Concat(insertedSlides)
             .Concat(originalDeck.Slides.Skip(insertionIndex))
             .ToArray();
-        return originalDeck with { Slides = combinedSlides };
+        return originalDeck with { Slides = combinedSlides, SourceSlideNumbers = null };
     }
 
     private static void ValidateBrandProfileRevisions(

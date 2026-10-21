@@ -161,6 +161,20 @@ public sealed class JobWorker(
                     return (JsonSerializer.SerializeToElement(new { preview_count = images.Count }), CreateImageArtifacts(images, directory));
                 }
 
+            case JobKind.ExportSlides:
+                {
+                    var selection = job.Payload?.Deserialize<SlideSelection>(SerializerOptions)
+                        ?? throw new PptxValidationException("invalid_job_payload", "Slide selection is missing.");
+                    var outputPath = Path.Combine(directory, "presentation.pptx");
+                    var exported = await presentationEngine.ExportSlidesAsync(
+                        sourcePath, outputPath, selection, cancellationToken).ConfigureAwait(false);
+                    await packageGuard.ValidateAsync(outputPath, cancellationToken).ConfigureAwait(false);
+                    var images = await RenderAsync(outputPath, directory, cancellationToken).ConfigureAwait(false);
+                    return (
+                        JsonSerializer.SerializeToElement(exported, SerializerOptions),
+                        CreateOutputArtifacts(outputPath, images, directory));
+                }
+
             case JobKind.ReplaceText:
                 {
                     var payload = DeserializeReplaceTextPayload(job.Payload);
@@ -239,7 +253,8 @@ public sealed class JobWorker(
                         && options.DefaultTemplateBodySampleSlideNumber > 0
                         ? new TemplateLayoutRolePolicy(
                             options.DefaultTemplateCoverSampleSlideNumber,
-                            options.DefaultTemplateBodySampleSlideNumber)
+                            options.DefaultTemplateBodySampleSlideNumber,
+                            branded.Deck.FirstSlideIsCover)
                         : null;
                     var visualCreation = await visualPresentationEngine.CreateAsync(
                             visualPath,
@@ -275,7 +290,8 @@ public sealed class JobWorker(
                         visualCreation.DesignWarnings,
                         visualCreation.DomRenderedSlideCount,
                         visualCreation.FallbackRenderedSlideCount,
-                        visualCreation.RendererUsageBySlide);
+                        visualCreation.RendererUsageBySlide,
+                        visualCreation.SourceSlideNumbers);
                     return (
                         JsonSerializer.SerializeToElement(result, SerializerOptions),
                         CreateOutputArtifacts(outputPath, images, directory));

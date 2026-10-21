@@ -33,7 +33,8 @@ public sealed class VisualDeckDraftService(
         string templateSourceFileId = "default",
         string templateLayoutId = "auto",
         bool allowSubmittedReplacement = false,
-        ValidatedDesignBriefBinding? designBrief = null)
+        ValidatedDesignBriefBinding? designBrief = null,
+        bool firstSlideIsCover = true)
     {
         VisualDeckValidator.ValidateMetadata(title, subject, language, theme, design);
         if (expectedSlideCount is < 1 || expectedSlideCount > options.MaxSlides)
@@ -66,7 +67,8 @@ public sealed class VisualDeckDraftService(
                         design,
                         templateSourceFileId,
                         templateLayoutId,
-                        designBrief))
+                        designBrief,
+                        firstSlideIsCover))
                 {
                     return CreateView(active);
                 }
@@ -110,7 +112,8 @@ public sealed class VisualDeckDraftService(
                     DraftStatus.Collecting,
                     null,
                     now,
-                    now.Add(DraftLifetime));
+                    now.Add(DraftLifetime),
+                    firstSlideIsCover);
                 if (drafts.TryAdd(draft.Id, draft))
                 {
                     return CreateView(draft);
@@ -202,7 +205,7 @@ public sealed class VisualDeckDraftService(
             var slideNumber = startSlideNumber + index;
             var slide = slides[index];
             var html = slide.AuthoredHtml?.Html ?? string.Empty;
-            if (slideNumber == 1)
+            if (slideNumber == 1 && draft.FirstSlideIsCover)
             {
                 if (options.DefaultTemplateCoverUsesLightForeground
                     && (string.IsNullOrWhiteSpace(slide.Subtitle)
@@ -457,7 +460,8 @@ public sealed class VisualDeckDraftService(
             draft.Design,
             options.UseModelAuthoredHtmlRenderer ? "visual-v7-author-html" : "visual-v6-dom",
             CreatePersistedBrandBinding(draft),
-            CreateVisualObjectSnapshots(draft, slides));
+            CreateVisualObjectSnapshots(draft, slides),
+            draft.FirstSlideIsCover);
 
     private VisualObjectRenderSpec[]? CreateVisualObjectSnapshots(
         DraftState draft,
@@ -550,9 +554,11 @@ public sealed class VisualDeckDraftService(
         VisualDesignSpec? design,
         string templateSourceFileId,
         string templateLayoutId,
-        ValidatedDesignBriefBinding? designBrief) =>
+        ValidatedDesignBriefBinding? designBrief,
+        bool firstSlideIsCover) =>
         string.Equals(active.Title, title, StringComparison.Ordinal)
         && active.ExpectedSlideCount == expectedSlideCount
+        && active.FirstSlideIsCover == firstSlideIsCover
         && ThemesEqual(active.Theme, theme)
         && string.Equals(active.Subject, subject, StringComparison.Ordinal)
         && string.Equals(active.Language, language, StringComparison.Ordinal)
@@ -855,7 +861,8 @@ public sealed class VisualDeckDraftService(
             draft.TemplateSourceFileId,
             draft.TemplateLayoutId,
             true,
-            instruction);
+            instruction,
+            draft.FirstSlideIsCover);
     }
 
     private static void ValidateTemplateSelection(string sourceFileId, string layoutId)
@@ -944,7 +951,8 @@ public sealed class VisualDeckDraftService(
         DraftStatus Status,
         string? JobId,
         DateTimeOffset CreatedAt,
-        DateTimeOffset ExpiresAt);
+        DateTimeOffset ExpiresAt,
+        bool FirstSlideIsCover);
 }
 
 public sealed record VisualDeckDraftSubmission(

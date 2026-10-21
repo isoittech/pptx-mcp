@@ -11,6 +11,55 @@ public sealed class BrandProfileJobBindingTests
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     [Fact]
+    public void BodySubsetRetainsRecipeAuditAndNotesAndCanBeRefinedAgain()
+    {
+        var original = CreateBoundDeck();
+        var notes = new VisualSpeakerNotesSpec("根拠を伝える", "三つの指標を説明します。");
+        original = original with { Slides = [original.Slides[0], original.Slides[1] with { SpeakerNotes = notes }] };
+        var selected = JobService.SelectVisualSlide(original, 2);
+
+        Assert.Single(selected.Slides);
+        Assert.False(selected.FirstSlideIsCover);
+        Assert.Equal([2], selected.SourceSlideNumbers);
+        Assert.Same(original.BrandProfileBinding!.Profile, selected.BrandProfileBinding!.Profile);
+        Assert.Equal(1, Assert.Single(selected.BrandProfileBinding.Slides).SlideNumber);
+        Assert.Equal("kpi-balanced", selected.BrandProfileBinding.Slides[0].RecipeId);
+        Assert.Equal(1, Assert.Single(selected.BrandProfileBinding.DesignBriefAudit!.Slides).SlideNumber);
+        Assert.Same(notes, selected.Slides[0].SpeakerNotes);
+        VisualDeckValidator.Validate(selected, 50);
+        var refined = JobService.ApplyVisualDeckRevisions(selected,
+            [new VisualSlideRevision(1, selected.Slides[0] with { Title = "Updated evidence", SpeakerNotes = null })], 50);
+        Assert.Same(notes, refined.Slides[0].SpeakerNotes);
+        Assert.False(refined.FirstSlideIsCover);
+        Assert.Equal([2], JobService.SelectVisualSlide(refined, 1).SourceSlideNumbers);
+        Assert.Equal(2, original.Slides.Count);
+    }
+
+    [Fact]
+    public void BodySubsetRetainsImmutableVisualObjectsAndRejectsInsertionThatWouldLoseBindings()
+    {
+        const string assetId = "0123456789abcdef0123456789abcdef";
+        var original = CreateBoundDeck() with { BrandProfileBinding = null };
+        var asset = new VisualObjectRenderSpec(assetId,
+            new VisualObjectBrief(2, VisualObjectPurpose.Grouping, VisualObjectArchetype.Bracket,
+                PlacementRole: VisualObjectPlacementRole.ContentConnector), new string('b', 64));
+        original = original with
+        {
+            Slides = [original.Slides[0], original.Slides[1] with { VisualObjects = [new VisualObjectAssetReference(assetId)] }],
+            VisualObjectAssets = [asset],
+        };
+
+        var selected = JobService.SelectVisualSlide(original, 2);
+
+        Assert.Same(asset, Assert.Single(selected.VisualObjectAssets!));
+        Assert.Equal(2, selected.VisualObjectAssets![0].Brief.SlideNumber);
+        VisualDeckValidator.Validate(selected, 50);
+        var error = Assert.Throws<PptxValidationException>(() => JobService.InsertVisualSlides(
+            selected, [new VisualSlideSpec(VisualSlideKind.Statement, "追加ページ", Body: "追加内容")], null, 50));
+        Assert.Equal("visual_subset_insert_requires_source", error.Code);
+    }
+
+    [Fact]
     public void ProfileBoundRefinementPreservesExactRecipeContract()
     {
         var original = CreateBoundDeck();

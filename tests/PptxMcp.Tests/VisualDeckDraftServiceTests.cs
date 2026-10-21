@@ -397,6 +397,44 @@ public sealed class VisualDeckDraftServiceTests
         Assert.Equal(0, accepted.RemainingSlideCount);
     }
 
+    [Fact]
+    public void AcceptsOneBodySlideWithoutCoverAndKeepsTheRoleLocked()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "sample",
+            defaultTemplateBodyUsesAccent2Headings: true,
+            defaultTemplateCoverUsesLightForeground: true);
+        var started = service.Begin(Caller, "差し替え用", 1, null, null, "ja-JP", null,
+            firstSlideIsCover: false);
+        var roleChange = Assert.Throws<PptxValidationException>(() =>
+            service.Begin(Caller, "差し替え用", 1, null, null, "ja-JP", null));
+        Assert.Equal("visual_draft_already_active", roleChange.Code);
+
+        var added = service.AddSlides(Caller, started.DraftId, null,
+            [CreateAuthoredSlide("比較", "対象を同じ軸で比較する", includeBodyRoles: true)]);
+        var submission = service.AcquireForSubmission(Caller, started.DraftId);
+        Assert.False(started.FirstSlideIsCover);
+        Assert.Equal(0, added.RemainingSlideCount);
+        Assert.False(submission.Deck!.FirstSlideIsCover);
+        Assert.Single(submission.Deck.Slides);
+    }
+
+    [Fact]
+    public void BodyOnlyDraftStillRejectsMissingBodyHeadingContract()
+    {
+        var service = CreateService(
+            useModelAuthoredHtmlRenderer: true,
+            defaultTemplateId: "sample",
+            defaultTemplateBodyUsesAccent2Headings: true,
+            defaultTemplateCoverUsesLightForeground: true);
+        var started = service.Begin(Caller, "本文のみ", 1, null, null, "ja-JP", null,
+            firstSlideIsCover: false);
+        var error = Assert.Throws<PptxValidationException>(() => service.AddSlides(
+            Caller, started.DraftId, null, [CreateAuthoredSlide("本文", "主張")]));
+        Assert.Equal("visual_default_body_heading_contract_required", error.Code);
+    }
+
     private static VisualDeckDraftService CreateService(
         int maximumSlides = 50,
         bool useModelAuthoredHtmlRenderer = false,

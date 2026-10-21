@@ -47,6 +47,12 @@ public sealed class PresentationAnalysisCacheTests
             IReadOnlyList<TextReplacement> replacements,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<SlideExportResult> ExportSlidesAsync(
+            string sourcePath,
+            string destinationPath,
+            SlideSelection selection,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<EditResult> PopulateTemplateAsync(
             string sourcePath,
             string destinationPath,

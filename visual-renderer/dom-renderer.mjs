@@ -141,9 +141,11 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
   const theme = {
     ...resolveTheme(spec.theme),
     visualObjectAssets: Array.isArray(spec.visual_object_assets) ? spec.visual_object_assets : [],
+    visualObjectSlideNumbers: Array.isArray(spec.source_slide_numbers) ? spec.source_slide_numbers : null,
   };
   const templateChrome = spec.templateChrome === true;
-  const defaultTemplateCoverOverlay = spec.defaultTemplateCoverOverlay === true;
+  const firstSlideIsCover = spec.firstSlideIsCover !== false;
+  const defaultTemplateCoverOverlay = spec.defaultTemplateCoverOverlay === true && firstSlideIsCover;
   const defaultTemplateBodyStyle = spec.defaultTemplateBodyStyle === true;
   const slideNumberOffset = Number.isInteger(spec.slideNumberOffset) && spec.slideNumberOffset >= 0
     ? spec.slideNumberOffset
@@ -164,6 +166,7 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
     defaultTemplateCoverOverlay,
     defaultTemplateBodyStyle,
     imageAssets,
+    firstSlideIsCover,
   )).join("\n");
   const css = usesModelAuthoredHtml
     ? `${modelAuthoredBaseCss(theme, templateChrome)}\n${spec.slides.map((slide, index) => validateAndScopeAuthoredCss(
@@ -171,11 +174,11 @@ export function buildDomDeckHtml(spec, imageAssets = {}) {
       slideNumberOffset + index,
       {
         requireDefaultCoverContract: defaultTemplateCoverOverlay && slideNumberOffset + index === 0,
-        requireDefaultBodyContract: defaultTemplateBodyStyle && slideNumberOffset + index > 0,
+        requireDefaultBodyContract: defaultTemplateBodyStyle && (!firstSlideIsCover || slideNumberOffset + index > 0),
         roleClassNames: collectAuthoredRoleClassNames(slide.authoredHtml.html),
         roleTagNames: collectAuthoredRoleTagNames(slide.authoredHtml.html),
       },
-    )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome)}`
+    )).join("\n")}${modelAuthoredComplianceCss(spec.slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome, firstSlideIsCover)}`
     : baseCss(theme);
 
   return `<!doctype html>
@@ -198,6 +201,7 @@ function renderSlide(
   defaultTemplateCoverOverlay,
   defaultTemplateBodyStyle,
   imageAssets,
+  firstSlideIsCover,
 ) {
   if (slide.authoredHtml) {
     return renderModelAuthoredSlide(
@@ -208,6 +212,7 @@ function renderSlide(
       defaultTemplateCoverOverlay,
       defaultTemplateBodyStyle,
       imageAssets,
+      firstSlideIsCover,
     );
   }
   const kind = normalizeKind(slide.kind);
@@ -218,7 +223,7 @@ function renderSlide(
   const usesDefaultCover = defaultTemplateCoverOverlay
     && index === 0
     && (kind === "title" || kind === "section");
-  const usesDefaultBody = defaultTemplateBodyStyle && index > 0;
+  const usesDefaultBody = defaultTemplateBodyStyle && (!firstSlideIsCover || index > 0);
   const backgroundClass = `${templateChrome ? " template-chrome" : ""}${usesDefaultCover ? " default-template-cover" : ""}${usesDefaultBody ? " default-template-body" : ""}${usesDefaultBody && slide.subtitle ? " has-header-claim" : ""}`;
   const eyebrow = slide.eyebrow
     ? `<div class="eyebrow">${escapeHtml(slide.eyebrow)}</div>`
@@ -268,6 +273,7 @@ function renderModelAuthoredSlide(
   defaultTemplateCoverOverlay,
   defaultTemplateBodyStyle,
   imageAssets,
+  firstSlideIsCover,
 ) {
   const notes = slide.speakerNotes
     ? `このスライドの狙い\n${safeText(slide.speakerNotes.purpose)}\n\nトークスクリプト\n${safeText(slide.speakerNotes.talkScript)}`
@@ -281,7 +287,7 @@ function renderModelAuthoredSlide(
       requireDefaultCoverContract: defaultTemplateCoverOverlay && index === 0,
       expectedCoverTitle: slide.title,
       expectedCoverSubtitle: slide.subtitle,
-      requireDefaultBodyContract: defaultTemplateBodyStyle && index > 0,
+      requireDefaultBodyContract: defaultTemplateBodyStyle && (!firstSlideIsCover || index > 0),
       expectedBodyTitle: slide.title,
       expectedBodyClaim: slide.subtitle,
     },
@@ -655,7 +661,7 @@ body{font-family:"${theme.bodyFont}",sans-serif;color:#${theme.text}}
 `;
 }
 
-function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome) {
+function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateCoverOverlay, defaultTemplateBodyStyle, templateChrome, firstSlideIsCover) {
   const rules = [];
   for (let index = 0; index < slides.length; index += 1) {
     const number = slideNumberOffset + index + 1;
@@ -667,7 +673,7 @@ function modelAuthoredComplianceCss(slides, slideNumberOffset, defaultTemplateCo
       rules.push(`${scope} [data-pptx-role="cover-title"]{font-size:54px!important;line-height:1.12!important;margin:0!important;color:#fff!important;font-weight:800!important;background:transparent!important;border:0!important}`);
       rules.push(`${scope} [data-pptx-role="cover-subtitle"]{font-size:27px!important;line-height:1.4!important;margin:14px 0 0!important;color:#f5f7fb!important;font-weight:600!important;background:transparent!important;border:0!important}`);
     }
-    if (defaultTemplateBodyStyle && number > 1) {
+    if (defaultTemplateBodyStyle && (!firstSlideIsCover || number > 1)) {
       rules.push(`${scope} [data-pptx-role="body-title"]{font-size:50px!important;line-height:1.1!important;margin:0!important;color:var(--secondary)!important;font-weight:800!important}`);
       rules.push(`${scope} [data-pptx-role="body-claim"]{font-size:27px!important;margin:8px 0 0!important;padding-left:0!important;color:var(--secondary)!important;font-weight:700!important}`);
       rules.push(`${scope} [data-pptx-role="body-claim"] li{font-size:27px!important;color:var(--secondary)!important;font-weight:700!important}`);
@@ -1024,7 +1030,7 @@ function renderPreparedVisualObjects(slide, index, theme) {
   return objects.map((reference) => {
     const asset = assetMap.get(reference.assetId);
     const brief = asset?.brief;
-    if (!brief || Number(brief.slideNumber) !== index + 1) return "";
+    if (!brief || Number(brief.slideNumber) !== (theme.visualObjectSlideNumbers?.[index] ?? index + 1)) return "";
     const recipe = String(brief.recipe ?? "auto").toLowerCase();
     const label = brief.label ? `<span>${escapeHtml(brief.label)}</span>` : "";
     const glyph = recipe === "directionalcue" ? "→" : "";
@@ -1037,6 +1043,7 @@ function takeaway(value) {
 }
 
 function resolveTheme(input = {}) {
+  input ??= {};
   const preset = presets[String(input.preset ?? "midnight").toLowerCase()] ?? presets.midnight;
   const background = color(input.backgroundColor, preset[3]);
   const muted = color(input.mutedTextColor, preset[5]);

@@ -279,6 +279,7 @@ public sealed class ToolInputContractTests
 
     [Theory]
     [InlineData(nameof(PowerPointTools.CreateDeckAsync), "slides")]
+    [InlineData(nameof(PowerPointTools.ExportSlidesAsync), "slideNumbers")]
     [InlineData(nameof(PowerPointTools.StartVisualDeck), "title")]
     [InlineData(nameof(PowerPointTools.StartVisualDeck), "expectedSlideCount")]
     [InlineData(nameof(PowerPointTools.AddVisualSlidesToDraft), "draftId")]

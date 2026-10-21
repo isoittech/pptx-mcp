@@ -76,4 +76,5 @@ public sealed record BrandedVisualCompositionResult(
 
 public sealed record TemplateLayoutRolePolicy(
     int CoverSampleSlideNumber,
-    int BodySampleSlideNumber);
+    int BodySampleSlideNumber,
+    bool FirstSlideIsCover = true);

@@ -326,6 +326,80 @@ test("default-template compliance styles are appended after the AI-authored desi
   assert.ok(complianceClaimRule > authoredTitleRule);
 });
 
+function bodyOnlySpecification() {
+  return {
+    title: "本文1枚",
+    rendererContract: "visual-v7-author-html",
+    firstSlideIsCover: false,
+    templateChrome: true,
+    defaultTemplateCoverOverlay: true,
+    defaultTemplateBodyStyle: true,
+    theme: { preset: "minimal" },
+    slides: [{
+      kind: "Statement",
+      title: "指定ページの修正",
+      subtitle: "修正した本文だけを出力する",
+      authoredHtml: {
+        html: `<header><h1 data-pptx-role="body-title">指定ページの修正</h1><ul data-pptx-role="body-claim"><li>修正した本文だけを出力する</li></ul></header><p>対象ページの図形と文章を編集できます。</p>`,
+        css: `.slide{padding:70px}.slide [data-pptx-role="body-title"]{font-size:50px}.slide [data-pptx-role="body-claim"]{font-size:27px}.slide p{font-size:32px;margin-top:60px}`,
+      },
+      speakerNotes: { purpose: "変更点を説明する", talkScript: "この1枚に修正内容をまとめました。" },
+    }],
+  };
+}
+
+test("a selected body page retains visual objects bound to its original page number", () => {
+  const specification = {
+    title: "抽出した本文",
+    rendererContract: "visual-v6-dom",
+    firstSlideIsCover: false,
+    source_slide_numbers: [5],
+    visual_object_assets: [{
+      asset_id: "original-page-cue",
+      brief: { slideNumber: 5, recipe: "directionalCue", label: "次の工程へ" },
+    }],
+    slides: [{ kind: "Statement", title: "指定ページ", visualObjects: [{ assetId: "original-page-cue" }] }],
+  };
+  assert.match(buildDomDeckHtml(specification), /次の工程へ/u);
+  assert.doesNotMatch(buildDomDeckHtml({ ...specification, source_slide_numbers: [4] }), /次の工程へ/u);
+});
+
+test("a single body slide uses body validation and styling without an extra cover", () => {
+  const specification = bodyOnlySpecification();
+  const html = buildDomDeckHtml(specification);
+  assert.equal((html.match(/<section class="slide"/gu) ?? []).length, 1);
+  assert.doesNotThrow(() => buildDomDeckHtml({ ...specification, theme: null }));
+  assert.match(html, /data-author-slide="1"\] \[data-pptx-role="body-title"\]\{font-size:50px!important/u);
+  assert.doesNotMatch(html, /cover-title/u);
+  assert.throws(() => buildDomDeckHtml({ ...specification, firstSlideIsCover: true }), /cover/u);
+  assert.throws(() => buildDomDeckHtml({
+    ...specification,
+    slides: [{ ...specification.slides[0], authoredHtml: { html: "<h1>本文</h1>", css: ".slide h1{font-size:50px}" } }],
+  }), /body/u);
+});
+
+test("body-only HTML produces exactly one editable PowerPoint page with notes", {
+  skip: process.env.PPTX_MCP_RUN_DOM_INTEGRATION !== "1",
+  timeout: 90_000,
+}, async () => {
+  const workingDirectory = await mkdtemp(join(tmpdir(), "pptx-body-only-"));
+  try {
+    const specificationPath = join(workingDirectory, "body.json");
+    const outputPath = join(workingDirectory, "body.pptx");
+    await writeFile(specificationPath, JSON.stringify(bodyOnlySpecification()));
+    await executeFile(process.execPath, [rendererPath, specificationPath, outputPath], { timeout: 80_000 });
+    const zip = await JSZip.loadAsync(await readFile(outputPath));
+    assert.equal(Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/u.test(name)).length, 1);
+    const slide = await zip.file("ppt/slides/slide1.xml").async("string");
+    assert.match(slide, /指定ページの修正/u);
+    assert.match(slide, /対象ページの図形と文章/u);
+    assert.match(slide, /<a:buChar/u);
+    assert.match(await zip.file("ppt/notesSlides/notesSlide1.xml").async("string"), /変更点を説明する/u);
+  } finally {
+    await rm(workingDirectory, { recursive: true, force: true });
+  }
+});
+
 test("model-authored default cover is limited to a simple title and subtitle overlay", () => {
   const specification = {
     title: "既定表紙",

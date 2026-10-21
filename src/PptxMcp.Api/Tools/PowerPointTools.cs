@@ -85,6 +85,8 @@ public sealed class PowerPointTools
             "企業テンプレートのマスター、ロゴ、フッターを保ちながら華やかな資料を作る場合はVisual Deckドラフトをpptx_finish_branded_visual_deckで生成する",
             "既存スライドを更新する場合はpptx_replace_textまたはpptx_populate_templateを使う",
             "新規資料はpptx_start_visual_deckでテンプレート・theme・designを固定し、pptx_add_visual_slides_to_draft、pptx_finish_visual_deckの順で小分けに構成する",
+            "本文だけの1枚はexpectedSlideCount=1とfirstSlideIsCover=falseで作成する。表紙を追加しない",
+            "生成済みページの修正1枚だけを返す場合はpptx_refine_visual_slideのoutputOnlyRevisedSlide=true、変更なしの抽出はpptx_export_slidesを使う",
             "pptx_add_visual_slides_to_draftのstartSlideNumberは省略し、サーバー側で現在の末尾から自動計算する",
             "文字量が多い説明はstructured_brief、複数案を評価軸で比べる場合はscorecardを使い、小さい文字へ一括縮小しない",
             "五線譜とウクレレTABを編集可能なPowerPoint図形で併記する場合はmusicScoreを使い、音高、音価、弦、フレット、指番号を指定する",
@@ -107,6 +109,7 @@ public sealed class PowerPointTools
             "通常シェイプ・編集可能なPowerPoint表・SmartArt内部テキストの置換",
             "名前付きシェイプを持つ企業テンプレートへのテキスト流し込み",
             "定義済みlayout_idから1〜50枚の新規デッキを構成",
+            "表紙なしの本文1枚の生成、修正した1枚だけの生成、指定ページだけを元の図形・レイアウト・ノート付きで別PPTXへ抽出",
             "白紙からKPI・カード・比較・構造化ブリーフ・編集可能スコアカード・工程・タイムライン・マトリクス・ファネル・ロードマップ・ダッシュボード・編集可能グラフ等の視覚的なデッキを構成",
             "外部読み取り専用Brand Profileのimmutable version/hash、用途別recipe、情報密度別sample要約、禁止・要確認ルールをcompact catalogとして取得",
             "Design Briefと全ページAsset Planを検証し、利用者・会話・Brand Profileへ束縛した期限付きopaque brief_idを発行",
@@ -127,7 +130,7 @@ public sealed class PowerPointTools
             "SmartArtノードの追加・削除（種類変更は対象外）",
             "編集可能グラフのデータ・系列・凡例・軸・色の更新（種類変更は対象外）",
             "埋め込みExcelの値・式・範囲・行列更新",
-            "任意の既存PPTXまたは厳密なプレースホルダー資料に対するスライド追加、およびスライド削除・並べ替え",
+            "任意の既存PPTXまたは厳密なプレースホルダー資料に対する新規スライド追加",
         },
     };
 
@@ -370,6 +373,22 @@ public sealed class PowerPointTools
                 cancellationToken)).ConfigureAwait(false);
     }
 
+    [McpServerTool(Name = "pptx_export_slides", Destructive = false),
+     Description("指定した1枚または複数ページだけを別のPPTXへ書き出します。元資料を上書きせず、表紙追加や全ページ再生成を行わず、指定順に既存の図形・画像・レイアウト・発表者ノートを保持します。修正後のページだけが必要なら修正成功jobIdを指定します。previewと後続編集で使う出力ページ番号は1から始まり、result.source_slide_numbersが元の番号との対応を返します。除外ページへのリンクは除去し件数を返します。成功後は出力したページのpreviewを確認してリンクを提示します。")]
+    public static Task<object> ExportSlidesAsync(
+        CallerContextAccessor callerContext,
+        JobService jobs,
+        [Required, Description("元資料の1始まりページ番号を出力順に指定します。例: [5]、[3, 5]。重複不可、1〜50件。")]
+        IReadOnlyList<int> slideNumbers,
+        CancellationToken cancellationToken,
+        [Description("現在添付した資料のfile_idまたはlatest。生成・修正済み資料にはjobIdを使います。どちらか一方だけ必須です。")]
+        string? sourceFileId = null,
+        [Description("同じ会話内で成功した生成・修正ジョブの正確なjob_id。latestや署名URLは使いません。sourceFileIdと同時に指定しません。")]
+        string? jobId = null) => ExecuteJobSubmissionAsync(
+            "pptx_export_slides",
+            () => jobs.SubmitExportSlidesAsync(
+                callerContext.GetRequired(), new SlideSelection(slideNumbers), sourceFileId, jobId, cancellationToken));
+
     [McpServerTool(Name = "pptx_refine_deck", Destructive = true),
      Description("成功したpptx_create_deckジョブの仕様を再利用し、視覚確認で問題があったページだけを差し替えて再生成します。全10ページ等の完全仕様を再送せず、変更ページだけをrevisionsへ指定してください。元のlayout_idは自動的に保持されます。jobIdまたはrevisionsが欠けた呼び出しにはinput_requiredを返すので、両方を付けて直ちに再実行してください。")]
     public static async Task<object> RefineDeckAsync(
@@ -438,6 +457,8 @@ public sealed class PowerPointTools
         bool userRequestedNewWorkflow = false,
         [Description("任意。同じ利用者・会話でpptx_validate_design_brief、またはカード選択後のpptx_apply_design_brief_actionが返した期限内brief_id。pendingカードがあればRequireDesignBrief=falseでも省略不可です。指定時はtheme/designを省略し、profileのtemplate_sourceとexpectedSlideCountを一致させます。started briefは別資料へ再利用できません。")]
         string? briefId = null,
+        [Description("先頭を表紙として生成する場合はtrue。本文1枚だけ、差し替え用ページだけ、表紙なしの資料はfalse。ページを自動追加せず、expectedSlideCountは出力する枚数そのものです。開始後は変更不可です。")]
+        bool firstSlideIsCover = true,
         CancellationToken cancellationToken = default)
     {
         try
@@ -469,7 +490,8 @@ public sealed class PowerPointTools
                     templateSourceFileId,
                     templateLayoutId,
                     permission.AllowSubmittedReplacement,
-                    designBrief);
+                    designBrief,
+                    firstSlideIsCover);
                 designBriefs.MarkStartSucceeded(caller, designBrief?.BriefId);
                 return started;
             }
@@ -663,7 +685,9 @@ public sealed class PowerPointTools
         VisualSlideRevision revision,
         CancellationToken cancellationToken,
         [Description("通常はlatest。明示する場合は直前に成功したVisual Deckジョブのjob_id。latestは同じ会話の最新成功ジョブを安全に選びます。")]
-        string jobId = "latest")
+        string jobId = "latest",
+        [Description("ユーザーが修正した1枚だけのPPTXを要求した場合はtrue。そのページだけを生成して別資料として返し、元の全体資料は保持します。falseは従来どおり全体資料へ反映します。trueの出力内では対象ページは1枚目になり、以後の修正・previewにはslide_number=1を使います。")]
+        bool outputOnlyRevisedSlide = false)
     {
         try
         {
@@ -676,7 +700,8 @@ public sealed class PowerPointTools
                 caller,
                 resolvedJobId,
                 [revision],
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                outputOnlyRevisedSlide).ConfigureAwait(false);
             var completed = await jobs.WaitForTerminalAsync(
                 caller,
                 receipt.JobId,

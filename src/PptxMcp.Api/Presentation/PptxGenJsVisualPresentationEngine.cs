@@ -163,7 +163,8 @@ public sealed class PptxGenJsVisualPresentationEngine(
             VisualDeckValidator.GetDesignWarnings(deck),
             rendererUsageBySlide.Count(static usage => usage == "dom-to-pptx"),
             rendererUsageBySlide.Count(static usage => usage == "pptxgenjs-fallback"),
-            rendererUsageBySlide);
+            rendererUsageBySlide,
+            deck.SourceSlideNumbers);
     }
 
     private async Task<bool> RenderDeckAsync(

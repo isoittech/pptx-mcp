@@ -8,7 +8,7 @@ using PptxMcp.Storage;
 
 namespace PptxMcp.Presentation;
 
-public sealed class OpenXmlPresentationEngine : IPresentationEngine
+public sealed partial class OpenXmlPresentationEngine : IPresentationEngine
 {
     private const string DrawingTableGraphicDataUri = "http://schemas.openxmlformats.org/drawingml/2006/table";
     private const int MaxAnalyzedShapes = 1_000;
@@ -525,7 +525,9 @@ public sealed class OpenXmlPresentationEngine : IPresentationEngine
                 importedSlide.DeletePart(generatedNotesSlide);
             }
 
-            var slideLayout = index == 0 ? coverLayout : selectedLayout;
+            var slideLayout = index == 0 && layoutRolePolicy?.FirstSlideIsCover != false
+                ? coverLayout
+                : selectedLayout;
             var importedLayout = importedSlide.SlideLayoutPart;
             if (importedLayout is not null && !ReferenceEquals(importedLayout, slideLayout))
             {
